@@ -32,7 +32,7 @@ export default function Results() {
     setLoadingBills(true)
     setBillError('')
     try {
-      const resp = await fetch('/api/legislation', {
+      const resp = await fetch('https://civiclens-production-07ed.up.railway.app/api/legislation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -59,7 +59,7 @@ export default function Results() {
   async function personalizeBill(bill) {
     const billId = `${bill.type}${bill.number}-${bill.congress}`
     try {
-      const resp = await fetch('/api/personalize', {
+      const resp = await fetch('https://civiclens-production-07ed.up.railway.app/api/personalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bill, profile })
