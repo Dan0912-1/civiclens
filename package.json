@@ -8,11 +8,16 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "node --env-file=.env api/server.js",
-    "start": "node api/server.js"
+    "start": "node api/server.js",
+    "cap:sync": "vite build && cap sync"
   },
   "dependencies": {
-    "express": "^4.18.3",
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^8.3.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/ios": "^8.3.0",
     "cors": "^2.8.5",
+    "express": "^4.18.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.0"

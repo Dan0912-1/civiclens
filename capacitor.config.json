@@ -1,0 +1,11 @@
+{
+  "appId": "com.civiclens.app",
+  "appName": "CivicLens",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}
