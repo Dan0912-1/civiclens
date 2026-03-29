@@ -243,8 +243,8 @@ function buildSearchTerms(interests = []) {
 }
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, () => {
-  console.log(`✅ CivicLens server running on http://localhost:${PORT}`)
-  console.log(`   Congress key: ${CONGRESS_KEY ? '✓ loaded' : '✗ MISSING'}`)
-  console.log(`   Anthropic key: ${ANTHROPIC_KEY ? '✓ loaded' : '✗ MISSING'}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
+  console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
 })
