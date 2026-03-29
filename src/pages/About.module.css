@@ -1,0 +1,148 @@
+.page {
+  min-height: calc(100vh - 64px);
+  background: var(--cream);
+  padding: var(--space-2xl) var(--space-lg);
+}
+
+.container {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.hero {
+  padding: var(--space-2xl) 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-2xl);
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  color: var(--navy);
+  margin-bottom: var(--space-sm);
+}
+
+.hero p {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+}
+
+.section {
+  margin-bottom: var(--space-2xl);
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.section h2 {
+  font-size: 1.4rem;
+  color: var(--navy);
+  margin-bottom: var(--space-md);
+}
+
+.section p {
+  color: var(--text-secondary);
+  line-height: 1.75;
+  margin-bottom: var(--space-md);
+  font-size: 1rem;
+}
+
+.section p:last-child {
+  margin-bottom: 0;
+}
+
+/* Neutrality box */
+.neutralBox {
+  background: var(--white);
+  border: 1px solid var(--border-light);
+  border-left: 4px solid var(--amber);
+  border-radius: var(--radius-md);
+  padding: var(--space-xl);
+  display: flex;
+  gap: var(--space-lg);
+  align-items: flex-start;
+  box-shadow: var(--shadow-sm);
+}
+
+.neutralIcon {
+  font-size: 1.75rem;
+  flex-shrink: 0;
+}
+
+.neutralBox p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+/* Tech grid */
+.techGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.techCard {
+  background: var(--white);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.techBadge {
+  display: inline-block;
+  background: var(--navy);
+  color: var(--white);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: var(--space-sm);
+}
+
+.techCard h3 {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.techCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* CTA */
+.cta {
+  background: var(--navy);
+  color: var(--white);
+  border-radius: var(--radius-xl);
+  padding: var(--space-2xl);
+  text-align: center;
+  margin-top: var(--space-xl);
+}
+
+.cta h2 {
+  margin-bottom: var(--space-lg);
+  font-size: 1.75rem;
+}
+
+.ctaBtn {
+  background: var(--amber);
+  color: var(--navy);
+  padding: 0.75rem 2rem;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+}
+
+.ctaBtn:hover {
+  background: var(--amber-dark);
+  transform: translateY(-1px);
+}

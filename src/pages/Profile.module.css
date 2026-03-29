@@ -1,0 +1,326 @@
+.page {
+  min-height: calc(100vh - 64px);
+  background: var(--cream);
+  padding: var(--space-2xl) var(--space-lg);
+}
+
+.container {
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Progress */
+.progress {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-xl);
+  margin-bottom: var(--space-2xl);
+}
+
+.progressStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dot {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  transition: all 0.3s ease;
+}
+
+.dotActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+.dotDone {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--navy);
+}
+
+.progressLabel {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Card */
+.card {
+  background: var(--white);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2xl);
+  animation: fadeUp 0.4s ease forwards;
+}
+
+.stepContent {
+  margin-bottom: var(--space-xl);
+}
+
+.stepHeading {
+  font-size: 1.6rem;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.stepSub {
+  color: var(--text-muted);
+  margin-bottom: var(--space-xl);
+  font-size: 0.95rem;
+}
+
+/* Fields */
+.field {
+  margin-bottom: var(--space-xl);
+}
+
+.label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  margin-bottom: var(--space-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.req {
+  color: var(--amber-dark);
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.85rem;
+}
+
+.select {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  background: var(--white);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234a5568' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  padding-right: 2.5rem;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--navy);
+}
+
+.gradeGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-sm);
+}
+
+.gradeBtn {
+  padding: 0.7rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--white);
+  transition: all 0.2s ease;
+}
+
+.gradeBtn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.gradeBtnActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+/* Toggle */
+.toggleRow {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.toggleBtn {
+  flex: 1;
+  padding: 0.7rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--white);
+  transition: all 0.2s ease;
+}
+
+.toggleActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+/* Family */
+.familyGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.familyBtn {
+  padding: 0.65rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+  background: var(--white);
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.familyBtn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.familyBtnActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+/* Interests */
+.interestGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-sm);
+}
+
+@media (max-width: 480px) {
+  .interestGrid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.interestBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-md) var(--space-sm);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--white);
+  transition: all 0.2s ease;
+}
+
+.interestBtn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+  background: var(--cream);
+}
+
+.interestActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
+.interestEmoji {
+  font-size: 1.5rem;
+}
+
+/* Textarea */
+.textarea {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--white);
+  resize: vertical;
+  transition: border-color 0.2s;
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--navy);
+}
+
+/* Nav row */
+.navRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-md);
+  align-items: center;
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border-light);
+}
+
+.backBtn {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  font-weight: 500;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-md);
+  transition: color 0.2s;
+}
+
+.backBtn:hover {
+  color: var(--text-primary);
+}
+
+.nextBtn {
+  background: var(--navy);
+  color: var(--white);
+  padding: 0.75rem 1.75rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+}
+
+.nextBtn:hover {
+  background: var(--navy-light);
+  transform: translateY(-1px);
+}
+
+.nextBtnDisabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.error {
+  color: #dc2626;
+  font-size: 0.875rem;
+  margin-bottom: var(--space-md);
+}
