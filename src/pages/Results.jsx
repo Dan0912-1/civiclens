@@ -3,6 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
+// Backend URL — hardcoded so it's always baked into the bundle at build time.
+// Local dev: Vite proxy forwards /api/* to localhost:3001 regardless of this value.
+const API_BASE = 'https://civiclens-production-07ed.up.railway.app'
+
 export default function Results() {
   const navigate = useNavigate()
   const [profile, setProfile] = useState(null)
@@ -11,6 +15,7 @@ export default function Results() {
   const [loadingBills, setLoadingBills] = useState(true)
   const [billError, setBillError] = useState('')
   const [activeFilter, setActiveFilter] = useState('All')
+  const [settledBills, setSettledBills] = useState(new Set())
 
   // Load profile from session
   useEffect(() => {
@@ -31,8 +36,9 @@ export default function Results() {
   async function fetchBills() {
     setLoadingBills(true)
     setBillError('')
+    setSettledBills(new Set())
     try {
-      const resp = await fetch('https://civiclens-production-07ed.up.railway.app/api/legislation', {
+      const resp = await fetch(`${API_BASE}/api/legislation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -59,17 +65,21 @@ export default function Results() {
   async function personalizeBill(bill) {
     const billId = `${bill.type}${bill.number}-${bill.congress}`
     try {
-      const resp = await fetch('https://civiclens-production-07ed.up.railway.app/api/personalize', {
+      const resp = await fetch(`${API_BASE}/api/personalize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bill, profile })
       })
-      const data = await resp.json()
-      if (data.analysis) {
-        setAnalyses(prev => ({ ...prev, [billId]: data.analysis }))
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.analysis) {
+          setAnalyses(prev => ({ ...prev, [billId]: data.analysis }))
+        }
       }
     } catch (err) {
       console.error('Personalization failed for', billId, err)
+    } finally {
+      setSettledBills(prev => new Set([...prev, billId]))
     }
   }
 
@@ -143,7 +153,7 @@ export default function Results() {
           <>
             <div className={styles.meta}>
               Showing {filteredBills.length} bill{filteredBills.length !== 1 ? 's' : ''}
-              {filteredBills.some(b => !analyses[`${b.type}${b.number}-${b.congress}`]) && (
+              {bills.some(b => !settledBills.has(`${b.type}${b.number}-${b.congress}`)) && (
                 <span className={styles.analyzing}> · Personalizing remaining bills...</span>
               )}
             </div>
