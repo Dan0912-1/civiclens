@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import styles from './BillCard.module.css'
 
 const TAG_COLORS = {
@@ -32,9 +33,16 @@ function RelevanceMeter({ score }) {
 
 export default function BillCard({ bill, analysis, style }) {
   const [expanded, setExpanded] = useState(false)
+  const navigate = useNavigate()
   const billId = `${bill.type}${bill.number}-${bill.congress}`
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
+
+  function openDetail() {
+    navigate(`/bill/${bill.congress}/${bill.type.toLowerCase()}/${bill.number}`, {
+      state: { bill, analysis }
+    })
+  }
 
   return (
     <div className={`${styles.card} ${styles[`tag_${tagColor}`]}`} style={style}>
@@ -55,8 +63,12 @@ export default function BillCard({ bill, analysis, style }) {
         <span className={styles.chamber}>{bill.originChamber || 'Congress'}</span>
       </div>
 
-      {/* Title */}
-      <h3 className={styles.title}>{bill.title}</h3>
+      {/* Title — clickable to detail page */}
+      <h3 className={styles.title}>
+        <button className={styles.titleLink} onClick={openDetail}>
+          {bill.title}
+        </button>
+      </h3>
 
       {/* Latest action */}
       <p className={styles.action}>
@@ -120,16 +132,9 @@ export default function BillCard({ bill, analysis, style }) {
             >
               {expanded ? 'Show less ↑' : 'See full impact + actions ↓'}
             </button>
-            {bill.url && (
-              <a
-                href={bill.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={styles.sourceLink}
-              >
-                Full bill →
-              </a>
-            )}
+            <button className={styles.sourceLink} onClick={openDetail}>
+              Full bill →
+            </button>
           </div>
         </>
       )}

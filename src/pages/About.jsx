@@ -60,8 +60,8 @@ export default function About() {
                 badge: 'Personalization'
               },
               {
-                name: 'No account required',
-                desc: 'Your profile is stored only in your browser session. We don\'t collect, store, or sell any personal data.',
+                name: 'Optional Google sign-in',
+                desc: 'Sign in with Google to save your profile across sessions. No account required — you can always use GovDecoded without signing in.',
                 badge: 'Privacy'
               },
             ].map(t => (
