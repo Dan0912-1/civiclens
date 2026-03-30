@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { getBookmarks, removeBookmark } from '../lib/userProfile'
+import { getBookmarks, removeBookmark, getNotificationPrefs, setNotificationPrefs } from '../lib/userProfile'
+import { supabase } from '../lib/supabase'
 import BillCard from '../components/BillCard.jsx'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Bookmarks.module.css'
@@ -12,6 +13,7 @@ export default function Bookmarks() {
   const [bookmarks, setBookmarks] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAuth, setShowAuth] = useState(false)
+  const [emailNotif, setEmailNotif] = useState(true)
 
   useEffect(() => {
     if (authLoading) return
@@ -23,7 +25,28 @@ export default function Bookmarks() {
       setBookmarks(bm)
       setLoading(false)
     })
+    // Load notification preference
+    if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.access_token) {
+          getNotificationPrefs(session.access_token).then(prefs => {
+            setEmailNotif(prefs.email_notifications)
+          })
+        }
+      })
+    }
   }, [user, authLoading])
+
+  async function toggleNotifications() {
+    const next = !emailNotif
+    setEmailNotif(next)
+    if (supabase) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        await setNotificationPrefs(session.access_token, next)
+      }
+    }
+  }
 
   async function handleRemove(billId) {
     if (!user) return
@@ -70,6 +93,22 @@ export default function Bookmarks() {
           <p className={styles.subhead}>
             {bookmarks.length} bookmarked bill{bookmarks.length !== 1 ? 's' : ''}
           </p>
+        </div>
+
+        {/* Notification preferences */}
+        <div className={styles.notifBar}>
+          <div>
+            <div className={styles.notifLabel}>Email notifications</div>
+            <div className={styles.notifDesc}>Get emailed when a saved bill changes status on Congress.gov</div>
+          </div>
+          <button
+            className={styles.toggle}
+            data-on={emailNotif}
+            onClick={toggleNotifications}
+            aria-label={emailNotif ? 'Disable email notifications' : 'Enable email notifications'}
+          >
+            <div className={styles.toggleKnob} />
+          </button>
         </div>
 
         {bookmarks.length === 0 ? (

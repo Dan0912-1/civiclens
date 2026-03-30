@@ -68,6 +68,61 @@
   gap: var(--space-lg);
 }
 
+.notifBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--white);
+  border: 1px solid var(--cream-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg);
+  margin-bottom: var(--space-xl);
+  animation: fadeUp 0.4s ease forwards;
+}
+
+.notifLabel {
+  color: var(--navy);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.notifDesc {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 2px;
+}
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: #d1d5db;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+
+.toggle[data-on="true"] {
+  background: #059669;
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle[data-on="true"] .toggleKnob {
+  transform: translateX(20px);
+}
+
 .skeleton {
   height: 280px;
   border-radius: var(--radius-lg);

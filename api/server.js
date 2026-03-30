@@ -4,6 +4,9 @@
 import express from 'express'
 import cors from 'cors'
 import { createClient } from '@supabase/supabase-js'
+import cron from 'node-cron'
+import { Resend } from 'resend'
+import { billUpdateEmail } from './emailTemplates.js'
 
 const app = express()
 
@@ -36,6 +39,9 @@ app.use(express.json())
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
+const RESEND_KEY = process.env.RESEND_API_KEY
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'GovDecoded <onboarding@resend.dev>'
+const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 
 // ─── Supabase client (persistent cache for Claude personalizations) ──────────
 const SUPABASE_URL = process.env.SUPABASE_URL
@@ -291,6 +297,208 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
   }
 })
 
+// ─── Notification preferences ────────────────────────────────────────────────
+
+app.get('/api/notifications/preferences', async (req, res) => {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !supabase) return res.status(401).json({ error: 'Unauthorized' })
+
+  try {
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+    if (authErr || !user) return res.status(401).json({ error: 'Invalid token' })
+
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('email_notifications')
+      .eq('id', user.id)
+      .single()
+
+    if (error || !data) return res.json({ email_notifications: true }) // default on
+    res.json({ email_notifications: data.email_notifications ?? true })
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch preferences' })
+  }
+})
+
+app.post('/api/notifications/preferences', async (req, res) => {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !supabase) return res.status(401).json({ error: 'Unauthorized' })
+
+  try {
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+    if (authErr || !user) return res.status(401).json({ error: 'Invalid token' })
+
+    const { email_notifications } = req.body
+    if (typeof email_notifications !== 'boolean') {
+      return res.status(400).json({ error: 'email_notifications must be a boolean' })
+    }
+
+    await supabase
+      .from('user_profiles')
+      .upsert({
+        id: user.id,
+        email_notifications,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' })
+
+    res.json({ email_notifications })
+  } catch {
+    res.status(500).json({ error: 'Failed to update preferences' })
+  }
+})
+
+// ─── Bill-update notification cron job ──────────────────────────────────────
+// Runs daily at 8:00 AM UTC. Checks each bookmarked bill for status changes
+// on Congress.gov and sends grouped email notifications via Resend.
+
+async function checkBillUpdates() {
+  if (!supabase) {
+    console.log('[cron] Skipping bill check — Supabase not configured')
+    return
+  }
+  if (!resend) {
+    console.log('[cron] Skipping bill check — Resend not configured')
+    return
+  }
+
+  console.log('[cron] Starting daily bill-update check...')
+
+  // 1. Fetch all bookmarks with user info
+  const { data: bookmarks, error: bmErr } = await supabase
+    .from('bookmarks')
+    .select('id, user_id, bill_id, bill_data, last_known_action')
+
+  if (bmErr || !bookmarks?.length) {
+    console.log('[cron] No bookmarks to check', bmErr?.message || '')
+    return
+  }
+
+  // 2. Deduplicate bills (many users may bookmark the same bill)
+  const uniqueBills = new Map()
+  for (const bm of bookmarks) {
+    if (!uniqueBills.has(bm.bill_id)) {
+      uniqueBills.set(bm.bill_id, bm.bill_data?.bill || {})
+    }
+  }
+
+  // 3. Fetch current status for each unique bill from Congress.gov
+  const currentStatuses = new Map()
+  for (const [billId, billInfo] of uniqueBills) {
+    try {
+      const { congress, type, number } = billInfo
+      if (!congress || !type || !number) continue
+
+      const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}?api_key=${CONGRESS_KEY}`
+      const resp = await fetch(url)
+      if (!resp.ok) continue
+
+      const data = await resp.json()
+      const latestAction = data.bill?.latestAction?.text || ''
+      currentStatuses.set(billId, {
+        latestAction,
+        latestActionDate: data.bill?.latestAction?.actionDate || '',
+      })
+
+      // Rate-limit: Congress.gov asks for max ~1 req/sec
+      await new Promise(r => setTimeout(r, 1100))
+    } catch (err) {
+      console.error(`[cron] Failed to fetch bill ${billId}:`, err.message)
+    }
+  }
+
+  // 4. Find bookmarks with changed statuses
+  //    Group changes by user_id for batched emails
+  const userChanges = new Map() // userId → [{ ...billInfo, oldAction, newAction }]
+  const bookmarkUpdates = []    // [{ id, last_known_action }]
+
+  for (const bm of bookmarks) {
+    const current = currentStatuses.get(bm.bill_id)
+    if (!current) continue
+
+    const oldAction = bm.last_known_action || bm.bill_data?.bill?.latestAction || ''
+    const newAction = current.latestAction
+
+    // If no stored action yet, seed it without sending a notification
+    if (!bm.last_known_action) {
+      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction })
+      continue
+    }
+
+    if (newAction && newAction !== oldAction) {
+      const bill = bm.bill_data?.bill || {}
+      const change = {
+        type: bill.type || '?',
+        number: bill.number || '?',
+        congress: bill.congress || '?',
+        title: bill.title || 'Unknown bill',
+        oldAction,
+        newAction,
+      }
+
+      if (!userChanges.has(bm.user_id)) userChanges.set(bm.user_id, [])
+      userChanges.get(bm.user_id).push(change)
+
+      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction })
+    }
+  }
+
+  // 5. Update last_known_action for all processed bookmarks
+  for (const upd of bookmarkUpdates) {
+    await supabase
+      .from('bookmarks')
+      .update({ last_known_action: upd.last_known_action })
+      .eq('id', upd.id)
+  }
+
+  // 6. Send emails to users with changes (respecting notification preferences)
+  let emailsSent = 0
+  for (const [userId, changes] of userChanges) {
+    try {
+      // Check if user wants notifications
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('email_notifications')
+        .eq('id', userId)
+        .single()
+
+      if (profile?.email_notifications === false) continue
+
+      // Get user's email from Supabase Auth
+      const { data: { user }, error: userErr } = await supabase.auth.admin.getUserById(userId)
+      if (userErr || !user?.email) continue
+
+      const { subject, html } = billUpdateEmail(
+        user.user_metadata?.full_name || user.user_metadata?.name || '',
+        changes,
+      )
+
+      await resend.emails.send({
+        from: RESEND_FROM,
+        to: user.email,
+        subject,
+        html,
+      })
+      emailsSent++
+    } catch (err) {
+      console.error(`[cron] Failed to email user ${userId}:`, err.message)
+    }
+  }
+
+  console.log(`[cron] Bill check complete. ${bookmarkUpdates.length} bookmarks updated, ${emailsSent} emails sent.`)
+}
+
+// Schedule: daily at 8:00 AM UTC
+if (supabase && resend) {
+  cron.schedule('0 8 * * *', () => {
+    checkBillUpdates().catch(err => console.error('[cron] Unhandled error:', err))
+  })
+  console.log('   Bill-update cron: \u2713 scheduled (daily 8:00 AM UTC)')
+} else {
+  console.log(`   Bill-update cron: \u2717 disabled (${!supabase ? 'no Supabase' : 'no Resend key'})`)
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function gradeToAge(grade) {
   const map = { '9': 14, '10': 15, '11': 16, '12': 17 }
@@ -333,4 +541,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
+  console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
 })

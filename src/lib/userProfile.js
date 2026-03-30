@@ -64,3 +64,34 @@ export async function removeBookmark(userId, billId) {
     // non-fatal
   }
 }
+
+export async function getNotificationPrefs(token) {
+  try {
+    const resp = await fetch(`${getApiBase()}/api/notifications/preferences`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!resp.ok) return { email_notifications: true }
+    return resp.json()
+  } catch {
+    return { email_notifications: true }
+  }
+}
+
+export async function setNotificationPrefs(token, emailNotifications) {
+  try {
+    await fetch(`${getApiBase()}/api/notifications/preferences`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ email_notifications: emailNotifications }),
+    })
+  } catch {
+    // non-fatal
+  }
+}
+
+function getApiBase() {
+  return import.meta.env.VITE_API_BASE_URL || 'https://civiclens-production-07ed.up.railway.app'
+}
