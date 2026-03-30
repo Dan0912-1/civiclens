@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "641035028560",
+    "project_id": "govdecoded-d73c4",
+    "storage_bucket": "govdecoded-d73c4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:641035028560:android:9cb1603a86a3b788052955",
+        "android_client_info": {
+          "package_name": "com.govdecoded.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC251K_h4gu9A5pxOwGWKJ4QRNPx7aDM84"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
