@@ -292,3 +292,19 @@
 .sourceLink:hover {
   color: var(--navy);
 }
+
+/* Bookmark */
+.bookmarkBtn {
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  transition: color 0.2s, transform 0.2s;
+  padding: 0 var(--space-xs);
+}
+
+.bookmarkBtn:hover {
+  transform: scale(1.15);
+}
+
+.bookmarkActive {
+  color: var(--amber);
+}
