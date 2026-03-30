@@ -1,8 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
+import { getApiBase } from '../lib/api'
+import { trackInteraction } from '../lib/interactions'
 import styles from './BillDetail.module.css'
 
-const API_BASE = 'https://civiclens-production-07ed.up.railway.app'
+const API_BASE = getApiBase()
 
 const TAG_COLORS = {
   Education:     'blue',
@@ -19,6 +23,8 @@ export default function BillDetail() {
   const { congress, type, number } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
+  const trackedRef = useRef(false)
 
   // Data passed from Results page via router state
   const passedBill = location.state?.bill || null
@@ -29,6 +35,26 @@ export default function BillDetail() {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Track view_detail interaction once we have analysis (for topic_tag)
+  useEffect(() => {
+    if (trackedRef.current || !analysis) return
+    trackedRef.current = true
+    const billId = `${type.toUpperCase()}${number}-${congress}`
+    const doTrack = async () => {
+      let token = null
+      if (user && supabase) {
+        const { data: { session } } = await supabase.auth.getSession()
+        token = session?.access_token
+      }
+      trackInteraction(user?.id, token, {
+        billId,
+        actionType: 'view_detail',
+        topicTag: analysis.topic_tag,
+      })
+    }
+    doTrack()
+  }, [analysis, user, congress, type, number])
 
   useEffect(() => {
     fetchBillDetail()

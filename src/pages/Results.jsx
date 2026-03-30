@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { loadProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
+import { getApiBase } from '../lib/api'
+import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
+import { supabase } from '../lib/supabase'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
-// Backend URL — hardcoded so it's always baked into the bundle at build time.
-// Local dev: Vite proxy forwards /api/* to localhost:3001 regardless of this value.
-const API_BASE = 'https://civiclens-production-07ed.up.railway.app'
+const API_BASE = getApiBase()
 
 export default function Results() {
   const navigate = useNavigate()
@@ -20,6 +21,8 @@ export default function Results() {
   const [activeFilter, setActiveFilter] = useState('All')
   const [settledBills, setSettledBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
+  const [interactionSummary, setInteractionSummary] = useState(null)
+  const prevUserRef = useRef(null)
 
   // Load profile — try Supabase first for logged-in users, fall back to sessionStorage
   useEffect(() => {
@@ -42,6 +45,29 @@ export default function Results() {
     load()
   }, [navigate, user])
 
+  // Fetch interaction summary and sync local interactions on login
+  useEffect(() => {
+    async function loadInteractions() {
+      if (user && supabase) {
+        // Sync local interactions to server if user just logged in
+        if (!prevUserRef.current) {
+          const { data: { session } } = await supabase.auth.getSession()
+          if (session?.access_token) {
+            await syncLocalInteractions(user.id, session.access_token)
+            const summary = await getInteractionSummary(session.access_token)
+            if (summary) setInteractionSummary(summary)
+          }
+        }
+      } else {
+        // Anonymous: compute locally
+        const local = getLocalInteractions()
+        if (local.length) setInteractionSummary(computeLocalSummary(local))
+      }
+      prevUserRef.current = user
+    }
+    loadInteractions()
+  }, [user])
+
   // Load bookmarks for logged-in users
   useEffect(() => {
     if (!user) return
@@ -59,14 +85,18 @@ export default function Results() {
     setBillError('')
     setSettledBills(new Set())
     try {
+      const body = {
+        interests: profile.interests,
+        grade: profile.grade,
+        state: profile.state,
+      }
+      if (interactionSummary && interactionSummary.totalInteractions > 0) {
+        body.interactionSummary = interactionSummary
+      }
       const resp = await fetch(`${API_BASE}/api/legislation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          interests: profile.interests,
-          grade: profile.grade,
-          state: profile.state,
-        })
+        body: JSON.stringify(body)
       })
       const data = await resp.json()
       if (data.bills) {
@@ -103,6 +133,15 @@ export default function Results() {
       setSettledBills(prev => new Set([...prev, billId]))
     }
   }
+
+  const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
+    let token = null
+    if (user && supabase) {
+      const { data: { session } } = await supabase.auth.getSession()
+      token = session?.access_token
+    }
+    trackInteraction(user?.id, token, { billId, actionType, topicTag })
+  }, [user])
 
   async function toggleBookmark(billId, bill, analysis) {
     if (!user) return
@@ -155,6 +194,29 @@ export default function Results() {
           </button>
         </div>
 
+        {/* Trending interests */}
+        {interactionSummary && interactionSummary.totalInteractions > 5 && (
+          <div className={styles.trendingBar}>
+            <span className={styles.trendingLabel}>Your trending interests</span>
+            <div className={styles.trendingPills}>
+              {Object.entries(interactionSummary.topicCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([topic, count]) => (
+                  <button
+                    key={topic}
+                    className={styles.trendingPill}
+                    data-topic={topic}
+                    onClick={() => setActiveFilter(topic)}
+                  >
+                    {topic} <span className={styles.trendingCount}>{count}</span>
+                  </button>
+                ))
+              }
+            </div>
+          </div>
+        )}
+
         {/* Filter bar */}
         {topicTags.length > 1 && (
           <div className={styles.filterBar}>
@@ -206,6 +268,7 @@ export default function Results() {
                     analysis={analyses[billId] || null}
                     isBookmarked={bookmarkedIds.has(billId)}
                     onToggleBookmark={() => toggleBookmark(billId, bill, analyses[billId])}
+                    onTrackInteraction={handleTrackInteraction}
                     style={{ animationDelay: `${i * 0.08}s` }}
                   />
                 )

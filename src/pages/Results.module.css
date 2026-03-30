@@ -53,6 +53,74 @@
   color: var(--navy);
 }
 
+/* Trending interests */
+.trendingBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-lg);
+  margin-bottom: var(--space-lg);
+  animation: fadeUp 0.4s ease forwards;
+}
+
+.trendingLabel {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.trendingPills {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.trendingPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.8rem;
+  border-radius: 100px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  background: var(--cream);
+  border: 1px solid var(--border);
+  color: var(--navy);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.trendingPill:hover {
+  border-color: var(--navy);
+  background: var(--navy);
+  color: var(--white);
+}
+
+.trendingPill[data-topic="Education"] { border-color: var(--tag-blue); color: var(--tag-blue); }
+.trendingPill[data-topic="Healthcare"] { border-color: var(--tag-green); color: var(--tag-green); }
+.trendingPill[data-topic="Economy"] { border-color: var(--tag-purple); color: var(--tag-purple); }
+.trendingPill[data-topic="Environment"] { border-color: var(--tag-teal); color: var(--tag-teal); }
+.trendingPill[data-topic="Technology"] { border-color: var(--tag-red); color: var(--tag-red); }
+.trendingPill[data-topic="Housing"] { border-color: var(--tag-orange); color: var(--tag-orange); }
+.trendingPill[data-topic="Civil Rights"] { border-color: var(--tag-violet); color: var(--tag-violet); }
+
+.trendingPill:hover { color: var(--white); }
+
+.trendingCount {
+  background: rgba(0,0,0,0.08);
+  padding: 0.1rem 0.4rem;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 /* Filter bar */
 .filterBar {
   display: flex;

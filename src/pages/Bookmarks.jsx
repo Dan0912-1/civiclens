@@ -7,13 +7,24 @@ import BillCard from '../components/BillCard.jsx'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Bookmarks.module.css'
 
+function isNativePlatform() {
+  try {
+    // Dynamic import would be async; check the global instead
+    return window.Capacitor?.isNativePlatform?.() ?? false
+  } catch {
+    return false
+  }
+}
+
 export default function Bookmarks() {
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
   const [bookmarks, setBookmarks] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAuth, setShowAuth] = useState(false)
-  const [emailNotif, setEmailNotif] = useState(true)
+  const [emailNotif, setEmailNotif] = useState(false)
+  const [pushNotif, setPushNotif] = useState(true)
+  const [isNative] = useState(isNativePlatform)
 
   useEffect(() => {
     if (authLoading) return
@@ -25,25 +36,37 @@ export default function Bookmarks() {
       setBookmarks(bm)
       setLoading(false)
     })
-    // Load notification preference
+    // Load notification preferences
     if (supabase) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.access_token) {
           getNotificationPrefs(session.access_token).then(prefs => {
-            setEmailNotif(prefs.email_notifications)
+            setEmailNotif(prefs.email_notifications ?? false)
+            setPushNotif(prefs.push_notifications ?? true)
           })
         }
       })
     }
   }, [user, authLoading])
 
-  async function toggleNotifications() {
+  async function toggleEmailNotif() {
     const next = !emailNotif
     setEmailNotif(next)
     if (supabase) {
       const { data: { session } } = await supabase.auth.getSession()
       if (session?.access_token) {
-        await setNotificationPrefs(session.access_token, next)
+        await setNotificationPrefs(session.access_token, { email_notifications: next })
+      }
+    }
+  }
+
+  async function togglePushNotif() {
+    const next = !pushNotif
+    setPushNotif(next)
+    if (supabase) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        await setNotificationPrefs(session.access_token, { push_notifications: next })
       }
     }
   }
@@ -96,6 +119,22 @@ export default function Bookmarks() {
         </div>
 
         {/* Notification preferences */}
+        {isNative && (
+          <div className={styles.notifBar}>
+            <div>
+              <div className={styles.notifLabel}>Push notifications</div>
+              <div className={styles.notifDesc}>Get push alerts on your phone when a saved bill changes status</div>
+            </div>
+            <button
+              className={styles.toggle}
+              data-on={pushNotif}
+              onClick={togglePushNotif}
+              aria-label={pushNotif ? 'Disable push notifications' : 'Enable push notifications'}
+            >
+              <div className={styles.toggleKnob} />
+            </button>
+          </div>
+        )}
         <div className={styles.notifBar}>
           <div>
             <div className={styles.notifLabel}>Email notifications</div>
@@ -104,7 +143,7 @@ export default function Bookmarks() {
           <button
             className={styles.toggle}
             data-on={emailNotif}
-            onClick={toggleNotifications}
+            onClick={toggleEmailNotif}
             aria-label={emailNotif ? 'Disable email notifications' : 'Enable email notifications'}
           >
             <div className={styles.toggleKnob} />

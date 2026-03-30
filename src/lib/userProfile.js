@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { getApiBase } from './api'
 
 export async function loadProfile(userId) {
   if (!supabase) return null
@@ -70,14 +71,14 @@ export async function getNotificationPrefs(token) {
     const resp = await fetch(`${getApiBase()}/api/notifications/preferences`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-    if (!resp.ok) return { email_notifications: true }
+    if (!resp.ok) return { email_notifications: false, push_notifications: true }
     return resp.json()
   } catch {
-    return { email_notifications: true }
+    return { email_notifications: false, push_notifications: true }
   }
 }
 
-export async function setNotificationPrefs(token, emailNotifications) {
+export async function setNotificationPrefs(token, prefs) {
   try {
     await fetch(`${getApiBase()}/api/notifications/preferences`, {
       method: 'POST',
@@ -85,13 +86,9 @@ export async function setNotificationPrefs(token, emailNotifications) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ email_notifications: emailNotifications }),
+      body: JSON.stringify(prefs),
     })
   } catch {
     // non-fatal
   }
-}
-
-function getApiBase() {
-  return import.meta.env.VITE_API_BASE_URL || 'https://civiclens-production-07ed.up.railway.app'
 }
