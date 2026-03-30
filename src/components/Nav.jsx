@@ -10,7 +10,7 @@ export default function Nav() {
       <div className={styles.inner}>
         <button className={styles.logo} onClick={() => navigate('/')}>
           <span className={styles.logoMark}>⚖</span>
-          <span className={styles.logoText}>CivicCipher</span>
+          <span className={styles.logoText}>GovDecoded</span>
         </button>
 
         <div className={styles.links}>

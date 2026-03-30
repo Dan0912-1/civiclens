@@ -1,6 +1,6 @@
 {
-  "appId": "com.civiclens.app",
-  "appName": "CivicCipher",
+  "appId": "com.govdecoded.app",
+  "appName": "GovDecoded",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"
