@@ -1,6 +1,6 @@
 {
   "appId": "com.civiclens.app",
-  "appName": "CivicLens",
+  "appName": "CivicCipher",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

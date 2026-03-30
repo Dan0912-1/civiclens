@@ -9,7 +9,7 @@ export default function About() {
       <div className={styles.container}>
 
         <div className={styles.hero}>
-          <h1>How CivicLens works</h1>
+          <h1>How CivicCipher works</h1>
           <p>A nonpartisan civic education tool built for students, by a student.</p>
         </div>
 
@@ -23,7 +23,7 @@ export default function About() {
             for lawyers, lobbyists, and political professionals — not for you.
           </p>
           <p>
-            CivicLens changes that. We take real legislation, pull the bills most
+            CivicCipher changes that. We take real legislation, pull the bills most
             relevant to your life, and explain them in plain English — what changes
             if they pass, what stays the same if they fail, and how you can make
             your voice heard.
@@ -35,7 +35,7 @@ export default function About() {
           <div className={styles.neutralBox}>
             <div className={styles.neutralIcon}>⚖</div>
             <p>
-              CivicLens is <strong>strictly nonpartisan</strong>. We never tell
+              CivicCipher is <strong>strictly nonpartisan</strong>. We never tell
               you whether a bill is good or bad. We never advocate a position. We
               explain impact as fact — what would concretely change for someone
               with your profile. The civic actions we suggest (contacting your
@@ -77,7 +77,7 @@ export default function About() {
         <div className={styles.section}>
           <h2>Built by a student</h2>
           <p>
-            CivicLens was built by a high school student who serves on his town's
+            CivicCipher was built by a high school student who serves on his town's
             Board of Education, Commission on Aging, and Community Fund board. The
             goal is simple: give every student the same civic information that
             policy professionals have access to, in a format that actually makes sense.
