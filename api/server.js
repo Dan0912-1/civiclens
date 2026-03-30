@@ -12,10 +12,11 @@ const app = express()
 const EXTRA_ORIGIN = process.env.FRONTEND_URL
 
 const ALLOWED_ORIGINS = new Set([
-  'capacitor://localhost',   // iOS Capacitor app
-  'https://localhost',       // Android Capacitor app
-  'http://localhost:5173',   // Vite dev server
-  'http://localhost:4173',   // Vite preview
+  'capacitor://localhost',              // iOS Capacitor app
+  'https://localhost',                  // Android Capacitor app
+  'http://localhost:5173',              // Vite dev server
+  'http://localhost:4173',              // Vite preview
+  'https://civiclens-six.vercel.app',  // Vercel deployment
   ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
 ])
 
