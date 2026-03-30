@@ -6,6 +6,7 @@ import cors from 'cors'
 import { createClient } from '@supabase/supabase-js'
 import cron from 'node-cron'
 import { Resend } from 'resend'
+import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 
 const app = express()
@@ -39,7 +40,17 @@ app.use(express.json())
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
-const FCM_SERVER_KEY = process.env.FCM_SERVER_KEY
+// FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
+const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
+  ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : null
+const FCM_PROJECT_ID = FCM_SERVICE_ACCOUNT?.project_id || null
+const fcmAuth = FCM_SERVICE_ACCOUNT
+  ? new GoogleAuth({
+      credentials: FCM_SERVICE_ACCOUNT,
+      scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
+    })
+  : null
+
 const RESEND_KEY = process.env.RESEND_API_KEY
 const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'GovDecoded <onboarding@resend.dev>'
 const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
@@ -483,7 +494,7 @@ async function checkBillUpdates() {
     console.log('[cron] Skipping bill check — Supabase not configured')
     return
   }
-  if (!resend && !FCM_SERVER_KEY) {
+  if (!resend && !fcmAuth) {
     console.log('[cron] Skipping bill check — neither Resend nor FCM configured')
     return
   }
@@ -612,9 +623,12 @@ async function checkBillUpdates() {
     }
   }
 
-  // 7. Send push notifications to users with changes
+  // 7. Send push notifications to users with changes (FCM V1 API)
   let pushSent = 0
-  if (FCM_SERVER_KEY) {
+  if (fcmAuth) {
+    const client = await fcmAuth.getClient()
+    const { token: accessToken } = await client.getAccessToken()
+
     for (const [userId, changes] of userChanges) {
       try {
         const { data: profile } = await supabase
@@ -639,25 +653,33 @@ async function checkBillUpdates() {
 
         for (const { token } of tokens) {
           try {
-            const fcmResp = await fetch('https://fcm.googleapis.com/fcm/send', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `key=${FCM_SERVER_KEY}`,
-              },
-              body: JSON.stringify({
-                to: token,
-                notification: { title: 'Bill Update', body },
-                data: { url: '/bookmarks' },
-              }),
-            })
-            const fcmData = await fcmResp.json()
+            const fcmResp = await fetch(
+              `https://fcm.googleapis.com/v1/projects/${FCM_PROJECT_ID}/messages:send`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({
+                  message: {
+                    token,
+                    notification: { title: 'Bill Update', body },
+                    data: { url: '/bookmarks' },
+                  },
+                }),
+              }
+            )
 
-            // Clean up stale tokens
-            if (fcmData.results?.[0]?.error === 'NotRegistered') {
-              await supabase.from('push_tokens').delete().eq('token', token)
-            } else {
+            if (fcmResp.ok) {
               pushSent++
+            } else {
+              const errData = await fcmResp.json().catch(() => ({}))
+              // Clean up stale tokens (UNREGISTERED or NOT_FOUND)
+              const errCode = errData.error?.details?.[0]?.errorCode || ''
+              if (errCode === 'UNREGISTERED' || fcmResp.status === 404) {
+                await supabase.from('push_tokens').delete().eq('token', token)
+              }
             }
           } catch {
             // individual push failure is non-fatal
@@ -781,5 +803,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
-  console.log(`   FCM push: ${FCM_SERVER_KEY ? '✓ configured' : '✗ disabled'}`)
+  console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
 })
