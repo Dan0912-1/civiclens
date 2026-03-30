@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../context/AuthContext'
 import styles from './BillCard.module.css'
 
 const TAG_COLORS = {
@@ -30,8 +31,9 @@ function RelevanceMeter({ score }) {
   )
 }
 
-export default function BillCard({ bill, analysis, style }) {
+export default function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark }) {
   const [expanded, setExpanded] = useState(false)
+  const { user } = useAuth()
   const billId = `${bill.type}${bill.number}-${bill.congress}`
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
@@ -114,11 +116,20 @@ export default function BillCard({ bill, analysis, style }) {
           )}
 
           <div className={styles.cardFooter}>
+            {user && onToggleBookmark && (
+              <button
+                className={`${styles.bookmarkBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
+                onClick={e => { e.stopPropagation(); onToggleBookmark() }}
+                aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this bill'}
+              >
+                {isBookmarked ? '\u2605' : '\u2606'}
+              </button>
+            )}
             <button
               className={styles.expandBtn}
               onClick={() => setExpanded(e => !e)}
             >
-              {expanded ? 'Show less ↑' : 'See full impact + actions ↓'}
+              {expanded ? 'Show less \u2191' : 'See full impact + actions \u2193'}
             </button>
             {bill.url && (
               <a

@@ -70,3 +70,16 @@
   background: var(--amber-dark);
   transform: translateY(-1px);
 }
+
+.userPill {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--amber);
+  color: var(--navy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+}

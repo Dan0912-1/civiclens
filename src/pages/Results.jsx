@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { loadProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
@@ -9,6 +11,7 @@ const API_BASE = 'https://civiclens-production-07ed.up.railway.app'
 
 export default function Results() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [profile, setProfile] = useState(null)
   const [bills, setBills] = useState([])
   const [analyses, setAnalyses] = useState({}) // billId → analysis
@@ -16,16 +19,34 @@ export default function Results() {
   const [billError, setBillError] = useState('')
   const [activeFilter, setActiveFilter] = useState('All')
   const [settledBills, setSettledBills] = useState(new Set())
+  const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
 
-  // Load profile from session
+  // Load profile — try Supabase first for logged-in users, fall back to sessionStorage
   useEffect(() => {
-    const stored = sessionStorage.getItem('civicProfile')
-    if (!stored) {
-      navigate('/profile')
-      return
+    async function load() {
+      if (user) {
+        const cloud = await loadProfile(user.id)
+        if (cloud) {
+          sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
+          setProfile(cloud)
+          return
+        }
+      }
+      const stored = sessionStorage.getItem('civicProfile')
+      if (!stored) {
+        navigate('/profile')
+        return
+      }
+      setProfile(JSON.parse(stored))
     }
-    setProfile(JSON.parse(stored))
-  }, [navigate])
+    load()
+  }, [navigate, user])
+
+  // Load bookmarks for logged-in users
+  useEffect(() => {
+    if (!user) return
+    getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
+  }, [user])
 
   // Fetch bills when profile is ready
   useEffect(() => {
@@ -80,6 +101,17 @@ export default function Results() {
       console.error('Personalization failed for', billId, err)
     } finally {
       setSettledBills(prev => new Set([...prev, billId]))
+    }
+  }
+
+  async function toggleBookmark(billId, bill, analysis) {
+    if (!user) return
+    if (bookmarkedIds.has(billId)) {
+      setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
+      await removeBookmark(user.id, billId)
+    } else {
+      setBookmarkedIds(prev => new Set(prev).add(billId))
+      await addBookmark(user.id, billId, { bill, analysis })
     }
   }
 
@@ -172,6 +204,8 @@ export default function Results() {
                     key={billId}
                     bill={bill}
                     analysis={analyses[billId] || null}
+                    isBookmarked={bookmarkedIds.has(billId)}
+                    onToggleBookmark={() => toggleBookmark(billId, bill, analyses[billId])}
                     style={{ animationDelay: `${i * 0.08}s` }}
                   />
                 )
