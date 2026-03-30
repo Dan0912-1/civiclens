@@ -94,6 +94,20 @@
   margin-bottom: var(--space-sm);
 }
 
+.titleLink {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  line-height: inherit;
+  text-align: left;
+  transition: color 0.2s;
+}
+
+.titleLink:hover {
+  color: var(--amber-dark);
+}
+
 /* Latest action */
 .action {
   font-size: 0.8rem;
