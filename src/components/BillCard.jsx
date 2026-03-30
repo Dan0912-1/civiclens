@@ -32,7 +32,7 @@ function RelevanceMeter({ score }) {
   )
 }
 
-export default function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark }) {
+export default function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction }) {
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -131,7 +131,13 @@ export default function BillCard({ bill, analysis, style, isBookmarked = false, 
             {user && onToggleBookmark && (
               <button
                 className={`${styles.bookmarkBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
-                onClick={e => { e.stopPropagation(); onToggleBookmark() }}
+                onClick={e => {
+                  e.stopPropagation()
+                  if (!isBookmarked && onTrackInteraction) {
+                    onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
+                  }
+                  onToggleBookmark()
+                }}
                 aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this bill'}
               >
                 {isBookmarked ? '\u2605' : '\u2606'}
@@ -139,7 +145,13 @@ export default function BillCard({ bill, analysis, style, isBookmarked = false, 
             )}
             <button
               className={styles.expandBtn}
-              onClick={() => setExpanded(e => !e)}
+              onClick={() => {
+                const next = !expanded
+                setExpanded(next)
+                if (next && onTrackInteraction) {
+                  onTrackInteraction({ billId, actionType: 'expand_card', topicTag: analysis?.topic_tag })
+                }
+              }}
             >
               {expanded ? 'Show less \u2191' : 'See full impact + actions \u2193'}
             </button>

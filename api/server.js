@@ -30,8 +30,8 @@ app.use(cors({
     if (!origin || ALLOWED_ORIGINS.has(origin)) return callback(null, true)
     callback(new Error(`CORS: origin ${origin} not allowed`))
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 
 app.use(express.json())
@@ -39,6 +39,7 @@ app.use(express.json())
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
+const FCM_SERVER_KEY = process.env.FCM_SERVER_KEY
 const RESEND_KEY = process.env.RESEND_API_KEY
 const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'GovDecoded <onboarding@resend.dev>'
 const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
@@ -114,16 +115,19 @@ app.get('/api/health', (req, res) => {
 // ─── Fetch bills from Congress.gov ───────────────────────────────────────────
 // Searches recent bills filtered by student-relevant topics
 app.post('/api/legislation', async (req, res) => {
-  const { interests = [], grade, state } = req.body
+  const { interests = [], grade, state, interactionSummary } = req.body
 
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-  const cacheKey = `bills-${interests.sort().join('-')}-${grade}-${today}`
+  const summaryHash = interactionSummary ? Object.keys(interactionSummary.topicCounts || {}).sort().join(',') : ''
+  const cacheKey = `bills-${interests.sort().join('-')}-${grade}-${today}-${summaryHash}`
   const cached = getCache(cacheKey)
   if (cached) return res.json(cached)
 
   try {
-    // Build search terms from student interests
-    const searchTerms = buildSearchTerms(interests)
+    // Build search terms, weighted by interaction history if available
+    const searchTerms = interactionSummary
+      ? buildWeightedSearchTerms(interests, interactionSummary)
+      : buildSearchTerms(interests)
     const allBills = []
 
     // Fetch bills for each relevant search term (limit to 5 for more variety)
@@ -297,54 +301,175 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
   }
 })
 
+// ─── Auth helper ─────────────────────────────────────────────────────────────
+async function requireAuth(req) {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !supabase) throw new Error('Unauthorized')
+  const token = authHeader.replace('Bearer ', '')
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+  if (error || !user) throw new Error('Invalid token')
+  return user
+}
+
+// ─── Interaction tracking (interest refinement) ─────────────────────────────
+
+app.post('/api/interactions', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+
+    // Support single or batch interactions
+    const items = req.body.interactions || [req.body]
+    const rows = items
+      .filter(i => i.bill_id && i.action_type)
+      .map(i => ({
+        user_id: user.id,
+        bill_id: i.bill_id,
+        action_type: i.action_type,
+        topic_tag: i.topic_tag || null,
+      }))
+
+    if (rows.length && supabase) {
+      await supabase.from('bill_interactions').insert(rows)
+    }
+
+    res.json({ recorded: rows.length })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    res.status(500).json({ error: 'Failed to record interaction' })
+  }
+})
+
+app.get('/api/interactions/summary', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+
+    if (!supabase) return res.json({ topicCounts: {}, recentTopics: [], totalInteractions: 0 })
+
+    const { data, error } = await supabase
+      .from('bill_interactions')
+      .select('topic_tag')
+      .eq('user_id', user.id)
+      .not('topic_tag', 'is', null)
+
+    if (error) return res.json({ topicCounts: {}, recentTopics: [], totalInteractions: 0 })
+
+    const topicCounts = {}
+    for (const row of data) {
+      topicCounts[row.topic_tag] = (topicCounts[row.topic_tag] || 0) + 1
+    }
+
+    const recentTopics = Object.entries(topicCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([topic]) => topic)
+
+    res.json({ topicCounts, recentTopics, totalInteractions: data.length })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    res.status(500).json({ error: 'Failed to fetch interaction summary' })
+  }
+})
+
+// ─── Push notification token management ─────────────────────────────────────
+
+app.post('/api/push/register', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    const { token, platform } = req.body
+
+    if (!token || !platform) return res.status(400).json({ error: 'token and platform required' })
+    if (!['ios', 'android'].includes(platform)) return res.status(400).json({ error: 'platform must be ios or android' })
+
+    if (supabase) {
+      await supabase
+        .from('push_tokens')
+        .upsert({ user_id: user.id, token, platform }, { onConflict: 'user_id,token' })
+    }
+
+    res.json({ registered: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    res.status(500).json({ error: 'Failed to register push token' })
+  }
+})
+
+app.delete('/api/push/register', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    const { token } = req.body
+
+    if (supabase && token) {
+      await supabase
+        .from('push_tokens')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('token', token)
+    }
+
+    res.json({ removed: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    res.status(500).json({ error: 'Failed to remove push token' })
+  }
+})
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 app.get('/api/notifications/preferences', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !supabase) return res.status(401).json({ error: 'Unauthorized' })
-
   try {
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
-    if (authErr || !user) return res.status(401).json({ error: 'Invalid token' })
+    const user = await requireAuth(req)
 
     const { data, error } = await supabase
       .from('user_profiles')
-      .select('email_notifications')
+      .select('email_notifications, push_notifications')
       .eq('id', user.id)
       .single()
 
-    if (error || !data) return res.json({ email_notifications: true }) // default on
-    res.json({ email_notifications: data.email_notifications ?? true })
-  } catch {
+    if (error || !data) return res.json({ email_notifications: false, push_notifications: true })
+    res.json({
+      email_notifications: data.email_notifications ?? false,
+      push_notifications: data.push_notifications ?? true,
+    })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
     res.status(500).json({ error: 'Failed to fetch preferences' })
   }
 })
 
 app.post('/api/notifications/preferences', async (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader || !supabase) return res.status(401).json({ error: 'Unauthorized' })
-
   try {
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
-    if (authErr || !user) return res.status(401).json({ error: 'Invalid token' })
+    const user = await requireAuth(req)
 
-    const { email_notifications } = req.body
-    if (typeof email_notifications !== 'boolean') {
-      return res.status(400).json({ error: 'email_notifications must be a boolean' })
+    const update = { id: user.id, updated_at: new Date().toISOString() }
+    if (typeof req.body.email_notifications === 'boolean') {
+      update.email_notifications = req.body.email_notifications
+    }
+    if (typeof req.body.push_notifications === 'boolean') {
+      update.push_notifications = req.body.push_notifications
     }
 
     await supabase
       .from('user_profiles')
-      .upsert({
-        id: user.id,
-        email_notifications,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' })
+      .upsert(update, { onConflict: 'id' })
 
-    res.json({ email_notifications })
-  } catch {
+    res.json({
+      email_notifications: update.email_notifications,
+      push_notifications: update.push_notifications,
+    })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
     res.status(500).json({ error: 'Failed to update preferences' })
   }
 })
@@ -358,8 +483,8 @@ async function checkBillUpdates() {
     console.log('[cron] Skipping bill check — Supabase not configured')
     return
   }
-  if (!resend) {
-    console.log('[cron] Skipping bill check — Resend not configured')
+  if (!resend && !FCM_SERVER_KEY) {
+    console.log('[cron] Skipping bill check — neither Resend nor FCM configured')
     return
   }
 
@@ -454,7 +579,8 @@ async function checkBillUpdates() {
 
   // 6. Send emails to users with changes (respecting notification preferences)
   let emailsSent = 0
-  for (const [userId, changes] of userChanges) {
+  if (!resend) console.log('[cron] Email sending skipped — Resend not configured')
+  for (const [userId, changes] of resend ? userChanges : []) {
     try {
       // Check if user wants notifications
       const { data: profile } = await supabase
@@ -486,17 +612,74 @@ async function checkBillUpdates() {
     }
   }
 
-  console.log(`[cron] Bill check complete. ${bookmarkUpdates.length} bookmarks updated, ${emailsSent} emails sent.`)
+  // 7. Send push notifications to users with changes
+  let pushSent = 0
+  if (FCM_SERVER_KEY) {
+    for (const [userId, changes] of userChanges) {
+      try {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('push_notifications')
+          .eq('id', userId)
+          .single()
+
+        if (profile?.push_notifications === false) continue
+
+        const { data: tokens } = await supabase
+          .from('push_tokens')
+          .select('token')
+          .eq('user_id', userId)
+
+        if (!tokens?.length) continue
+
+        const count = changes.length
+        const body = count === 1
+          ? `${changes[0].type} ${changes[0].number} has a new status update`
+          : `${count} of your saved bills have new status updates`
+
+        for (const { token } of tokens) {
+          try {
+            const fcmResp = await fetch('https://fcm.googleapis.com/fcm/send', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `key=${FCM_SERVER_KEY}`,
+              },
+              body: JSON.stringify({
+                to: token,
+                notification: { title: 'Bill Update', body },
+                data: { url: '/bookmarks' },
+              }),
+            })
+            const fcmData = await fcmResp.json()
+
+            // Clean up stale tokens
+            if (fcmData.results?.[0]?.error === 'NotRegistered') {
+              await supabase.from('push_tokens').delete().eq('token', token)
+            } else {
+              pushSent++
+            }
+          } catch {
+            // individual push failure is non-fatal
+          }
+        }
+      } catch (err) {
+        console.error(`[cron] Push failed for user ${userId}:`, err.message)
+      }
+    }
+  }
+
+  console.log(`[cron] Bill check complete. ${bookmarkUpdates.length} bookmarks updated, ${emailsSent} emails sent, ${pushSent} push notifications sent.`)
 }
 
-// Schedule: daily at 8:00 AM UTC
-if (supabase && resend) {
+// Schedule: daily at 8:00 AM UTC (needs Supabase; Resend and FCM are optional)
+if (supabase) {
   cron.schedule('0 8 * * *', () => {
     checkBillUpdates().catch(err => console.error('[cron] Unhandled error:', err))
   })
   console.log('   Bill-update cron: \u2713 scheduled (daily 8:00 AM UTC)')
 } else {
-  console.log(`   Bill-update cron: \u2717 disabled (${!supabase ? 'no Supabase' : 'no Resend key'})`)
+  console.log('   Bill-update cron: \u2717 disabled (no Supabase)')
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -505,27 +688,38 @@ function gradeToAge(grade) {
   return map[String(grade)] || 16
 }
 
-function buildSearchTerms(interests = []) {
-  // Always search for student/youth bills
-  const base = ['student loan', 'education funding', 'youth']
+const INTEREST_MAP = {
+  education:    ['student loan', 'education funding', 'youth'],
+  environment:  ['climate change', 'clean energy', 'environmental protection'],
+  economy:      ['minimum wage', 'workforce training', 'student debt'],
+  healthcare:   ['mental health', 'student health', 'medicaid'],
+  technology:   ['artificial intelligence', 'data privacy', 'broadband'],
+  housing:      ['affordable housing', 'rent assistance'],
+  immigration:  ['DACA', 'student visa', 'immigration'],
+  civil_rights: ['voting rights', 'civil rights', 'discrimination'],
+  community:    ['national service', 'community grants', 'AmeriCorps'],
+}
 
-  const interestMap = {
-    environment:  ['climate change', 'clean energy', 'environmental protection'],
-    economy:      ['minimum wage', 'workforce training', 'student debt'],
-    healthcare:   ['mental health', 'student health', 'medicaid'],
-    technology:   ['artificial intelligence', 'data privacy', 'broadband'],
-    housing:      ['affordable housing', 'rent assistance'],
-    immigration:  ['DACA', 'student visa', 'immigration'],
-    civil_rights: ['voting rights', 'civil rights', 'discrimination'],
-    community:    ['national service', 'community grants', 'AmeriCorps'],
-  }
+// Reverse mapping: topic tag → interest key
+const TAG_TO_INTEREST = {
+  'Education': 'education',
+  'Environment': 'environment',
+  'Economy': 'economy',
+  'Healthcare': 'healthcare',
+  'Technology': 'technology',
+  'Housing': 'housing',
+  'Civil Rights': 'civil_rights',
+  'Other': null,
+}
+
+function buildSearchTerms(interests = []) {
+  const base = ['student loan', 'education funding', 'youth']
 
   const terms = [...base]
   for (const interest of interests) {
-    if (interestMap[interest]) terms.push(...interestMap[interest])
+    if (INTEREST_MAP[interest]) terms.push(...INTEREST_MAP[interest])
   }
 
-  // Shuffle so repeated sessions with same interests surface different bills
   const unique = [...new Set(terms)]
   for (let i = unique.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -535,6 +729,51 @@ function buildSearchTerms(interests = []) {
   return unique.slice(0, 5)
 }
 
+function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
+  const { topicCounts = {} } = interactionSummary
+  const base = ['student loan', 'education funding', 'youth']
+  const terms = [...base]
+
+  // Map topic tags to interest keys with interaction counts
+  const interestCounts = {}
+  for (const [tag, count] of Object.entries(topicCounts)) {
+    const key = TAG_TO_INTEREST[tag]
+    if (key) interestCounts[key] = (interestCounts[key] || 0) + count
+  }
+
+  // High-engagement interests (>5 interactions): include all terms
+  // Medium (1-5): include 1-2 terms
+  // Zero but in profile: include 1 discovery term
+  for (const interest of interests) {
+    const mapped = INTEREST_MAP[interest]
+    if (!mapped) continue
+
+    const count = interestCounts[interest] || 0
+    if (count > 5) {
+      terms.push(...mapped) // all terms
+    } else if (count >= 1) {
+      terms.push(...mapped.slice(0, 2)) // 1-2 terms
+    } else {
+      terms.push(mapped[0]) // 1 discovery term
+    }
+  }
+
+  // Also boost topics the user engages with that aren't in their profile
+  for (const [interest, count] of Object.entries(interestCounts)) {
+    if (!interests.includes(interest) && count > 3 && INTEREST_MAP[interest]) {
+      terms.push(INTEREST_MAP[interest][0])
+    }
+  }
+
+  const unique = [...new Set(terms)]
+  for (let i = unique.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [unique[i], unique[j]] = [unique[j], unique[i]]
+  }
+
+  return unique.slice(0, 7) // increased from 5 for more variety
+}
+
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
@@ -542,4 +781,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
+  console.log(`   FCM push: ${FCM_SERVER_KEY ? '✓ configured' : '✗ disabled'}`)
 })
