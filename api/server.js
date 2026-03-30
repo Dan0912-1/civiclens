@@ -5,7 +5,30 @@ import express from 'express'
 import cors from 'cors'
 
 const app = express()
-app.use(cors())
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// Allows the Vercel web frontend, the Capacitor iOS/Android app (capacitor://
+// and https://localhost), and local dev. Add origins via FRONTEND_URL on Railway.
+const EXTRA_ORIGIN = process.env.FRONTEND_URL
+
+const ALLOWED_ORIGINS = new Set([
+  'capacitor://localhost',   // iOS Capacitor app
+  'https://localhost',       // Android Capacitor app
+  'http://localhost:5173',   // Vite dev server
+  'http://localhost:4173',   // Vite preview
+  ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
+])
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. curl, Postman, server-to-server)
+    if (!origin || ALLOWED_ORIGINS.has(origin)) return callback(null, true)
+    callback(new Error(`CORS: origin ${origin} not allowed`))
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+}))
+
 app.use(express.json())
 
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
@@ -30,7 +53,12 @@ function setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() })
 }
 
-// ─── Health check ─────────────────────────────────────────────────────────────
+// ─── Health checks ────────────────────────────────────────────────────────────
+// Railway's proxy verifies GET / to confirm the service is up
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'CivicLens API', timestamp: new Date().toISOString() })
+})
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
@@ -40,7 +68,8 @@ app.get('/api/health', (req, res) => {
 app.post('/api/legislation', async (req, res) => {
   const { interests = [], grade, state } = req.body
 
-  const cacheKey = `bills-${interests.sort().join('-')}-${grade}`
+  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  const cacheKey = `bills-${interests.sort().join('-')}-${grade}-${today}`
   const cached = getCache(cacheKey)
   if (cached) return res.json(cached)
 
@@ -49,8 +78,8 @@ app.post('/api/legislation', async (req, res) => {
     const searchTerms = buildSearchTerms(interests)
     const allBills = []
 
-    // Fetch bills for each relevant search term (limit to 3 to conserve quota)
-    for (const term of searchTerms.slice(0, 3)) {
+    // Fetch bills for each relevant search term (limit to 5 for more variety)
+    for (const term of searchTerms.slice(0, 5)) {
       const url = `${CONGRESS_BASE}/bill?query=${encodeURIComponent(term)}&sort=updateDate+desc&limit=8&api_key=${CONGRESS_KEY}`
       const resp = await fetch(url)
 
@@ -183,7 +212,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5',
+        model: 'claude-haiku-4-5',
         max_tokens: 900,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }]
@@ -236,10 +265,17 @@ function buildSearchTerms(interests = []) {
 
   const terms = [...base]
   for (const interest of interests) {
-    if (interestMap[interest]) terms.push(interestMap[interest][0])
+    if (interestMap[interest]) terms.push(...interestMap[interest])
   }
 
-  return [...new Set(terms)]
+  // Shuffle so repeated sessions with same interests surface different bills
+  const unique = [...new Set(terms)]
+  for (let i = unique.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [unique[i], unique[j]] = [unique[j], unique[i]]
+  }
+
+  return unique.slice(0, 5)
 }
 
 const PORT = process.env.PORT || 3001
