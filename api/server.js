@@ -3,6 +3,7 @@
 
 import express from 'express'
 import cors from 'cors'
+import { createClient } from '@supabase/supabase-js'
 
 const app = express()
 
@@ -36,7 +37,14 @@ const CONGRESS_KEY = process.env.CONGRESS_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
 
-// ─── Simple in-memory cache to conserve API quota ─────────────────────────────
+// ─── Supabase client (persistent cache for Claude personalizations) ──────────
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY
+const supabase = SUPABASE_URL && SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null
+
+// ─── In-memory cache for cheap/volatile Congress.gov calls ───────────────────
 const cache = new Map()
 const CACHE_TTL = 1000 * 60 * 60 // 1 hour
 
@@ -52,6 +60,39 @@ function getCache(key) {
 
 function setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() })
+}
+
+// ─── Supabase-backed persistent cache for personalizations ──────────────────
+async function getSupabaseCache(key) {
+  if (!supabase) return null
+  try {
+    const { data, error } = await supabase
+      .from('personalization_cache')
+      .select('response')
+      .eq('cache_key', key)
+      .single()
+    if (error || !data) return null
+    return data.response
+  } catch {
+    return null
+  }
+}
+
+async function setSupabaseCache(key, billId, grade, interests, response) {
+  if (!supabase) return
+  try {
+    await supabase
+      .from('personalization_cache')
+      .upsert({
+        cache_key: key,
+        bill_id: billId,
+        grade,
+        interests,
+        response,
+      }, { onConflict: 'cache_key' })
+  } catch (err) {
+    console.error('Supabase cache write error:', err.message)
+  }
 }
 
 // ─── Health checks ────────────────────────────────────────────────────────────
@@ -151,8 +192,11 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
 app.post('/api/personalize', async (req, res) => {
   const { bill, profile } = req.body
 
-  const cacheKey = `personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${(profile.interests || []).sort().join('-')}`
-  const cached = getCache(cacheKey)
+  const sortedInterests = (profile.interests || []).sort()
+  const cacheKey = `personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
+
+  // Check Supabase persistent cache first, fall back to in-memory
+  const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
   const systemPrompt = `You are CivicLens, a strictly nonpartisan civic education tool built for American high school students.
@@ -232,6 +276,8 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
       const result = { analysis: parsed }
+      const billId = `${bill.type}${bill.number}-${bill.congress}`
+      await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
       setCache(cacheKey, result)
       res.json(result)
     } catch {
@@ -286,4 +332,5 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
 })
