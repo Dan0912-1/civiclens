@@ -226,7 +226,9 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
     }
 
     try {
-      const text = data.content[0].text.trim()
+      let text = data.content[0].text.trim()
+      // Strip markdown code fences if the model added them
+      text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
       const result = { analysis: parsed }
       setCache(cacheKey, result)
