@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.3.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/cli": "^8.3.0",
     "@capacitor/core": "^8.3.0",
     "@capacitor/ios": "^8.3.0",
@@ -20,6 +22,7 @@
     "@supabase/supabase-js": "^2.100.1",
     "cors": "^2.8.5",
     "express": "^4.18.3",
+    "google-auth-library": "^10.6.2",
     "node-cron": "^4.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
