@@ -1,6 +1,6 @@
 {
-  "appId": "com.govdecoded.app",
-  "appName": "GovDecoded",
+  "appId": "com.capitolkey.app",
+  "appName": "CapitolKey",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

@@ -22,7 +22,7 @@ export default function Home() {
             <span className={styles.accent}>See how they affect you.</span>
           </h1>
           <p className={styles.subhead}>
-            GovDecoded pulls real bills moving through Congress right now and
+            CapitolKey pulls real bills moving through Congress right now and
             translates them into plain English — personalized to your state,
             grade, and what you care about.
           </p>
@@ -73,7 +73,7 @@ export default function Home() {
         <div className={styles.steps}>
           {[
             { n: '01', title: 'Tell us about yourself', body: 'Your state, grade, job status, and what issues matter to you. No account required.' },
-            { n: '02', title: 'We find the bills', body: 'GovDecoded pulls real legislation moving through Congress right now — filtered to what\'s relevant.' },
+            { n: '02', title: 'We find the bills', body: 'CapitolKey pulls real legislation moving through Congress right now — filtered to what\'s relevant.' },
             { n: '03', title: 'See your impact', body: 'Every bill explained in plain English: what changes for you if it passes, what stays the same if it fails.' },
           ].map(step => (
             <div key={step.n} className={styles.step}>
