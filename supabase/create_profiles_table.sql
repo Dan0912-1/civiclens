@@ -1,4 +1,4 @@
--- User profiles table for GovDecoded
+-- User profiles table for CapitolKey
 -- Stores onboarding profile data for signed-in users so it persists across sessions.
 -- Run this in your Supabase SQL Editor (alongside create_cache_table.sql).
 

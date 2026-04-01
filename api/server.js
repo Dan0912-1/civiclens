@@ -3,6 +3,7 @@
 
 import express from 'express'
 import cors from 'cors'
+import rateLimit from 'express-rate-limit'
 import { createClient } from '@supabase/supabase-js'
 import cron from 'node-cron'
 import { Resend } from 'resend'
@@ -36,6 +37,32 @@ app.use(cors({
 }))
 
 app.use(express.json())
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+// Protects expensive endpoints from abuse (AI personalization, Congress.gov proxy)
+const legislationLimiter = rateLimit({
+  windowMs: 60 * 1000,     // 1 minute
+  max: 15,                  // 15 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please wait a moment and try again.' },
+})
+
+const personalizeLimiter = rateLimit({
+  windowMs: 60 * 1000,     // 1 minute
+  max: 30,                  // 30 personalizations per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many personalization requests — please slow down.' },
+})
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50,                   // 50 auth-related requests per 15 min per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please try again later.' },
+})
 
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
@@ -125,7 +152,7 @@ app.get('/api/health', (req, res) => {
 
 // ─── Fetch bills from Congress.gov ───────────────────────────────────────────
 // Searches recent bills filtered by student-relevant topics
-app.post('/api/legislation', async (req, res) => {
+app.post('/api/legislation', legislationLimiter, async (req, res) => {
   const { interests = [], grade, state, interactionSummary } = req.body
 
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
@@ -210,7 +237,7 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
 })
 
 // ─── Anthropic personalization endpoint ──────────────────────────────────────
-app.post('/api/personalize', async (req, res) => {
+app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()
@@ -324,7 +351,7 @@ async function requireAuth(req) {
 
 // ─── Interaction tracking (interest refinement) ─────────────────────────────
 
-app.post('/api/interactions', async (req, res) => {
+app.post('/api/interactions', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 

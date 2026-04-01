@@ -1,7 +1,7 @@
-# GovDecoded — App Store Metadata
+# CapitolKey — App Store Metadata
 
 ## App Name
-GovDecoded
+CapitolKey
 
 ## Subtitle (30 chars max)
 Legislation, explained for you
@@ -17,7 +17,7 @@ legislation,congress,bills,civic,government,politics,education,students,laws,non
 
 ## Description
 
-GovDecoded takes real bills moving through Congress right now and explains them in plain English — personalized to your state, grade, and interests.
+CapitolKey takes real bills moving through Congress right now and explains them in plain English — personalized to your state, grade, and interests.
 
 See exactly how federal legislation could affect your daily life: your student loans, your part-time job, your environment, your future. Every explanation is strictly nonpartisan — we explain impact, never opinions.
 
@@ -35,25 +35,39 @@ FEATURES:
 - No account required to browse — sign in to save and get notifications
 - Built by a student, for students
 
-GovDecoded is a civic education tool built for American high school students. It was created by a student who serves on his town's Board of Education and believes every student deserves access to the same civic information that policy professionals have.
+CapitolKey is a civic education tool built for American high school students. It was created by a student who serves on his town's Board of Education and believes every student deserves access to the same civic information that policy professionals have.
 
 ## Promotional Text (170 chars max, can be updated without new review)
 See how real bills in Congress affect your life — personalized to your state and interests. Nonpartisan. Plain English. Built by a student.
 
 ## Privacy Policy URL
-https://civiclens-six.vercel.app/privacy
+https://capitolkey.vercel.app/privacy
 
 ## Terms of Service URL
-https://civiclens-six.vercel.app/terms
+https://capitolkey.vercel.app/terms
 
 ## Support URL
-mailto:support@govdecoded.app
+mailto:support@capitolkey.app
 
 ## Age Rating
 4+ (no objectionable content)
 
 ## Copyright
-2026 GovDecoded
+2026 CapitolKey
+
+## App Review Notes
+CapitolKey is a civic education tool for high school students. It fetches real legislation from Congress.gov and uses AI (Claude by Anthropic) to explain each bill in plain language personalized to the student's profile (state, grade, interests).
+
+To test the app:
+1. Tap "See my legislation" on the home screen
+2. Select any U.S. state, a grade (9-12), and at least one interest
+3. Tap "See my bills" — the app fetches real bills and personalizes each one
+4. Tap any bill card to expand it and see "If it passes" / "If it fails" analysis
+5. Sign in (Google or email) to bookmark bills and receive status-change notifications
+
+No special credentials are needed. The app works fully without an account — sign-in is only required for bookmarks and notifications.
+
+The AI personalization is strictly nonpartisan and does not advocate any political position. The system prompt explicitly forbids evaluative language about legislation.
 
 ---
 

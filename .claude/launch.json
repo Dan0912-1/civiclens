@@ -11,7 +11,7 @@
     {
       "name": "Backend (Express API)",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--env-file=/Users/danieljacius/Downloads/civiclens/.env", "api/server.js"],
+      "runtimeArgs": ["--env-file=.env", "api/server.js"],
       "port": 3001
     },
     {

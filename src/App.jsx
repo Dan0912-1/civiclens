@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { initPushNotifications } from './lib/pushNotifications'
+import Onboarding from './components/Onboarding.jsx'
 import Home from './pages/Home.jsx'
 import Profile from './pages/Profile.jsx'
 import Results from './pages/Results.jsx'
@@ -17,6 +18,9 @@ import OfflineScreen from './components/OfflineScreen.jsx'
 export default function App() {
   const { user, loading } = useAuth()
   const { pathname } = useLocation()
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => !localStorage.getItem('ck_onboarded')
+  )
 
   // Hide splash screen once auth state is resolved and UI is ready
   useEffect(() => {
@@ -79,8 +83,16 @@ export default function App() {
     })
   }, [user])
 
+  function completeOnboarding() {
+    localStorage.setItem('ck_onboarded', '1')
+    setShowOnboarding(false)
+  }
+
   return (
     <>
+      {showOnboarding && pathname === '/' && (
+        <Onboarding onComplete={completeOnboarding} />
+      )}
       <OfflineScreen />
       <Nav />
       <Routes>

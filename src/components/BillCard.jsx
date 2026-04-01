@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import styles from './BillCard.module.css'
 
+function haptic(style = 'Light') {
+  import('@capacitor/haptics')
+    .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
+    .catch(() => {})
+}
+
 const TAG_COLORS = {
   Education:    'blue',
   Healthcare:   'green',
@@ -153,6 +159,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                   className={`${styles.bookmarkBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
                   onClick={e => {
                     e.stopPropagation()
+                    haptic('Medium')
                     if (!isBookmarked && onTrackInteraction) {
                       onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
                     }
@@ -166,6 +173,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
               <button
                 className={styles.expandBtn}
                 onClick={() => {
+                  haptic('Light')
                   const next = !expanded
                   setExpanded(next)
                   if (next && onTrackInteraction) {
@@ -194,6 +202,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                 className={styles.shareBtn}
                 onClick={e => {
                   e.stopPropagation()
+                  haptic('Light')
                   shareBill(bill, analysis)
                   setCopied(true)
                   setTimeout(() => setCopied(false), 2000)
