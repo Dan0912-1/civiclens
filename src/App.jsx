@@ -40,7 +40,7 @@ export default function App() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const [showOnboarding, setShowOnboarding] = useState(
-    () => !localStorage.getItem('ck_onboarded')
+    () => !localStorage.getItem('ck_onboarded_v2')
   )
 
   // Hide splash screen once auth state is resolved and UI is ready
@@ -154,7 +154,7 @@ export default function App() {
   }, [navigate])
 
   function completeOnboarding() {
-    localStorage.setItem('ck_onboarded', '1')
+    localStorage.setItem('ck_onboarded_v2', '1')
     setShowOnboarding(false)
   }
 
