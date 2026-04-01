@@ -1,4 +1,4 @@
-package com.civiclens.app;
+package com.capitolkey.app;
 
 import com.getcapacitor.BridgeActivity;
 

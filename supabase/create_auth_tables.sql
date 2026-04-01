@@ -1,12 +1,12 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- GovDecoded — Auth Tables Migration
+-- CapitolKey — Auth Tables Migration
 -- Run this once in your Supabase project via: Dashboard → SQL Editor → New query
 --
 -- Prerequisites:
 --   1. Enable Google OAuth:  Auth → Providers → Google → toggle on
 --      (needs a Google Cloud OAuth client ID + secret)
 --   2. Set redirect URLs:    Auth → URL Configuration → Redirect URLs
---      Add:  https://civiclens-six.vercel.app
+--      Add:  https://capitolkey.vercel.app
 --      Add:  http://localhost:5173
 --   3. Set frontend env vars (Vercel project settings + local .env):
 --      VITE_SUPABASE_URL      = https://your-project.supabase.co
