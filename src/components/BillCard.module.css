@@ -150,6 +150,23 @@
   to { transform: rotate(360deg); }
 }
 
+/* Analyze failed */
+.analyzeFailed {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: var(--space-md) 0;
+}
+
+.analyzeFailed span {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.failedSubtext {
+  font-size: 0.8rem;
+  margin-top: var(--space-xs);
+}
+
 /* Headline */
 .headline {
   font-family: var(--font-display);
