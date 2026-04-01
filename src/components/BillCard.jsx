@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import styles from './BillCard.module.css'
@@ -42,7 +42,7 @@ function shareBill(bill, analysis) {
   }
 }
 
-export default function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction }) {
+export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const navigate = useNavigate()
@@ -93,10 +93,18 @@ export default function BillCard({ bill, analysis, style, isBookmarked = false, 
       </p>
 
       {/* Analysis — loading */}
-      {isLoading && (
+      {isLoading && !personalizationFailed && (
         <div className={styles.analyzing}>
           <div className={styles.analyzeSpinner} />
           <span>Personalizing for you...</span>
+        </div>
+      )}
+
+      {/* Analysis — failed */}
+      {isLoading && personalizationFailed && (
+        <div className={styles.analyzeFailed}>
+          <span>Personalization unavailable</span>
+          <p className={styles.failedSubtext}>You can still read the full bill details.</p>
         </div>
       )}
 
@@ -203,4 +211,4 @@ export default function BillCard({ bill, analysis, style, isBookmarked = false, 
 
     </div>
   )
-}
+})

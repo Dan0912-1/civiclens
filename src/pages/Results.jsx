@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { loadProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
@@ -20,6 +20,7 @@ export default function Results() {
   const [billError, setBillError] = useState('')
   const [activeFilter, setActiveFilter] = useState('All')
   const [settledBills, setSettledBills] = useState(new Set())
+  const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
   const [interactionSummary, setInteractionSummary] = useState(null)
   const prevUserRef = useRef(null)
@@ -84,6 +85,7 @@ export default function Results() {
     setLoadingBills(true)
     setBillError('')
     setSettledBills(new Set())
+    setFailedBills(new Set())
     try {
       const body = {
         interests: profile.interests,
@@ -129,6 +131,7 @@ export default function Results() {
       }
     } catch (err) {
       console.error('Personalization failed for', billId, err)
+      setFailedBills(prev => new Set([...prev, billId]))
     } finally {
       setSettledBills(prev => new Set([...prev, billId]))
     }
@@ -155,23 +158,25 @@ export default function Results() {
   }
 
   // Collect all topic tags for filter bar
-  const topicTags = ['All', ...new Set(
+  const topicTags = useMemo(() => ['All', ...new Set(
     Object.values(analyses).map(a => a.topic_tag).filter(Boolean)
-  )]
+  )], [analyses])
 
-  const filteredBills = (activeFilter === 'All'
-    ? bills
-    : bills.filter(b => {
-        const id = `${b.type}${b.number}-${b.congress}`
-        return analyses[id]?.topic_tag === activeFilter
-      })
-  ).slice().sort((a, b) => {
-    const idA = `${a.type}${a.number}-${a.congress}`
-    const idB = `${b.type}${b.number}-${b.congress}`
-    const relA = analyses[idA]?.relevance ?? -1
-    const relB = analyses[idB]?.relevance ?? -1
-    return relB - relA
-  })
+  const filteredBills = useMemo(() => {
+    const filtered = activeFilter === 'All'
+      ? bills
+      : bills.filter(b => {
+          const id = `${b.type}${b.number}-${b.congress}`
+          return analyses[id]?.topic_tag === activeFilter
+        })
+    return [...filtered].sort((a, b) => {
+      const idA = `${a.type}${a.number}-${a.congress}`
+      const idB = `${b.type}${b.number}-${b.congress}`
+      const relA = analyses[idA]?.relevance ?? -1
+      const relB = analyses[idB]?.relevance ?? -1
+      return relB - relA
+    })
+  }, [activeFilter, bills, analyses])
 
   if (!profile) return null
 
@@ -266,6 +271,7 @@ export default function Results() {
                     key={billId}
                     bill={bill}
                     analysis={analyses[billId] || null}
+                    personalizationFailed={failedBills.has(billId)}
                     isBookmarked={bookmarkedIds.has(billId)}
                     onToggleBookmark={() => toggleBookmark(billId, bill, analyses[billId])}
                     onTrackInteraction={handleTrackInteraction}
