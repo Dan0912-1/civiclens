@@ -12,6 +12,11 @@ export default function Nav() {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
 
+  // Auto-close auth modal when user signs in (e.g. after Google OAuth redirect)
+  useEffect(() => {
+    if (user) setShowAuth(false)
+  }, [user])
+
   const initial = user?.email?.[0]?.toUpperCase() || '?'
 
   useEffect(() => { setMenuOpen(false) }, [pathname])
