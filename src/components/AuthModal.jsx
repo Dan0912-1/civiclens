@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext'
 import styles from './AuthModal.module.css'
 
 export default function AuthModal({ isOpen, onClose }) {
-  const { signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth()
+  const { signInWithGoogle, signInWithApple, signInWithEmail, signUpWithEmail } = useAuth()
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -30,6 +30,12 @@ export default function AuthModal({ isOpen, onClose }) {
   async function handleGoogle() {
     setError('')
     const { error } = await signInWithGoogle()
+    if (error) setError(error.message)
+  }
+
+  async function handleApple() {
+    setError('')
+    const { error } = await signInWithApple()
     if (error) setError(error.message)
   }
 
@@ -78,6 +84,13 @@ export default function AuthModal({ isOpen, onClose }) {
           </div>
         ) : (
           <>
+            <button className={styles.appleBtn} onClick={handleApple}>
+              <svg width="17" height="20" viewBox="0 0 17 20" fill="none" aria-hidden="true">
+                <path d="M13.508 10.6c-.02-2.17 1.773-3.22 1.854-3.272-1.01-1.477-2.583-1.68-3.143-1.703-1.337-.135-2.61.787-3.285.787-.675 0-1.714-.77-2.824-.748-1.449.02-2.785.843-3.532 2.137C.758 10.35 1.844 15.04 3.66 17.196c.898 1.05 1.967 2.224 3.372 2.176 1.356-.047 1.868-.873 3.507-.873 1.638 0 2.103.873 3.527.844 1.458-.023 2.384-1.063 3.272-2.12.994-1.195 1.41-2.364 1.432-2.424-.03-.013-2.75-1.053-2.773-4.199H13.508zm-2.6-7.7c.748-.9 1.25-2.146 1.113-3.4-1.074.044-2.38.715-3.15 1.614-.693.8-1.3 2.078-1.135 3.303 1.198.092 2.424-.607 3.172-1.517z" fill="white"/>
+              </svg>
+              Continue with Apple
+            </button>
+
             <button className={styles.googleBtn} onClick={handleGoogle}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                 <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>

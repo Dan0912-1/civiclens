@@ -1,8 +1,8 @@
-# CivicLens
+# GovDecoded
 
 **Real legislation. Plain language. Personalized to you.**
 
-CivicLens pulls real bills moving through Congress and uses AI to explain how each one affects a specific student's life — based on their state, grade, job status, and interests. Strictly nonpartisan.
+GovDecoded pulls real bills moving through Congress and uses AI to explain how each one affects a specific student's life — based on their state, grade, job status, and interests. Strictly nonpartisan.
 
 ---
 

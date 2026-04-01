@@ -1,4 +1,4 @@
-// api/server.js — CivicLens Backend
+// api/server.js — GovDecoded Backend
 // All API keys live here, never in the frontend
 
 import express from 'express'
@@ -62,6 +62,36 @@ const supabase = SUPABASE_URL && SUPABASE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_KEY)
   : null
 
+// ─── Simple in-memory rate limiter ──────────────────────────────────────────
+const rateLimitMap = new Map()
+const RATE_LIMIT_WINDOW = 60_000 // 1 minute
+const RATE_LIMIT_MAX = 15        // max requests per window per IP
+
+function rateLimit(req, res, next) {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip
+  const now = Date.now()
+  const entry = rateLimitMap.get(ip)
+
+  if (!entry || now - entry.start > RATE_LIMIT_WINDOW) {
+    rateLimitMap.set(ip, { start: now, count: 1 })
+    return next()
+  }
+
+  entry.count++
+  if (entry.count > RATE_LIMIT_MAX) {
+    return res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' })
+  }
+  next()
+}
+
+// Clean up stale rate limit entries every 5 minutes
+setInterval(() => {
+  const cutoff = Date.now() - RATE_LIMIT_WINDOW
+  for (const [ip, entry] of rateLimitMap) {
+    if (entry.start < cutoff) rateLimitMap.delete(ip)
+  }
+}, 5 * 60_000)
+
 // ─── In-memory cache for cheap/volatile Congress.gov calls ───────────────────
 const cache = new Map()
 const CACHE_TTL = 1000 * 60 * 60 // 1 hour
@@ -116,7 +146,7 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
 // ─── Health checks ────────────────────────────────────────────────────────────
 // Railway's proxy verifies GET / to confirm the service is up
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'CivicLens API', timestamp: new Date().toISOString() })
+  res.json({ status: 'ok', service: 'GovDecoded API', timestamp: new Date().toISOString() })
 })
 
 app.get('/api/health', (req, res) => {
@@ -210,7 +240,7 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
 })
 
 // ─── Anthropic personalization endpoint ──────────────────────────────────────
-app.post('/api/personalize', async (req, res) => {
+app.post('/api/personalize', rateLimit, async (req, res) => {
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()
@@ -220,7 +250,7 @@ app.post('/api/personalize', async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  const systemPrompt = `You are CivicLens, a strictly nonpartisan civic education tool built for American high school students.
+  const systemPrompt = `You are GovDecoded, a strictly nonpartisan civic education tool built for American high school students.
 
 Your only job is to explain how a real piece of legislation could affect a specific student's daily life.
 
@@ -429,6 +459,36 @@ app.delete('/api/push/register', async (req, res) => {
       return res.status(401).json({ error: err.message })
     }
     res.status(500).json({ error: 'Failed to remove push token' })
+  }
+})
+
+// ─── Account deletion ────────────────────────────────────────────────────────
+
+app.delete('/api/account', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+
+    if (supabase) {
+      // Delete all user data in order (respecting foreign key constraints)
+      await supabase.from('push_tokens').delete().eq('user_id', user.id)
+      await supabase.from('bill_interactions').delete().eq('user_id', user.id)
+      await supabase.from('bookmarks').delete().eq('user_id', user.id)
+      await supabase.from('user_profiles').delete().eq('id', user.id)
+
+      // Delete the auth user via admin API
+      const { error } = await supabase.auth.admin.deleteUser(user.id)
+      if (error) {
+        console.error('Failed to delete auth user:', error.message)
+        return res.status(500).json({ error: 'Failed to delete account. Please try again.' })
+      }
+    }
+
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    res.status(500).json({ error: 'Failed to delete account' })
   }
 })
 
@@ -798,7 +858,7 @@ function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
+  console.log(`✅ GovDecoded server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)

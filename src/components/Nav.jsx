@@ -36,6 +36,12 @@ export default function Nav() {
               >
                 Saved
               </button>
+              <button
+                className={`${styles.link} ${pathname === '/settings' ? styles.active : ''}`}
+                onClick={() => navigate('/settings')}
+              >
+                Settings
+              </button>
               <div className={styles.userPill}>{initial}</div>
               <button className={styles.link} onClick={signOut}>
                 Sign out

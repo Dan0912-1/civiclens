@@ -91,6 +91,10 @@ export default function About() {
           </button>
         </div>
 
+        <div className={styles.legalLinks}>
+          <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
+        </div>
+
       </div>
     </main>
   )

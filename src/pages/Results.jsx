@@ -107,7 +107,7 @@ export default function Results() {
         setBillError('Could not load bills. Please try again.')
       }
     } catch (err) {
-      setBillError('Network error. Is the server running?')
+      setBillError('Unable to connect. Please check your internet connection and try again.')
     } finally {
       setLoadingBills(false)
     }

@@ -146,3 +146,22 @@
   background: var(--amber-dark);
   transform: translateY(-1px);
 }
+
+/* Legal links */
+.legalLinks {
+  text-align: center;
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.legalLinks button {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-decoration: underline;
+  transition: color 0.15s;
+}
+
+.legalLinks button:hover {
+  color: var(--navy);
+}
