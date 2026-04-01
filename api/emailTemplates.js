@@ -26,7 +26,7 @@ export function billUpdateEmail(userName, changedBills) {
 
       <!-- Header -->
       <div style="background:#111827;padding:24px 24px 20px">
-        <span style="font-size:20px;color:#fff;font-weight:700">&#9878; GovDecoded</span>
+        <span style="font-size:20px;color:#fff;font-weight:700">&#9878; CapitolKey</span>
         <p style="color:#9ca3af;margin:6px 0 0;font-size:14px">Bill Status Update</p>
       </div>
 
@@ -52,15 +52,15 @@ export function billUpdateEmail(userName, changedBills) {
         </table>
 
         <p style="color:#374151;font-size:15px;margin:20px 0 0">
-          <a href="https://civiclens-six.vercel.app/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
+          <a href="https://capitolkey.vercel.app/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
         </p>
       </div>
 
       <!-- Footer -->
       <div style="padding:16px 24px;background:#f9fafb;border-top:1px solid #e5e7eb">
         <p style="color:#9ca3af;font-size:12px;margin:0">
-          You're receiving this because you have email notifications enabled on GovDecoded.
-          To stop these emails, turn off notifications in your <a href="https://civiclens-six.vercel.app/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
+          You're receiving this because you have email notifications enabled on CapitolKey.
+          To stop these emails, turn off notifications in your <a href="https://capitolkey.vercel.app/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
         </p>
       </div>
 

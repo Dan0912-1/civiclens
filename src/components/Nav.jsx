@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import AuthModal from './AuthModal.jsx'
@@ -9,21 +9,37 @@ export default function Nav() {
   const { pathname } = useLocation()
   const { user, signOut } = useAuth()
   const [showAuth, setShowAuth] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const initial = user?.email?.[0]?.toUpperCase() || '?'
+
+  // Close menu on route change
+  useEffect(() => { setMenuOpen(false) }, [pathname])
+
+  function go(path) { setMenuOpen(false); navigate(path) }
 
   return (
     <nav className={styles.nav}>
       <div className={styles.inner}>
-        <button className={styles.logo} onClick={() => navigate('/')}>
+        <button className={styles.logo} onClick={() => go('/')}>
           <span className={styles.logoMark}>⚖</span>
-          <span className={styles.logoText}>GovDecoded</span>
+          <span className={styles.logoText}>CapitolKey</span>
         </button>
 
-        <div className={styles.links}>
+        <button
+          className={styles.burger}
+          onClick={() => setMenuOpen(o => !o)}
+          aria-label="Toggle menu"
+        >
+          <span className={`${styles.burgerLine} ${menuOpen ? styles.open : ''}`} />
+          <span className={`${styles.burgerLine} ${menuOpen ? styles.open : ''}`} />
+          <span className={`${styles.burgerLine} ${menuOpen ? styles.open : ''}`} />
+        </button>
+
+        <div className={`${styles.links} ${menuOpen ? styles.linksOpen : ''}`}>
           <button
             className={`${styles.link} ${pathname === '/about' ? styles.active : ''}`}
-            onClick={() => navigate('/about')}
+            onClick={() => go('/about')}
           >
             How it works
           </button>
@@ -32,23 +48,23 @@ export default function Nav() {
             <>
               <button
                 className={`${styles.link} ${pathname === '/bookmarks' ? styles.active : ''}`}
-                onClick={() => navigate('/bookmarks')}
+                onClick={() => go('/bookmarks')}
               >
                 Saved
               </button>
               <div className={styles.userPill}>{initial}</div>
-              <button className={styles.link} onClick={signOut}>
+              <button className={styles.link} onClick={() => { setMenuOpen(false); signOut() }}>
                 Sign out
               </button>
             </>
           ) : (
             <>
-              <button className={styles.link} onClick={() => setShowAuth(true)}>
+              <button className={styles.link} onClick={() => { setMenuOpen(false); setShowAuth(true) }}>
                 Sign in
               </button>
               <button
                 className={styles.cta}
-                onClick={() => navigate('/profile')}
+                onClick={() => go('/profile')}
               >
                 Get started
               </button>

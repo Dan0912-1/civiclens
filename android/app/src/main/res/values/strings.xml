@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">GovDecoded</string>
-    <string name="title_activity_main">GovDecoded</string>
-    <string name="package_name">com.govdecoded.app</string>
-    <string name="custom_url_scheme">com.govdecoded.app</string>
+    <string name="app_name">CapitolKey</string>
+    <string name="title_activity_main">CapitolKey</string>
+    <string name="package_name">com.capitolkey.app</string>
+    <string name="custom_url_scheme">com.capitolkey.app</string>
 </resources>
