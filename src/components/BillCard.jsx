@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import styles from './BillCard.module.css'
 
 const TAG_COLORS = {
@@ -32,9 +32,35 @@ function RelevanceMeter({ score }) {
 
 export default function BillCard({ bill, analysis, style }) {
   const [expanded, setExpanded] = useState(false)
+  const [shareStatus, setShareStatus] = useState(null)
   const billId = `${bill.type}${bill.number}-${bill.congress}`
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
+
+  const handleShare = useCallback(async () => {
+    const text = `${analysis.headline}\n\n${analysis.summary}`
+    const shareData = {
+      title: `${bill.type} ${bill.number} — ${analysis.headline}`,
+      text,
+    }
+
+    if (navigator.share) {
+      try {
+        await navigator.share(shareData)
+      } catch (err) {
+        if (err.name !== 'AbortError') console.error('Share failed', err)
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(text)
+        setShareStatus('copied')
+        setTimeout(() => setShareStatus(null), 2000)
+      } catch {
+        setShareStatus('error')
+        setTimeout(() => setShareStatus(null), 2000)
+      }
+    }
+  }, [analysis, bill.type, bill.number])
 
   return (
     <div className={`${styles.card} ${styles[`tag_${tagColor}`]}`} style={style}>
@@ -120,16 +146,25 @@ export default function BillCard({ bill, analysis, style }) {
             >
               {expanded ? 'Show less ↑' : 'See full impact + actions ↓'}
             </button>
-            {bill.url && (
-              <a
-                href={bill.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={styles.sourceLink}
+            <div className={styles.footerRight}>
+              <button
+                className={styles.shareBtn}
+                onClick={handleShare}
+                aria-label="Share this bill"
               >
-                Full bill →
-              </a>
-            )}
+                {shareStatus === 'copied' ? '✓ Copied' : shareStatus === 'error' ? 'Failed' : 'Share'}
+              </button>
+              {bill.url && (
+                <a
+                  href={bill.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.sourceLink}
+                >
+                  Full bill →
+                </a>
+              )}
+            </div>
           </div>
         </>
       )}
