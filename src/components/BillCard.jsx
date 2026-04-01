@@ -1,7 +1,13 @@
-import { useState, memo } from 'react'
+import { useState, useRef, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import styles from './BillCard.module.css'
+
+function haptic(style = 'Light') {
+  import('@capacitor/haptics')
+    .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
+    .catch(() => {})
+}
 
 const TAG_COLORS = {
   Education:    'blue',
@@ -45,11 +51,40 @@ function shareBill(bill, analysis) {
 export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [swipeOffset, setSwipeOffset] = useState(0)
+  const swipeStart = useRef(null)
   const navigate = useNavigate()
   const { user } = useAuth()
   const billId = `${bill.type}${bill.number}-${bill.congress}`
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
+
+  // Swipe-to-bookmark: swipe left to toggle bookmark
+  function onTouchStart(e) {
+    if (!user || !onToggleBookmark || !analysis) return
+    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+
+  function onTouchMove(e) {
+    if (!swipeStart.current) return
+    const dx = e.touches[0].clientX - swipeStart.current.x
+    const dy = e.touches[0].clientY - swipeStart.current.y
+    // Only track horizontal swipes (ignore vertical scroll)
+    if (Math.abs(dy) > Math.abs(dx)) { swipeStart.current = null; setSwipeOffset(0); return }
+    if (dx < 0) setSwipeOffset(Math.max(dx, -80))
+  }
+
+  function onTouchEnd() {
+    if (swipeOffset < -50 && onToggleBookmark) {
+      haptic('Medium')
+      if (!isBookmarked && onTrackInteraction) {
+        onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
+      }
+      onToggleBookmark()
+    }
+    setSwipeOffset(0)
+    swipeStart.current = null
+  }
 
   function openDetail() {
     navigate(`/bill/${bill.congress}/${bill.type.toLowerCase()}/${bill.number}`, {
@@ -58,7 +93,19 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
   }
 
   return (
-    <div className={`${styles.card} ${styles[`tag_${tagColor}`]}`} style={style}>
+    <div
+      className={`${styles.card} ${styles[`tag_${tagColor}`]}`}
+      style={{ ...style, transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Swipe-to-bookmark hint (shows behind card when swiping) */}
+      {swipeOffset < -10 && (
+        <div className={styles.swipeHint}>
+          {isBookmarked ? 'Unbookmark' : 'Bookmark'}
+        </div>
+      )}
 
       {/* Top accent line via tag color */}
       <div className={styles.accentLine} />
@@ -153,6 +200,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                   className={`${styles.bookmarkBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
                   onClick={e => {
                     e.stopPropagation()
+                    haptic('Medium')
                     if (!isBookmarked && onTrackInteraction) {
                       onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
                     }
@@ -166,6 +214,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
               <button
                 className={styles.expandBtn}
                 onClick={() => {
+                  haptic('Light')
                   const next = !expanded
                   setExpanded(next)
                   if (next && onTrackInteraction) {
@@ -194,6 +243,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                 className={styles.shareBtn}
                 onClick={e => {
                   e.stopPropagation()
+                  haptic('Light')
                   shareBill(bill, analysis)
                   setCopied(true)
                   setTimeout(() => setCopied(false), 2000)
