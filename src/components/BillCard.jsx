@@ -30,6 +30,16 @@ function RelevanceMeter({ score }) {
   )
 }
 
+function getRepFinderUrl() {
+  try {
+    const profile = JSON.parse(sessionStorage.getItem('civicProfile') || '{}')
+    const base = 'https://www.house.gov/representatives/find-your-representative'
+    return profile.state ? `${base}?state=${encodeURIComponent(profile.state)}` : base
+  } catch {
+    return 'https://www.house.gov/representatives/find-your-representative'
+  }
+}
+
 export default function BillCard({ bill, analysis, style }) {
   const [expanded, setExpanded] = useState(false)
   const billId = `${bill.type}${bill.number}-${bill.congress}`
@@ -120,16 +130,26 @@ export default function BillCard({ bill, analysis, style }) {
             >
               {expanded ? 'Show less ↑' : 'See full impact + actions ↓'}
             </button>
-            {bill.url && (
+            <div className={styles.footerLinks}>
               <a
-                href={bill.url}
+                href={getRepFinderUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={styles.sourceLink}
+                className={styles.contactRepBtn}
               >
-                Full bill →
+                Contact My Rep
               </a>
-            )}
+              {bill.url && (
+                <a
+                  href={bill.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.sourceLink}
+                >
+                  Full bill →
+                </a>
+              )}
+            </div>
           </div>
         </>
       )}

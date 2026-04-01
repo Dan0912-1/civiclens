@@ -271,6 +271,28 @@
   padding-top: var(--space-md);
 }
 
+.footerLinks {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.contactRepBtn {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--white);
+  background: var(--navy);
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  transition: opacity 0.2s;
+  text-decoration: none;
+}
+
+.contactRepBtn:hover {
+  opacity: 0.85;
+}
+
 .expandBtn {
   font-size: 0.85rem;
   font-weight: 600;
