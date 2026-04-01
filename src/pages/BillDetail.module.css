@@ -260,6 +260,87 @@
   animation: shimmer 1.5s infinite;
 }
 
+/* Multi-section loading skeleton */
+.skeletonBack {
+  width: 100px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-xl);
+}
+
+.skeletonHeader {
+  margin-bottom: var(--space-2xl);
+}
+
+.skeletonTag {
+  width: 80px;
+  height: 22px;
+  border-radius: 100px;
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-md);
+}
+
+.skeletonTitle {
+  width: 90%;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-md);
+}
+
+.skeletonAnalysis {
+  background: var(--white);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  padding: var(--space-xl);
+  margin-bottom: var(--space-xl);
+}
+
+.skeletonHeadline {
+  width: 70%;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-lg);
+}
+
+.skeletonBar {
+  width: 100%;
+  height: 6px;
+  border-radius: 100px;
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-lg);
+}
+
+.skeletonLine {
+  width: 100%;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  margin-bottom: var(--space-sm);
+}
+
+.skeletonMeta {
+  background: var(--white);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  padding: var(--space-xl);
+  margin-bottom: var(--space-xl);
+}
+
 /* Bill metadata */
 .metaSection {
   background: var(--white);

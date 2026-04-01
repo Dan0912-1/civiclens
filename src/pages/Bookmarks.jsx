@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getBookmarks, removeBookmark, getNotificationPrefs, setNotificationPrefs } from '../lib/userProfile'
 import { supabase } from '../lib/supabase'
+import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Bookmarks.module.css'
@@ -25,6 +26,14 @@ export default function Bookmarks() {
   const [emailNotif, setEmailNotif] = useState(false)
   const [pushNotif, setPushNotif] = useState(true)
   const [isNative] = useState(isNativePlatform)
+
+  const refreshBookmarks = useCallback(async () => {
+    if (!user) return
+    const bm = await getBookmarks(user.id)
+    setBookmarks(bm)
+  }, [user])
+
+  const { refreshing, pullProgress } = usePullToRefresh(refreshBookmarks)
 
   useEffect(() => {
     if (authLoading) return
@@ -110,6 +119,12 @@ export default function Bookmarks() {
 
   return (
     <main className={styles.page}>
+      {(pullProgress > 0 || refreshing) && (
+        <div className={styles.pullIndicator} style={{ opacity: refreshing ? 1 : pullProgress }}>
+          <div className={refreshing ? styles.pullSpinnerActive : styles.pullSpinner}
+               style={refreshing ? {} : { transform: `rotate(${pullProgress * 360}deg)` }} />
+        </div>
+      )}
       <div className={styles.container}>
         <div className={styles.header}>
           <h1 className={styles.heading}>Saved Bills</h1>

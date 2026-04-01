@@ -5,6 +5,7 @@ import { loadProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/u
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
+import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
@@ -24,6 +25,12 @@ export default function Results() {
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
   const [interactionSummary, setInteractionSummary] = useState(null)
   const prevUserRef = useRef(null)
+
+  const { refreshing, pullProgress } = usePullToRefresh(
+    useCallback(async () => {
+      if (profile) await fetchBills()
+    }, [profile])
+  )
 
   // Load profile — try Supabase first for logged-in users, fall back to sessionStorage
   useEffect(() => {
@@ -182,6 +189,13 @@ export default function Results() {
 
   return (
     <main className={styles.page}>
+      {/* Pull-to-refresh indicator */}
+      {(pullProgress > 0 || refreshing) && (
+        <div className={styles.pullIndicator} style={{ opacity: refreshing ? 1 : pullProgress }}>
+          <div className={refreshing ? styles.pullSpinnerActive : styles.pullSpinner}
+               style={refreshing ? {} : { transform: `rotate(${pullProgress * 360}deg)` }} />
+        </div>
+      )}
       <div className={styles.container}>
 
         {/* Header */}

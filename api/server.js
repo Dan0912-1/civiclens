@@ -2,6 +2,7 @@
 // All API keys live here, never in the frontend
 
 import express from 'express'
+import helmet from 'helmet'
 import cors from 'cors'
 import rateLimit from 'express-rate-limit'
 import { createClient } from '@supabase/supabase-js'
@@ -11,6 +12,12 @@ import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 
 const app = express()
+
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // CSP handled by frontend / Capacitor
+  crossOriginEmbedderPolicy: false, // allow loading Congress.gov resources
+}))
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Allows the Vercel web frontend, the Capacitor iOS/Android app (capacitor://
@@ -150,9 +157,53 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+// ─── App version check (force-update mechanism) ─────────────────────────────
+// Native apps check this on launch to see if they need to update.
+// Bump MIN_VERSION when you ship a breaking API change.
+const CURRENT_VERSION = '1.0.0'
+const MIN_VERSION = '1.0.0'
+
+app.get('/api/version', (req, res) => {
+  res.json({
+    currentVersion: CURRENT_VERSION,
+    minVersion: MIN_VERSION,
+    updateUrl: {
+      ios: 'https://apps.apple.com/app/capitolkey/id0000000000',
+      android: 'https://play.google.com/store/apps/details?id=com.capitolkey.app',
+    },
+  })
+})
+
+// ─── Input validation helpers ───────────────────────────────────────────────
+const VALID_GRADES = ['9', '10', '11', '12']
+const VALID_INTERESTS = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
+
+function validateLegislationBody(body) {
+  const errors = []
+  if (body.grade && !VALID_GRADES.includes(String(body.grade))) errors.push('Invalid grade')
+  if (body.state && !US_STATES.includes(body.state)) errors.push('Invalid state')
+  if (body.interests && !Array.isArray(body.interests)) errors.push('Interests must be an array')
+  if (body.interests?.some(i => !VALID_INTERESTS.includes(i))) errors.push('Invalid interest value')
+  return errors
+}
+
+function validatePersonalizeBody(body) {
+  const errors = []
+  if (!body.bill) errors.push('bill is required')
+  if (!body.profile) errors.push('profile is required')
+  if (body.bill && (!body.bill.type || !body.bill.number || !body.bill.congress)) {
+    errors.push('bill must include type, number, and congress')
+  }
+  return errors
+}
+
 // ─── Fetch bills from Congress.gov ───────────────────────────────────────────
 // Searches recent bills filtered by student-relevant topics
 app.post('/api/legislation', legislationLimiter, async (req, res) => {
+  const valErrors = validateLegislationBody(req.body)
+  if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
+
   const { interests = [], grade, state, interactionSummary } = req.body
 
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
@@ -238,6 +289,9 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
 
 // ─── Anthropic personalization endpoint ──────────────────────────────────────
 app.post('/api/personalize', personalizeLimiter, async (req, res) => {
+  const valErrors = validatePersonalizeBody(req.body)
+  if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
+
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()

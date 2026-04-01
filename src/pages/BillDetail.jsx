@@ -139,7 +139,23 @@ export default function BillDetail() {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
-          <div className={styles.skeleton} />
+          <div className={styles.skeletonBack} />
+          <div className={styles.skeletonHeader}>
+            <div className={styles.skeletonTag} />
+            <div className={styles.skeletonTitle} />
+            <div className={styles.skeletonLine} />
+          </div>
+          <div className={styles.skeletonAnalysis}>
+            <div className={styles.skeletonHeadline} />
+            <div className={styles.skeletonBar} />
+            <div className={styles.skeletonLine} />
+            <div className={styles.skeletonLine} style={{ width: '80%' }} />
+            <div className={styles.skeletonLine} style={{ width: '60%' }} />
+          </div>
+          <div className={styles.skeletonMeta}>
+            <div className={styles.skeletonLine} />
+            <div className={styles.skeletonLine} style={{ width: '70%' }} />
+          </div>
         </div>
       </main>
     )
