@@ -2,6 +2,20 @@ import { getApiBase } from './api'
 
 let registered = false
 
+// Check if we're on a native platform with push support
+export async function canRequestPush() {
+  try {
+    const { Capacitor } = await import('@capacitor/core')
+    if (!Capacitor.isNativePlatform()) return false
+    const { PushNotifications } = await import('@capacitor/push-notifications')
+    const perm = await PushNotifications.checkPermissions()
+    // Show soft prompt only if permission hasn't been decided yet
+    return perm.receive === 'prompt'
+  } catch {
+    return false
+  }
+}
+
 export async function initPushNotifications(userId, token) {
   if (registered) return
 
@@ -14,6 +28,10 @@ export async function initPushNotifications(userId, token) {
   }
 
   if (!Capacitor.isNativePlatform()) return
+
+  // Check if already granted (user accepted soft prompt previously)
+  const check = await PushNotifications.checkPermissions()
+  if (check.receive === 'denied') return
 
   const permResult = await PushNotifications.requestPermissions()
   if (permResult.receive !== 'granted') return

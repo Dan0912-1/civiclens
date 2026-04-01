@@ -47,6 +47,27 @@
   margin-bottom: var(--space-xl);
 }
 
+/* Apple requires black background + white text per their HIG */
+.appleBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: 0.65rem;
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: #000;
+  margin-bottom: var(--space-sm);
+  transition: background 0.2s ease;
+}
+
+.appleBtn:hover {
+  background: #1a1a1a;
+}
+
 .googleBtn {
   width: 100%;
   display: flex;

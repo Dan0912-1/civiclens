@@ -10,6 +10,7 @@ const AuthContext = createContext({
   user: null,
   loading: true,
   signInWithGoogle: () => {},
+  signInWithApple: () => {},
   signInWithEmail: () => {},
   signUpWithEmail: () => {},
   signOut: () => {},
@@ -86,6 +87,14 @@ export function AuthProvider({ children }) {
     })
   }
 
+  async function signInWithApple() {
+    if (!supabase) return { error: { message: 'Auth not configured' } }
+    return supabase.auth.signInWithOAuth({
+      provider: 'apple',
+      options: { redirectTo: window.location.origin },
+    })
+  }
+
   async function signInWithEmail(email, password) {
     if (!supabase) return { error: { message: 'Auth not configured' } }
     return supabase.auth.signInWithPassword({ email, password })
@@ -106,6 +115,7 @@ export function AuthProvider({ children }) {
       user,
       loading,
       signInWithGoogle,
+      signInWithApple,
       signInWithEmail,
       signUpWithEmail,
       signOut: handleSignOut,
