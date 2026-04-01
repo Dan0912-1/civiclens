@@ -32,7 +32,7 @@ const ALLOWED_ORIGINS = new Set([
   'https://localhost',                  // Android Capacitor app
   'http://localhost:5173',              // Vite dev server
   'http://localhost:4173',              // Vite preview
-  'https://capitolkey.vercel.app',  // Vercel deployment
+  'https://civiclens-six.vercel.app', // Vercel deployment
   ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
 ])
 
