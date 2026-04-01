@@ -1,5 +1,10 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { Capacitor } from '@capacitor/core'
+import { Browser } from '@capacitor/browser'
+import { App } from '@capacitor/app'
+
+const isNative = Capacitor.getPlatform() !== 'web'
 
 const AuthContext = createContext({
   user: null,
@@ -40,8 +45,41 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  // On native: listen for deep-link callback after Google OAuth
+  useEffect(() => {
+    if (!isNative || !supabase) return
+    let handle
+    App.addListener('appUrlOpen', async (event) => {
+      const url = event?.url || ''
+      if (!url.includes('auth-callback')) return
+      try { await Browser.close() } catch (_) {}
+      const fragment = url.split('#')[1] || url.split('?')[1] || ''
+      const params = new URLSearchParams(fragment)
+      const accessToken = params.get('access_token')
+      const refreshToken = params.get('refresh_token')
+      if (accessToken && refreshToken) {
+        await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+      }
+    }).then(h => { handle = h })
+    return () => { handle?.remove() }
+  }, [])
+
   async function signInWithGoogle() {
     if (!supabase) return { error: { message: 'Auth not configured' } }
+
+    if (isNative) {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: 'com.capitolkey.app://auth-callback',
+          skipBrowserRedirect: true,
+        },
+      })
+      if (error) return { error }
+      if (data?.url) await Browser.open({ url: data.url })
+      return { error: null }
+    }
+
     return supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },

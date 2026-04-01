@@ -1,11 +1,25 @@
 {
-  "appId": "com.govdecoded.app",
-  "appName": "GovDecoded",
+  "appId": "com.capitolkey.app",
+  "appName": "CapitolKey",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"
   },
   "ios": {
-    "contentInset": "automatic"
+    "contentInset": "automatic",
+    "backgroundColor": "#0d1b2a"
+  },
+  "android": {
+    "backgroundColor": "#0d1b2a"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#0d1b2a",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP",
+      "splashFullScreen": true,
+      "splashImmersive": true
+    }
   }
 }

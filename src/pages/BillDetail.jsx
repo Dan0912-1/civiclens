@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
@@ -7,6 +7,19 @@ import { trackInteraction } from '../lib/interactions'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
+
+async function openInAppBrowser(url) {
+  try {
+    const { Capacitor } = await import('@capacitor/core')
+    if (Capacitor.isNativePlatform()) {
+      const { Browser } = await import('@capacitor/browser')
+      await Browser.open({ url, presentationStyle: 'popover' })
+      return
+    }
+  } catch {}
+  // Fallback for web
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
 
 const TAG_COLORS = {
   Education:     'blue',
@@ -279,14 +292,12 @@ export default function BillDetail() {
         )}
 
         <div className={styles.footer}>
-          <a
-            href={congressUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
             className={styles.congressLink}
+            onClick={() => openInAppBrowser(congressUrl)}
           >
             Read full bill text on Congress.gov →
-          </a>
+          </button>
         </div>
       </div>
     </main>

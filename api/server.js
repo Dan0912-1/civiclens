@@ -1,4 +1,4 @@
-// api/server.js — CivicLens Backend
+// api/server.js — CapitolKey Backend
 // All API keys live here, never in the frontend
 
 import express from 'express'
@@ -21,7 +21,7 @@ const ALLOWED_ORIGINS = new Set([
   'https://localhost',                  // Android Capacitor app
   'http://localhost:5173',              // Vite dev server
   'http://localhost:4173',              // Vite preview
-  'https://civiclens-six.vercel.app',  // Vercel deployment
+  'https://capitolkey.vercel.app',  // Vercel deployment
   ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
 ])
 
@@ -52,7 +52,7 @@ const fcmAuth = FCM_SERVICE_ACCOUNT
   : null
 
 const RESEND_KEY = process.env.RESEND_API_KEY
-const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'GovDecoded <onboarding@resend.dev>'
+const RESEND_FROM = process.env.RESEND_FROM_EMAIL || 'CapitolKey <onboarding@resend.dev>'
 const resend = RESEND_KEY ? new Resend(RESEND_KEY) : null
 
 // ─── Supabase client (persistent cache for Claude personalizations) ──────────
@@ -116,7 +116,7 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
 // ─── Health checks ────────────────────────────────────────────────────────────
 // Railway's proxy verifies GET / to confirm the service is up
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'CivicLens API', timestamp: new Date().toISOString() })
+  res.json({ status: 'ok', service: 'CapitolKey API', timestamp: new Date().toISOString() })
 })
 
 app.get('/api/health', (req, res) => {
@@ -220,7 +220,7 @@ app.post('/api/personalize', async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  const systemPrompt = `You are CivicLens, a strictly nonpartisan civic education tool built for American high school students.
+  const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool built for American high school students.
 
 Your only job is to explain how a real piece of legislation could affect a specific student's daily life.
 
@@ -798,7 +798,7 @@ function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
+  console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)

@@ -9,7 +9,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.govdecoded.app</string>
+	<string>com.capitolkey.app</string>
 	<key>PROJECT_ID</key>
 	<string>govdecoded-d73c4</string>
 	<key>STORAGE_BUCKET</key>

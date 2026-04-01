@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- GovDecoded — Notification Columns Migration
+-- CapitolKey — Notification Columns Migration
 -- Run this in Supabase SQL Editor AFTER create_auth_tables.sql
 --
 -- Adds columns needed for bill-update email notifications:
