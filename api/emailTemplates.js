@@ -1,6 +1,9 @@
 // api/emailTemplates.js — Email templates for bill-update notifications
 
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://civiclens-six.vercel.app'
+
 export function billUpdateEmail(userName, changedBills) {
+  const frontendUrl = FRONTEND_URL
   const billRows = changedBills.map(b => `
     <tr>
       <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb">
@@ -52,7 +55,7 @@ export function billUpdateEmail(userName, changedBills) {
         </table>
 
         <p style="color:#374151;font-size:15px;margin:20px 0 0">
-          <a href="https://civiclens-six.vercel.app/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
+          <a href="${frontendUrl}/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
         </p>
       </div>
 
@@ -60,7 +63,7 @@ export function billUpdateEmail(userName, changedBills) {
       <div style="padding:16px 24px;background:#f9fafb;border-top:1px solid #e5e7eb">
         <p style="color:#9ca3af;font-size:12px;margin:0">
           You're receiving this because you have email notifications enabled on GovDecoded.
-          To stop these emails, turn off notifications in your <a href="https://civiclens-six.vercel.app/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
+          To stop these emails, turn off notifications in your <a href="${frontendUrl}/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
         </p>
       </div>
 

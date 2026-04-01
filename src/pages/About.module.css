@@ -146,3 +146,34 @@
   background: var(--amber-dark);
   transform: translateY(-1px);
 }
+
+/* Legal links */
+.legal {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) 0 var(--space-md);
+  font-size: 0.85rem;
+}
+
+.legal button,
+.legal a {
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.legal button:hover,
+.legal a:hover {
+  color: var(--amber);
+}
+
+.legalDot {
+  color: var(--border);
+}

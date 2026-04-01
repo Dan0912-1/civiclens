@@ -91,6 +91,14 @@ export default function About() {
           </button>
         </div>
 
+        <div className={styles.legal}>
+          <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
+          <span className={styles.legalDot}>·</span>
+          <button onClick={() => navigate('/terms')}>Terms of Service</button>
+          <span className={styles.legalDot}>·</span>
+          <a href="mailto:support@govdecoded.app">Contact</a>
+        </div>
+
       </div>
     </main>
   )

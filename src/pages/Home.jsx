@@ -97,6 +97,15 @@ export default function Home() {
         </button>
       </section>
 
+      {/* Footer */}
+      <footer className={styles.footer}>
+        <span>&copy; {new Date().getFullYear()} GovDecoded</span>
+        <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
+        <button onClick={() => navigate('/terms')}>Terms of Service</button>
+        <button onClick={() => navigate('/about')}>About</button>
+        <a href="mailto:support@govdecoded.app">Contact</a>
+      </footer>
+
     </main>
   )
 }

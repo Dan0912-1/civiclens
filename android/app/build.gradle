@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.civiclens.app"
+    namespace = "com.govdecoded.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.civiclens.app"
+        applicationId "com.govdecoded.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -16,10 +16,30 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // To sign release builds, create a keystore and set these in
+            // ~/.gradle/gradle.properties or as environment variables:
+            //   GOVDECODED_STORE_FILE=path/to/keystore.jks
+            //   GOVDECODED_STORE_PASSWORD=...
+            //   GOVDECODED_KEY_ALIAS=...
+            //   GOVDECODED_KEY_PASSWORD=...
+            if (project.hasProperty('GOVDECODED_STORE_FILE')) {
+                storeFile file(GOVDECODED_STORE_FILE)
+                storePassword GOVDECODED_STORE_PASSWORD
+                keyAlias GOVDECODED_KEY_ALIAS
+                keyPassword GOVDECODED_KEY_PASSWORD
+            }
+        }
+    }
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (project.hasProperty('GOVDECODED_STORE_FILE')) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

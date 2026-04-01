@@ -1,8 +1,10 @@
-// api/server.js — CivicLens Backend
+// api/server.js — GovDecoded Backend
 // All API keys live here, never in the frontend
 
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import { createClient } from '@supabase/supabase-js'
 import cron from 'node-cron'
 import { Resend } from 'resend'
@@ -10,6 +12,29 @@ import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 
 const app = express()
+
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // CSP handled by frontend meta tags / Capacitor
+  crossOriginEmbedderPolicy: false, // Allow embedding in Capacitor webview
+}))
+
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+})
+
+const personalizeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40, // Stricter — each call costs Anthropic credits
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many personalization requests, please try again later' },
+})
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // Allows the Vercel web frontend, the Capacitor iOS/Android app (capacitor://
@@ -81,15 +106,24 @@ function setCache(key, data) {
 }
 
 // ─── Supabase-backed persistent cache for personalizations ──────────────────
+const CACHE_TTL_DAYS = 7 // Personalization cache expires after 7 days
+
 async function getSupabaseCache(key) {
   if (!supabase) return null
   try {
     const { data, error } = await supabase
       .from('personalization_cache')
-      .select('response')
+      .select('response, created_at')
       .eq('cache_key', key)
       .single()
     if (error || !data) return null
+
+    // Check TTL — expire entries older than 7 days
+    if (data.created_at) {
+      const age = Date.now() - new Date(data.created_at).getTime()
+      if (age > CACHE_TTL_DAYS * 24 * 60 * 60 * 1000) return null
+    }
+
     return data.response
   } catch {
     return null
@@ -116,7 +150,7 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
 // ─── Health checks ────────────────────────────────────────────────────────────
 // Railway's proxy verifies GET / to confirm the service is up
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'CivicLens API', timestamp: new Date().toISOString() })
+  res.json({ status: 'ok', service: 'GovDecoded API', timestamp: new Date().toISOString() })
 })
 
 app.get('/api/health', (req, res) => {
@@ -125,8 +159,16 @@ app.get('/api/health', (req, res) => {
 
 // ─── Fetch bills from Congress.gov ───────────────────────────────────────────
 // Searches recent bills filtered by student-relevant topics
-app.post('/api/legislation', async (req, res) => {
+app.post('/api/legislation', apiLimiter, async (req, res) => {
   const { interests = [], grade, state, interactionSummary } = req.body
+
+  // Input validation
+  if (!Array.isArray(interests) || interests.length > 20) {
+    return res.status(400).json({ error: 'interests must be an array (max 20)' })
+  }
+  if (grade && !['9', '10', '11', '12'].includes(String(grade))) {
+    return res.status(400).json({ error: 'grade must be 9, 10, 11, or 12' })
+  }
 
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
   const summaryHash = interactionSummary ? Object.keys(interactionSummary.topicCounts || {}).sort().join(',') : ''
@@ -186,13 +228,27 @@ app.post('/api/legislation', async (req, res) => {
 
   } catch (err) {
     console.error('Legislation fetch error:', err)
-    res.status(500).json({ error: 'Failed to fetch legislation', detail: err.message })
+    res.status(500).json({ error: 'Failed to fetch legislation' })
   }
 })
 
 // ─── Get single bill detail ───────────────────────────────────────────────────
-app.get('/api/bill/:congress/:type/:number', async (req, res) => {
+const VALID_BILL_TYPES = ['hr', 'hres', 'hjres', 'hconres', 's', 'sres', 'sjres', 'sconres']
+
+app.get('/api/bill/:congress/:type/:number', apiLimiter, async (req, res) => {
   const { congress, type, number } = req.params
+
+  // Input validation
+  if (!/^\d{1,3}$/.test(congress)) {
+    return res.status(400).json({ error: 'Invalid congress number' })
+  }
+  if (!VALID_BILL_TYPES.includes(type.toLowerCase())) {
+    return res.status(400).json({ error: 'Invalid bill type' })
+  }
+  if (!/^\d{1,5}$/.test(number)) {
+    return res.status(400).json({ error: 'Invalid bill number' })
+  }
+
   const cacheKey = `bill-${congress}-${type}-${number}`
   const cached = getCache(cacheKey)
   if (cached) return res.json(cached)
@@ -210,8 +266,21 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
 })
 
 // ─── Anthropic personalization endpoint ──────────────────────────────────────
-app.post('/api/personalize', async (req, res) => {
+const VALID_TOPIC_TAGS = ['Education', 'Healthcare', 'Economy', 'Environment', 'Technology', 'Housing', 'Civil Rights', 'Other']
+
+app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { bill, profile } = req.body
+
+  // Input validation
+  if (!bill || !profile) {
+    return res.status(400).json({ error: 'bill and profile are required' })
+  }
+  if (!bill.type || !bill.number || !bill.congress) {
+    return res.status(400).json({ error: 'bill must include type, number, and congress' })
+  }
+  if (!profile.grade || !profile.interests) {
+    return res.status(400).json({ error: 'profile must include grade and interests' })
+  }
 
   const sortedInterests = (profile.interests || []).sort()
   const cacheKey = `personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
@@ -220,7 +289,7 @@ app.post('/api/personalize', async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  const systemPrompt = `You are CivicLens, a strictly nonpartisan civic education tool built for American high school students.
+  const systemPrompt = `You are GovDecoded, a strictly nonpartisan civic education tool built for American high school students.
 
 Your only job is to explain how a real piece of legislation could affect a specific student's daily life.
 
@@ -275,7 +344,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
+        'anthropic-version': '2024-10-22'
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5',
@@ -308,7 +377,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
 
   } catch (err) {
     console.error('Anthropic error:', err)
-    res.status(500).json({ error: 'Personalization failed', detail: err.message })
+    res.status(500).json({ error: 'Personalization failed' })
   }
 })
 
@@ -324,17 +393,22 @@ async function requireAuth(req) {
 
 // ─── Interaction tracking (interest refinement) ─────────────────────────────
 
-app.post('/api/interactions', async (req, res) => {
+const VALID_ACTION_TYPES = ['view_detail', 'expand_card', 'bookmark']
+
+app.post('/api/interactions', apiLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 
     // Support single or batch interactions
     const items = req.body.interactions || [req.body]
     const rows = items
-      .filter(i => i.bill_id && i.action_type)
+      .filter(i => i.bill_id && i.action_type
+        && VALID_ACTION_TYPES.includes(i.action_type)
+        && (!i.topic_tag || VALID_TOPIC_TAGS.includes(i.topic_tag)))
+      .slice(0, 50) // cap batch size
       .map(i => ({
         user_id: user.id,
-        bill_id: i.bill_id,
+        bill_id: String(i.bill_id).slice(0, 50),
         action_type: i.action_type,
         topic_tag: i.topic_tag || null,
       }))
@@ -798,7 +872,7 @@ function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ CivicLens server running on http://0.0.0.0:${PORT}`)
+  console.log(`✅ GovDecoded server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)

@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5173"],
+      "port": 5173
+    },
+    {
+      "name": "Backend (Express API)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--env-file=/Users/danieljacius/Downloads/civiclens/.env", "api/server.js"],
+      "port": 3001
+    },
+    {
+      "name": "Frontend + Backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    }
+  ]
+}
