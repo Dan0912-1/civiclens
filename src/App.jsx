@@ -43,12 +43,20 @@ export default function App() {
     () => !localStorage.getItem('ck_onboarded_v2')
   )
 
-  // Hide splash screen once auth state is resolved and UI is ready
+  // Hide splash screen with a brief branded moment + haptic
   useEffect(() => {
     if (loading) return
-    import('@capacitor/splash-screen')
-      .then(({ SplashScreen }) => SplashScreen.hide({ fadeOutDuration: 300 }))
-      .catch(() => {}) // not in native context
+    const timer = setTimeout(async () => {
+      try {
+        const { Haptics, ImpactStyle } = await import('@capacitor/haptics')
+        await Haptics.impact({ style: ImpactStyle.Medium })
+      } catch {}
+      try {
+        const { SplashScreen } = await import('@capacitor/splash-screen')
+        await SplashScreen.hide({ fadeOutDuration: 500 })
+      } catch {}
+    }, 1200) // hold splash for 1.2s after auth resolves
+    return () => clearTimeout(timer)
   }, [loading])
 
   // Set status bar style — nav is always navy so text should be light
