@@ -1,4 +1,4 @@
-package com.capitolkey.app;
+package com.danieljacius.capitolkey;
 
 import com.getcapacitor.BridgeActivity;
 

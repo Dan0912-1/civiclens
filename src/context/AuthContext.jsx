@@ -72,7 +72,7 @@ export function AuthProvider({ children }) {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: 'com.capitolkey.app://auth-callback',
+          redirectTo: 'com.danieljacius.capitolkey://auth-callback',
           skipBrowserRedirect: true,
         },
       })
@@ -94,7 +94,7 @@ export function AuthProvider({ children }) {
       try {
         const { SignInWithApple } = await import('@capacitor-community/apple-sign-in')
         const result = await SignInWithApple.authorize({
-          clientId: 'com.capitolkey.app',
+          clientId: 'com.danieljacius.capitolkey',
           redirectURI: 'https://capitolkey.vercel.app',
           scopes: 'email name',
         })

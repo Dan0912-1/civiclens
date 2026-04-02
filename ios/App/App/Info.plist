@@ -55,10 +55,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.capitolkey.app</string>
+			<string>com.danieljacius.capitolkey</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.capitolkey.app</string>
+				<string>com.danieljacius.capitolkey</string>
 			</array>
 		</dict>
 	</array>

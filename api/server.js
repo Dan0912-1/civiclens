@@ -172,7 +172,7 @@ app.get('/api/version', (req, res) => {
     minVersion: MIN_VERSION,
     updateUrl: {
       ios: 'https://apps.apple.com/app/capitolkey/id0000000000',
-      android: 'https://play.google.com/store/apps/details?id=com.capitolkey.app',
+      android: 'https://play.google.com/store/apps/details?id=com.danieljacius.capitolkey',
     },
   })
 })
