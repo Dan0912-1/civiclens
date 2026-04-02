@@ -7,7 +7,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  transition: opacity 0.5s ease;
+  transition: opacity 0.6s ease;
 }
 
 .fadeOut {
@@ -15,115 +15,122 @@
   pointer-events: none;
 }
 
-.scene {
-  width: 220px;
-  height: 280px;
+/* ── Logo container ── */
+.logoWrap {
   position: relative;
+  width: 140px;
+  height: 140px;
 }
 
-/* ── Key ── */
-.key {
-  transform-origin: 50% 50%;
-  will-change: transform;
-}
-
-.keyDescend {
-  animation: keyDescend 0.6s ease-in-out forwards;
-}
-
-.keyTurn {
-  animation: keyTurn 0.4s ease-in-out forwards;
-}
-
-@keyframes keyDescend {
-  from { transform: translate(0, 0); }
-  to { transform: translate(0, 52px); }
-}
-
-@keyframes keyTurn {
-  from { transform: translate(0, 52px) rotate(0deg); }
-  to { transform: translate(0, 52px) rotate(90deg); }
-}
-
-/* ── Dome halves ── */
-.domeLeft, .domeRight {
-  will-change: transform, opacity;
-}
-
-.domeOpenLeft {
-  animation: domeOpenLeft 0.6s ease-out forwards;
-}
-
-.domeOpenRight {
-  animation: domeOpenRight 0.6s ease-out forwards;
-}
-
-@keyframes domeOpenLeft {
-  from { transform: translateX(0); opacity: 1; }
-  to { transform: translateX(-28px); opacity: 0.15; }
-}
-
-@keyframes domeOpenRight {
-  from { transform: translateX(0); opacity: 1; }
-  to { transform: translateX(28px); opacity: 0.15; }
-}
-
-/* ── Keyhole glow ── */
-.keyholeGlow {
-  animation: keyholeGlow 0.4s ease-out forwards;
-}
-
-@keyframes keyholeGlow {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* ── Scrolls ── */
-.scroll {
-  will-change: transform, opacity;
+/* ── Glow ring behind logo ── */
+.glow {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232, 160, 32, 0.35) 0%, rgba(232, 160, 32, 0) 70%);
   opacity: 0;
+  transform: scale(0.8);
+  transition: none;
 }
 
-.scrollRise {
-  animation: scrollRise 0.7s ease-out forwards;
+.glowActive {
+  animation: glowPulse 1.2s ease-out forwards;
 }
 
-.scrollRise1 { animation-delay: 0ms; }
-.scrollRise2 { animation-delay: 150ms; }
-.scrollRise3 { animation-delay: 300ms; }
-
-@keyframes scrollRise {
-  from {
-    transform: translateY(20px);
+@keyframes glowPulse {
+  0% {
     opacity: 0;
+    transform: scale(0.6);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.3);
+  }
+  100% {
+    opacity: 0.5;
+    transform: scale(1.1);
+  }
+}
+
+/* ── Logo image ── */
+.logo {
+  width: 140px;
+  height: 140px;
+  border-radius: 28px;
+  object-fit: cover;
+  position: relative;
+  z-index: 1;
+  opacity: 0;
+  transform: scale(0.85);
+  will-change: transform, opacity;
+}
+
+.logoReveal {
+  animation: logoAppear 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.logoUnlock {
+  animation: logoAppear 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+             logoPulse 0.5s ease-out 0s forwards;
+}
+
+@keyframes logoAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
   }
   to {
-    transform: translateY(-50px);
     opacity: 1;
+    transform: scale(1);
   }
 }
 
-/* ── Text ── */
+@keyframes logoPulse {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ── Brand text ── */
 .brandText {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: 1.6rem;
+  font-size: 1.8rem;
   font-weight: 700;
   color: #f8f4ed;
   letter-spacing: -0.02em;
-  margin-top: 1.2rem;
+  margin-top: 1.5rem;
   opacity: 0;
   will-change: opacity, transform;
 }
 
 .textReveal {
-  animation: textReveal 0.6s ease-out forwards;
-  animation-delay: 200ms;
+  animation: textUp 0.6s ease-out forwards;
 }
 
-@keyframes textReveal {
+.tagline {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: rgba(248, 244, 237, 0.5);
+  margin-top: 0.4rem;
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.taglineReveal {
+  animation: textUp 0.6s ease-out 0.15s forwards;
+}
+
+@keyframes textUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
@@ -133,8 +140,10 @@
 
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
-  .key, .domeLeft, .domeRight, .scroll, .brandText {
+  .logo, .glow, .brandText, .tagline {
     animation: none !important;
     transition: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }
