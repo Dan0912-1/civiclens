@@ -516,6 +516,63 @@ app.delete('/api/push/register', async (req, res) => {
   }
 })
 
+// ─── Test push notification (dev only) ───────────────────────────────────────
+
+app.post('/api/push/test', async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+
+    if (!fcmAuth || !FCM_PROJECT_ID) {
+      return res.status(503).json({ error: 'FCM not configured' })
+    }
+
+    const { data: tokens } = await supabase
+      .from('push_tokens')
+      .select('token')
+      .eq('user_id', user.id)
+
+    if (!tokens?.length) {
+      return res.status(404).json({ error: 'No device tokens found. Open the app and allow notifications first.' })
+    }
+
+    const client = await fcmAuth.getClient()
+    const { token: accessToken } = await client.getAccessToken()
+    let sent = 0
+
+    for (const { token } of tokens) {
+      const fcmResp = await fetch(
+        `https://fcm.googleapis.com/v1/projects/${FCM_PROJECT_ID}/messages:send`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            message: {
+              token,
+              notification: {
+                title: 'CapitolKey',
+                body: 'Test notification — push notifications are working!',
+              },
+              data: { url: '/bookmarks' },
+            },
+          }),
+        }
+      )
+      if (fcmResp.ok) sent++
+    }
+
+    res.json({ sent, total: tokens.length })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    console.error('[push/test]', err)
+    res.status(500).json({ error: 'Failed to send test notification' })
+  }
+})
+
 // ─── Notification preferences ────────────────────────────────────────────────
 
 app.get('/api/notifications/preferences', async (req, res) => {
