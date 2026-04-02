@@ -43,20 +43,44 @@ export default function App() {
     () => !localStorage.getItem('ck_onboarded_v2')
   )
 
-  // Hide splash screen with a brief branded moment + haptic
+  // Hide splash screen with a brief branded moment + haptic crescendo
   useEffect(() => {
     if (loading) return
-    const timer = setTimeout(async () => {
+    let cancelled = false
+
+    async function splashSequence() {
+      let Haptics, ImpactStyle
       try {
-        const { Haptics, ImpactStyle } = await import('@capacitor/haptics')
-        await Haptics.impact({ style: ImpactStyle.Medium })
-      } catch {}
-      try {
-        const { SplashScreen } = await import('@capacitor/splash-screen')
-        await SplashScreen.hide({ fadeOutDuration: 500 })
-      } catch {}
-    }, 1200) // hold splash for 1.2s after auth resolves
-    return () => clearTimeout(timer)
+        ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
+      } catch { /* not native */ }
+
+      const delay = ms => new Promise(r => setTimeout(r, ms))
+
+      // Ramp up: soft → medium → heavy
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(100) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(80) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(80) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(60) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Heavy }); await delay(60) }
+      // Peak
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Heavy }); await delay(80) }
+      // Ramp down: medium → soft
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(100) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(120) }
+      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }) }
+
+      await delay(200)
+
+      if (!cancelled) {
+        try {
+          const { SplashScreen } = await import('@capacitor/splash-screen')
+          await SplashScreen.hide({ fadeOutDuration: 500 })
+        } catch {}
+      }
+    }
+
+    const timer = setTimeout(splashSequence, 800)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [loading])
 
   // Set status bar style — nav is always navy so text should be light
