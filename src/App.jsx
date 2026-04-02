@@ -43,33 +43,44 @@ export default function App() {
     () => !localStorage.getItem('ck_onboarded_v2')
   )
 
-  // Hide splash screen with a brief branded moment + haptic crescendo
+  // Hide splash screen with a brief branded moment + smooth haptic wave
   useEffect(() => {
     if (loading) return
     let cancelled = false
 
     async function splashSequence() {
-      let Haptics, ImpactStyle
+      let Haptics, ImpactStyle, NotificationType
       try {
-        ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
+        ;({ Haptics, ImpactStyle, NotificationType } = await import('@capacitor/haptics'))
       } catch { /* not native */ }
 
       const delay = ms => new Promise(r => setTimeout(r, ms))
+      const tap = async (style) => {
+        if (Haptics && !cancelled) await Haptics.impact({ style })
+      }
 
-      // Ramp up: soft → medium → heavy
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(100) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(80) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(80) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(60) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Heavy }); await delay(60) }
-      // Peak
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Heavy }); await delay(80) }
-      // Ramp down: medium → soft
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Medium }); await delay(100) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }); await delay(120) }
-      if (Haptics && !cancelled) { await Haptics.impact({ style: ImpactStyle.Light }) }
+      // Smooth wave: rapid light taps accelerating into heavy, then decelerating out
+      // Phase 1: gentle intro (light, spaced)
+      await tap(ImpactStyle.Light);  await delay(50)
+      await tap(ImpactStyle.Light);  await delay(45)
+      await tap(ImpactStyle.Light);  await delay(40)
+      // Phase 2: build (medium, tighter)
+      await tap(ImpactStyle.Medium); await delay(35)
+      await tap(ImpactStyle.Medium); await delay(30)
+      await tap(ImpactStyle.Medium); await delay(28)
+      // Phase 3: peak (heavy, rapid)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      // Phase 4: release (medium, loosening)
+      await tap(ImpactStyle.Medium); await delay(30)
+      await tap(ImpactStyle.Medium); await delay(40)
+      // Phase 5: fade (light, spacing out)
+      await tap(ImpactStyle.Light);  await delay(50)
+      await tap(ImpactStyle.Light);  await delay(60)
+      await tap(ImpactStyle.Light)
 
-      await delay(200)
+      await delay(300)
 
       if (!cancelled) {
         try {
