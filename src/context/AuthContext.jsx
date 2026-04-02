@@ -89,6 +89,30 @@ export function AuthProvider({ children }) {
 
   async function signInWithApple() {
     if (!supabase) return { error: { message: 'Auth not configured' } }
+
+    if (isNative) {
+      try {
+        const { SignInWithApple } = await import('@capacitor-community/apple-sign-in')
+        const result = await SignInWithApple.authorize({
+          clientId: 'com.capitolkey.app',
+          redirectURI: 'https://capitolkey.vercel.app',
+          scopes: 'email name',
+        })
+        const idToken = result?.response?.identityToken
+        if (!idToken) return { error: { message: 'No identity token from Apple' } }
+        const { error } = await supabase.auth.signInWithIdToken({
+          provider: 'apple',
+          token: idToken,
+        })
+        return { error: error || null }
+      } catch (e) {
+        if (e?.message?.includes('canceled') || e?.code === '1001') {
+          return { error: null } // user cancelled
+        }
+        return { error: { message: e?.message || 'Apple sign-in failed' } }
+      }
+    }
+
     return supabase.auth.signInWithOAuth({
       provider: 'apple',
       options: { redirectTo: window.location.origin },
