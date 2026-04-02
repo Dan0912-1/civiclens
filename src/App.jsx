@@ -4,7 +4,6 @@ import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { initPushNotifications } from './lib/pushNotifications'
 import { getApiBase } from './lib/api'
-import AnimatedSplash from './components/AnimatedSplash.jsx'
 import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
 import OfflineScreen from './components/OfflineScreen.jsx'
@@ -43,41 +42,57 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(
     () => !localStorage.getItem('ck_onboarded_v2')
   )
-  const [showSplash, setShowSplash] = useState(true)
 
-  // Hide native splash quickly to reveal the web animated splash underneath
+  // Hide splash screen with a brief branded moment + smooth haptic wave
   useEffect(() => {
     if (loading) return
-    import('@capacitor/splash-screen')
-      .then(({ SplashScreen }) => SplashScreen.hide({ fadeOutDuration: 200 }))
-      .catch(() => {})
+    let cancelled = false
+
+    async function splashSequence() {
+      let Haptics, ImpactStyle, NotificationType
+      try {
+        ;({ Haptics, ImpactStyle, NotificationType } = await import('@capacitor/haptics'))
+      } catch { /* not native */ }
+
+      const delay = ms => new Promise(r => setTimeout(r, ms))
+      const tap = async (style) => {
+        if (Haptics && !cancelled) await Haptics.impact({ style })
+      }
+
+      // Smooth wave: rapid light taps accelerating into heavy, then decelerating out
+      // Phase 1: gentle intro (light, spaced)
+      await tap(ImpactStyle.Light);  await delay(50)
+      await tap(ImpactStyle.Light);  await delay(45)
+      await tap(ImpactStyle.Light);  await delay(40)
+      // Phase 2: build (medium, tighter)
+      await tap(ImpactStyle.Medium); await delay(35)
+      await tap(ImpactStyle.Medium); await delay(30)
+      await tap(ImpactStyle.Medium); await delay(28)
+      // Phase 3: peak (heavy, rapid)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      // Phase 4: release (medium, loosening)
+      await tap(ImpactStyle.Medium); await delay(30)
+      await tap(ImpactStyle.Medium); await delay(40)
+      // Phase 5: fade (light, spacing out)
+      await tap(ImpactStyle.Light);  await delay(50)
+      await tap(ImpactStyle.Light);  await delay(60)
+      await tap(ImpactStyle.Light)
+
+      await delay(300)
+
+      if (!cancelled) {
+        try {
+          const { SplashScreen } = await import('@capacitor/splash-screen')
+          await SplashScreen.hide({ fadeOutDuration: 500 })
+        } catch {}
+      }
+    }
+
+    const timer = setTimeout(splashSequence, 800)
+    return () => { cancelled = true; clearTimeout(timer) }
   }, [loading])
-
-  // Haptic wave fired when the key "unlocks" in the animation
-  async function handleUnlockHaptic() {
-    let Haptics, ImpactStyle
-    try {
-      ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
-    } catch { return }
-
-    const delay = ms => new Promise(r => setTimeout(r, ms))
-    const tap = (style) => Haptics.impact({ style })
-
-    await tap(ImpactStyle.Light);  await delay(50)
-    await tap(ImpactStyle.Light);  await delay(45)
-    await tap(ImpactStyle.Light);  await delay(40)
-    await tap(ImpactStyle.Medium); await delay(35)
-    await tap(ImpactStyle.Medium); await delay(30)
-    await tap(ImpactStyle.Medium); await delay(28)
-    await tap(ImpactStyle.Heavy);  await delay(25)
-    await tap(ImpactStyle.Heavy);  await delay(25)
-    await tap(ImpactStyle.Heavy);  await delay(25)
-    await tap(ImpactStyle.Medium); await delay(30)
-    await tap(ImpactStyle.Medium); await delay(40)
-    await tap(ImpactStyle.Light);  await delay(50)
-    await tap(ImpactStyle.Light);  await delay(60)
-    await tap(ImpactStyle.Light)
-  }
 
   // Set status bar style — nav is always navy so text should be light
   useEffect(() => {
@@ -188,13 +203,7 @@ export default function App() {
 
   return (
     <>
-      {showSplash && !loading && (
-        <AnimatedSplash
-          onUnlock={handleUnlockHaptic}
-          onComplete={() => setShowSplash(false)}
-        />
-      )}
-      {showOnboarding && !showSplash && pathname === '/' && (
+      {showOnboarding && pathname === '/' && (
         <Onboarding onComplete={completeOnboarding} />
       )}
       <OfflineScreen />
