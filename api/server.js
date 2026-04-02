@@ -75,7 +75,7 @@ const authLimiter = rateLimit({
 })
 
 const CONGRESS_KEY = process.env.CONGRESS_API_KEY
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+const GROQ_KEY = process.env.GROQ_API_KEY
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
 // FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
 const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
@@ -290,7 +290,7 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
   }
 })
 
-// ─── Anthropic personalization endpoint ──────────────────────────────────────
+// ─── Personalization endpoint (Groq GPT-OSS 120B) ──────────────────────────
 app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const valErrors = validatePersonalizeBody(req.body)
   if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
@@ -304,37 +304,46 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool built for American high school students.
+  const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
 
-Your only job is to explain how a real piece of legislation could affect a specific student's daily life.
+Your job: show ONE specific student how a bill touches THEIR life — not abstract policy talk.
 
-ABSOLUTE RULES — never break these:
-1. Never say a bill is good, bad, right, wrong, or use any evaluative language about its merits.
-2. Never tell the student what to think or how to feel about the bill.
-3. Explain IMPACT only — concrete, factual changes to their life if it passes or fails.
-4. Use plain language a 9th grader can understand. No jargon.
-5. Be specific to their actual profile (grade, state, job, interests).
-6. If the bill has no meaningful impact on this student, say so directly.
-7. Never invent facts or speculate beyond what the bill title and action suggest.
+═══ ABSOLUTE RULES ═══
+1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
+2. NEVER tell them what to think, feel, or do about the bill's merits.
+3. IMPACT ONLY: concrete, factual changes to THIS student's daily reality.
+4. Plain language a 9th grader understands. No jargon, no legalese, no acronyms without explanation.
+5. HYPER-PERSONALIZE: reference their state, grade, job, family, interests BY NAME. Generic summaries = failure.
+6. STATE CONTEXT MATTERS: if their state already has a relevant law (e.g. California minimum wage is $16.50/hr, higher than federal), SAY SO and explain how the federal bill interacts with it.
+7. USE REAL NUMBERS when possible: dollar amounts, percentages, dates, ages affected.
+8. If the bill has no meaningful impact on this student, say so directly with relevance ≤ 2.
+9. Never invent facts. If you're unsure, say "based on the bill title" or "details pending."
+10. Include 2-3 civic_actions that are genuinely actionable — with real websites (congress.gov, senate.gov, house.gov) or specific steps.
+11. NEVER instruct the student to take personal action (like "delete the app" or "change your password") in headline, summary, if_it_passes, or if_it_fails. Those fields describe WHAT CHANGES, not what the student should do. Save all actionable steps for civic_actions only.
 
-Always return a valid JSON object with exactly these fields — no other text, no markdown:
+═══ RELEVANCE SCORING ═══
+- 9-10: Bill directly changes something in their daily life right now (their paycheck, their school, their healthcare)
+- 7-8: Bill affects something they'll encounter within 1-2 years (college costs, job market)
+- 5-6: Bill affects their broader community or future (state funding, industry shifts)
+- 3-4: Tangential connection through interests or family
+- 1-2: No meaningful connection to this student's life
+
+═══ JSON OUTPUT — return ONLY this, no other text ═══
 {
-  "headline": "One plain sentence (max 12 words) on the single most relevant impact to this student",
-  "summary": "2-3 sentences explaining concretely what this bill does and why it matters to someone with this student's profile. Mention their specific situation.",
-  "if_it_passes": "1-2 sentences: what specifically changes for this student if it becomes law.",
-  "if_it_fails": "1-2 sentences: what stays the same for this student if it doesn't pass.",
-  "relevance": number from 1 to 10 representing how relevant this bill is to this specific student,
-  "topic_tag": one of: "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
+  "headline": "Max 12 words. The single most concrete impact on THIS student. Not a bill title rewrite.",
+  "summary": "2-3 sentences. What does this bill actually DO? Why should THIS specific student care? Reference their state, job, family, or interests directly. Include a real number or specific detail.",
+  "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Be concrete — 'your paycheck goes up $X' not 'wages may increase.'",
+  "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
+  "relevance": <number 1-10 using the scoring guide above>,
+  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
   "civic_actions": [
     {
-      "action": "Short title of the action (e.g. Contact your Senator)",
-      "how": "One concrete sentence: exactly what to do and where to go.",
-      "time": "e.g. 5 minutes"
+      "action": "Short imperative title (e.g. Call Senator Padilla's office)",
+      "how": "One sentence with a specific step: URL, phone number, or exact action. e.g. 'Visit congress.gov/bill/119th-congress/senate-bill/567 to read the full text and track its status.'",
+      "time": "Realistic estimate: '5 minutes' / '15 minutes' / '1 hour'"
     }
   ]
-}
-
-Return ONLY the JSON. No preamble, no explanation, no markdown fences.`
+}`
 
   const userPrompt = `STUDENT PROFILE:
 - State: ${profile.state}
@@ -354,29 +363,32 @@ BILL:
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${GROQ_KEY}`
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5',
+        model: 'openai/gpt-oss-120b',
         max_tokens: 900,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
+        temperature: 0.6,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
       })
     })
 
     const data = await resp.json()
 
-    if (!data.content?.[0]?.text) {
-      return res.status(500).json({ error: 'No response from Claude', detail: data })
+    if (!data.choices?.[0]?.message?.content) {
+      return res.status(500).json({ error: 'No response from Groq', detail: data })
     }
 
     try {
-      let text = data.content[0].text.trim()
+      let text = data.choices[0].message.content.trim()
       // Strip markdown code fences if the model added them
       text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
@@ -387,11 +399,11 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       res.json(result)
     } catch {
       // JSON parse failed — return raw for debugging
-      res.json({ analysis: null, raw: data.content[0].text })
+      res.json({ analysis: null, raw: data.choices[0].message.content })
     }
 
   } catch (err) {
-    console.error('Anthropic error:', err)
+    console.error('Groq error:', err)
     res.status(500).json({ error: 'Personalization failed', detail: err.message })
   }
 })
