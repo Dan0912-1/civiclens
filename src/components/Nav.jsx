@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import AuthModal from './AuthModal.jsx'
+import logoSrc from '../assets/logo.png'
 import styles from './Nav.module.css'
 
 export default function Nav() {
@@ -85,7 +86,7 @@ export default function Nav() {
 
           {/* Logo */}
           <button className={styles.logo} onClick={() => navigate('/')}>
-            <span className={styles.logoMark}>🏛️</span>
+            <img src={logoSrc} alt="" className={styles.logoIcon} />
             <span className={styles.logoText}>CapitolKey</span>
           </button>
 

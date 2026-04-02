@@ -64,7 +64,13 @@
 
 .logo:hover { opacity: 0.85; }
 
-.logoMark { font-size: 1.3rem; flex-shrink: 0; }
+.logoIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: cover;
+}
 
 .logoText {
   font-family: var(--font-display);
