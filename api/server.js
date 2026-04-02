@@ -222,44 +222,67 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       : buildSearchTerms(interests)
     const allBills = []
 
-    // Fetch bills for each relevant search term (limit to 5 for more variety)
-    for (const term of searchTerms.slice(0, 5)) {
+    // Fetch bills for all search terms in parallel
+    const fetches = searchTerms.slice(0, 5).map(term => {
       const url = `${CONGRESS_BASE}/bill?query=${encodeURIComponent(term)}&sort=updateDate+desc&limit=8&api_key=${CONGRESS_KEY}`
-      const resp = await fetch(url)
+      return fetch(url)
+        .then(resp => {
+          if (!resp.ok) {
+            console.error(`Congress API error: ${resp.status} for term "${term}"`)
+            return null
+          }
+          return resp.json()
+        })
+        .then(data => {
+          if (!data?.bills) return []
+          return data.bills.map(b => ({
+            congress: b.congress,
+            type: b.type,
+            number: b.number,
+            title: b.title,
+            originChamber: b.originChamber,
+            latestAction: b.latestAction?.text || 'No recent action',
+            latestActionDate: b.latestAction?.actionDate || '',
+            url: b.url,
+            updateDate: b.updateDate,
+            searchTerm: term,
+          }))
+        })
+        .catch(err => {
+          console.error(`Fetch error for term "${term}":`, err.message)
+          return []
+        })
+    })
 
-      if (!resp.ok) {
-        console.error(`Congress API error: ${resp.status} for term "${term}"`)
-        continue
-      }
+    const results = await Promise.all(fetches)
+    for (const bills of results) allBills.push(...bills)
 
-      const data = await resp.json()
-      if (data.bills) {
-        allBills.push(...data.bills.map(b => ({
-          congress: b.congress,
-          type: b.type,
-          number: b.number,
-          title: b.title,
-          originChamber: b.originChamber,
-          latestAction: b.latestAction?.text || 'No recent action',
-          latestActionDate: b.latestAction?.actionDate || '',
-          url: b.url,
-          updateDate: b.updateDate,
-          searchTerm: term,
-        })))
-      }
-    }
+    // Sort by recency first so dedup keeps the newest congress version
+    allBills.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
 
-    // Deduplicate by bill number
+    // Deduplicate by type+number (ignoring congress so reintroduced bills collapse)
     const seen = new Set()
     const unique = allBills.filter(b => {
-      const id = `${b.type}${b.number}-${b.congress}`
+      const id = `${b.type}${b.number}`
       if (seen.has(id)) return false
       seen.add(id)
       return true
     })
 
-    // Take top 8 most recently updated
-    unique.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
+    // Re-sort: prioritize bills matching user's interests, then recency
+    const interestTerms = new Set()
+    for (const interest of interests) {
+      if (INTEREST_MAP[interest]) {
+        for (const t of INTEREST_MAP[interest]) interestTerms.add(t)
+      }
+    }
+    unique.sort((a, b) => {
+      const aMatch = interestTerms.has(a.searchTerm) ? 1 : 0
+      const bMatch = interestTerms.has(b.searchTerm) ? 1 : 0
+      if (aMatch !== bMatch) return bMatch - aMatch
+      return new Date(b.updateDate) - new Date(a.updateDate)
+    })
+
     const result = { bills: unique.slice(0, 8) }
 
     setCache(cacheKey, result)
@@ -870,7 +893,7 @@ const INTEREST_MAP = {
   healthcare:   ['mental health', 'student health', 'medicaid'],
   technology:   ['artificial intelligence', 'data privacy', 'broadband'],
   housing:      ['affordable housing', 'rent assistance'],
-  immigration:  ['DACA', 'student visa', 'immigration'],
+  immigration:  ['immigration reform', 'DACA', 'student visa'],
   civil_rights: ['voting rights', 'civil rights', 'discrimination'],
   community:    ['national service', 'community grants', 'AmeriCorps'],
 }
@@ -890,7 +913,8 @@ const TAG_TO_INTEREST = {
 function buildSearchTerms(interests = []) {
   const base = ['student loan', 'education funding', 'youth']
 
-  const terms = [...base]
+  // When interests exist, include only 1 base term so interest terms dominate
+  const terms = interests.length === 0 ? [...base] : [base[0]]
   for (const interest of interests) {
     if (INTEREST_MAP[interest]) terms.push(...INTEREST_MAP[interest])
   }
@@ -907,7 +931,8 @@ function buildSearchTerms(interests = []) {
 function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
   const { topicCounts = {} } = interactionSummary
   const base = ['student loan', 'education funding', 'youth']
-  const terms = [...base]
+  // When interests exist, include only 1 base term so interest terms dominate
+  const terms = interests.length === 0 ? [...base] : [base[0]]
 
   // Map topic tags to interest keys with interaction counts
   const interestCounts = {}
@@ -953,7 +978,7 @@ const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
-  console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   Groq key: ${process.env.GROQ_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
