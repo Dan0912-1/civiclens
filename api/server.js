@@ -321,14 +321,15 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()
-  const cacheKey = `personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
+  // v2 cache key — invalidates all pre-bill-text personalizations
+  const cacheKey = `v2-personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
 
   // Check Supabase persistent cache first, fall back to in-memory
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
   // Fetch full bill content (text + CRS summary) for accurate personalization
-  const billType = bill.type?.toLowerCase().replace('.', '') || ''
+  const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
   const { billContent, sources } = await getBillContent(bill.congress, billType, bill.number, bill.title)
 
   const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
