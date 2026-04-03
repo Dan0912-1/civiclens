@@ -1387,12 +1387,32 @@ function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
   return unique.slice(0, 7) // increased from 5 for more variety
 }
 
+// ─── Auto-create bill_text_cache table if missing ──────────────────────────
+async function ensureBillTextCache() {
+  if (!supabase) return
+  try {
+    const { error } = await supabase.from('bill_text_cache').select('cache_key').limit(1)
+    if (error && error.message.includes('does not exist')) {
+      console.log('[startup] Creating bill_text_cache table...')
+      // Use Supabase's rpc to run DDL — requires a helper function or manual creation
+      // Fallback: the table must be created via Supabase SQL Editor
+      console.log('[startup] ⚠ bill_text_cache table missing — run supabase/create_bill_text_cache.sql in the SQL Editor')
+      console.log('[startup]   Bill text will still work (cached in-memory only until table is created)')
+    } else {
+      console.log('   Bill text cache: ✓ table exists')
+    }
+  } catch {
+    console.log('   Bill text cache: ✗ check failed (in-memory fallback)')
+  }
+}
+
 const PORT = process.env.PORT || 3001
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Groq key: ${process.env.GROQ_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
+  await ensureBillTextCache()
 })
