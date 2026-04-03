@@ -10,6 +10,7 @@ import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
 const API_BASE = getApiBase()
+const BILLS_PER_PAGE = 5
 
 export default function Results() {
   const navigate = useNavigate()
@@ -24,6 +25,8 @@ export default function Results() {
   const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
   const [interactionSummary, setInteractionSummary] = useState(null)
+  const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
+  const [loadingMore, setLoadingMore] = useState(false)
   const prevUserRef = useRef(null)
 
   const { refreshing, pullProgress } = usePullToRefresh(
@@ -88,11 +91,21 @@ export default function Results() {
     fetchBills()
   }, [profile])
 
+  // Personalize bills in small batches to avoid overwhelming APIs
+  async function personalizeBatch(billsToPersonalize) {
+    const BATCH_SIZE = 2
+    for (let i = 0; i < billsToPersonalize.length; i += BATCH_SIZE) {
+      const batch = billsToPersonalize.slice(i, i + BATCH_SIZE)
+      await Promise.all(batch.map(bill => personalizeBill(bill)))
+    }
+  }
+
   async function fetchBills() {
     setLoadingBills(true)
     setBillError('')
     setSettledBills(new Set())
     setFailedBills(new Set())
+    setVisibleCount(BILLS_PER_PAGE)
     try {
       const body = {
         interests: profile.interests,
@@ -110,8 +123,13 @@ export default function Results() {
       const data = await resp.json()
       if (data.bills) {
         setBills(data.bills)
-        // Start personalizing each bill (non-blocking)
-        data.bills.forEach(bill => personalizeBill(bill))
+        // Personalize the first visible batch, then the rest
+        const firstBatch = data.bills.slice(0, BILLS_PER_PAGE)
+        personalizeBatch(firstBatch).then(() => {
+          // Personalize remaining bills in background
+          const rest = data.bills.slice(BILLS_PER_PAGE)
+          if (rest.length) personalizeBatch(rest)
+        })
       } else {
         setBillError('Could not load bills. Please try again.')
       }
@@ -144,6 +162,15 @@ export default function Results() {
     }
   }
 
+  function handleLoadMore() {
+    setLoadingMore(true)
+    setVisibleCount(prev => {
+      const next = prev + BILLS_PER_PAGE
+      setLoadingMore(false)
+      return next
+    })
+  }
+
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null
     if (user && supabase) {
@@ -169,7 +196,7 @@ export default function Results() {
     Object.values(analyses).map(a => a.topic_tag).filter(Boolean)
   )], [analyses])
 
-  const filteredBills = useMemo(() => {
+  const allFilteredBills = useMemo(() => {
     const filtered = activeFilter === 'All'
       ? bills
       : bills.filter(b => {
@@ -184,6 +211,12 @@ export default function Results() {
       return relB - relA
     })
   }, [activeFilter, bills, analyses])
+
+  const filteredBills = useMemo(() =>
+    allFilteredBills.slice(0, visibleCount)
+  , [allFilteredBills, visibleCount])
+
+  const hasMore = allFilteredBills.length > visibleCount
 
   if (!profile) return null
 
@@ -272,7 +305,7 @@ export default function Results() {
         {!loadingBills && !billError && (
           <>
             <div className={styles.meta}>
-              Showing {filteredBills.length} bill{filteredBills.length !== 1 ? 's' : ''}
+              Showing {filteredBills.length} of {allFilteredBills.length} bill{allFilteredBills.length !== 1 ? 's' : ''}
               {bills.some(b => !settledBills.has(`${b.type}${b.number}-${b.congress}`)) && (
                 <span className={styles.analyzing}> · Personalizing remaining bills...</span>
               )}
@@ -294,6 +327,13 @@ export default function Results() {
                 )
               })}
             </div>
+            {hasMore && (
+              <div className={styles.loadMoreWrap}>
+                <button className={styles.loadMoreBtn} onClick={handleLoadMore} disabled={loadingMore}>
+                  {loadingMore ? 'Loading...' : `Show more bills (${allFilteredBills.length - visibleCount} remaining)`}
+                </button>
+              </div>
+            )}
           </>
         )}
 

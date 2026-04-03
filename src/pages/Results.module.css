@@ -241,6 +241,37 @@
   background: var(--navy-light);
 }
 
+/* Load more */
+.loadMoreWrap {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-xl) 0;
+}
+
+.loadMoreBtn {
+  background: var(--white);
+  color: var(--navy);
+  border: 2px solid var(--navy);
+  padding: 0.75rem 2rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.95rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.loadMoreBtn:hover:not(:disabled) {
+  background: var(--navy);
+  color: var(--white);
+  transform: translateY(-1px);
+}
+
+.loadMoreBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Empty */
 .empty {
   text-align: center;

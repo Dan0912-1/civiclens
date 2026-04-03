@@ -283,7 +283,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       return new Date(b.updateDate) - new Date(a.updateDate)
     })
 
-    const result = { bills: unique.slice(0, 8) }
+    const result = { bills: unique.slice(0, 10) }
 
     setCache(cacheKey, result)
     res.json(result)
