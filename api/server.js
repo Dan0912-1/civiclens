@@ -331,6 +331,7 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   // Fetch full bill content (text + CRS summary) for accurate personalization
   const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
   const { billContent, sources } = await getBillContent(bill.congress, billType, bill.number, bill.title)
+  console.log(`[personalize] ${bill.type}${bill.number}-${bill.congress}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
   const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
 
@@ -910,7 +911,10 @@ async function fetchBillText(congress, type, number) {
 
     // Pick the latest version (last in the array = most recent)
     const latest = versions[versions.length - 1]
-    const htmFormat = latest.formats?.find(f => f.type === 'Formatted Text as HTML')
+    // Congress.gov uses "Formatted Text" (not "Formatted Text as HTML")
+    const htmFormat = latest.formats?.find(f =>
+      f.type === 'Formatted Text' || f.type === 'Formatted Text as HTML'
+    )
     if (!htmFormat?.url) return null
 
     // Step 2: Fetch the actual HTML content
