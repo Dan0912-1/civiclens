@@ -59,6 +59,7 @@ export default function Nav() {
             {menuOpen && (
               <div className={styles.dropdown}>
                 <button className={styles.dropItem} onClick={() => handleNav('/')}>Home</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/search')}>Search bills</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/about')}>How it works</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My profile</button>
                 {user && (
@@ -92,6 +93,12 @@ export default function Nav() {
 
           {/* Auth — pushed to far right */}
           <div className={styles.auth}>
+            <button
+              className={`${styles.link} ${pathname === '/search' ? styles.active : ''}`}
+              onClick={() => navigate('/search')}
+            >
+              Search
+            </button>
             {user ? (
               <>
                 <button

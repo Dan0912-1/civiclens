@@ -48,7 +48,7 @@ function shareBill(bill, analysis) {
   }
 }
 
-export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false }) {
+export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false, onPersonalize, personalizing = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [swipeOffset, setSwipeOffset] = useState(0)
@@ -140,8 +140,15 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         )}
       </p>
 
-      {/* Analysis — loading */}
-      {isLoading && !personalizationFailed && (
+      {/* Analysis — on-demand personalize button (search page) */}
+      {isLoading && !personalizationFailed && onPersonalize && !personalizing && (
+        <button className={styles.personalizeBtn} onClick={onPersonalize}>
+          Personalize this bill
+        </button>
+      )}
+
+      {/* Analysis — personalizing in progress */}
+      {isLoading && !personalizationFailed && (personalizing || !onPersonalize) && (
         <div className={styles.analyzing}>
           <div className={styles.analyzeSpinner} />
           <span>Personalizing for you...</span>

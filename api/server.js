@@ -466,6 +466,58 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
   }
 })
 
+// ─── Search bills by keyword ─────────────────────────────────────────────────
+// Free-text search for bills via LegiScan — powers the /search page
+app.get('/api/search', legislationLimiter, async (req, res) => {
+  const q = (req.query.q || '').trim()
+  if (!q || q.length < 2) return res.status(400).json({ error: 'Search query must be at least 2 characters' })
+  if (q.length > 200) return res.status(400).json({ error: 'Search query must be under 200 characters' })
+
+  const state = req.query.state || 'US'
+  if (state !== 'US' && !US_STATES.includes(state)) return res.status(400).json({ error: 'Invalid state' })
+
+  const page = Math.max(1, Math.min(20, parseInt(req.query.page, 10) || 1))
+
+  const cacheKey = `search-${q.toLowerCase()}-${state}-${page}`
+  const cached = getCache(cacheKey)
+  if (cached) return res.json(cached)
+
+  try {
+    const data = await legiscanRequest('search', { state, query: q, year: '2', page })
+    if (!data.searchresult) return res.json({ bills: [], pagination: { page, totalResults: 0, hasMore: false } })
+
+    const summary = data.searchresult.summary || {}
+    const totalResults = summary.count || 0
+
+    const hits = Object.values(data.searchresult).filter(r => r.bill_id)
+    const transform = state === 'US' ? transformLegiScanBill : transformLegiScanStateBill
+    const bills = hits.map(hit => transform(hit, q))
+
+    // Deduplicate by legiscan_bill_id
+    const seen = new Set()
+    const unique = bills.filter(b => {
+      const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+
+    // Sort by recency
+    unique.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
+
+    const pageSize = hits.length
+    const hasMore = page * pageSize < totalResults
+
+    const result = { bills: unique, pagination: { page, totalResults, hasMore } }
+    setCache(cacheKey, result)
+    res.json(result)
+
+  } catch (err) {
+    console.error('Search error:', err)
+    res.status(500).json({ error: 'Search failed', detail: err.message })
+  }
+})
+
 // ─── Get single bill detail ───────────────────────────────────────────────────
 // Supports both LegiScan bill ID (?legiscan_id=123) and legacy congress/type/number URL
 app.get('/api/bill/:congress/:type/:number', async (req, res) => {
