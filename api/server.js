@@ -310,8 +310,9 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       ? buildWeightedSearchTerms(interests, effectiveTopicCounts)
       : buildSearchTerms(interests)
 
-    const discoveryTerms = pickDiscoveryTerms()
+    const discoveryTerms = pickDiscoveryTerms(interests)
     const discoveryTermSet = new Set(discoveryTerms)
+    const popularBillIds = await getPopularBillIds()
     const allBills = []
 
     // ── 3. Fetch from LegiScan: interest terms + discovery terms ──
@@ -401,7 +402,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       if (emergingInterests.has(bill.searchTerm)) bill._isEmerging = true
     }
 
-    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet }
+    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds }
 
     // ── 6. Score every bill ──
     for (const bill of unique) computeBillScore(bill, scoringCtx)
@@ -436,8 +437,9 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     const balanced = [...pickedInterest, ...pickedDiscovery]
     balanced.sort((a, b) => b._score - a._score)
 
-    // Clean internal scoring fields before sending to client
+    // Clean internal fields but keep _score as `rankScore` for frontend re-ranking
     for (const bill of balanced) {
+      bill.rankScore = bill._score
       delete bill._score
       delete bill._isDiscovery
       delete bill._isEmerging
@@ -1562,26 +1564,29 @@ const INTEREST_MAP = {
 }
 
 // ─── Hybrid Interest-Discovery scoring ──────────────────────────────────────
-// "Civic Serendipity" terms — high-impact topics outside any single interest bubble
-const DISCOVERY_TERMS = [
-  'bipartisan', 'appropriations', 'federal budget', 'national security',
-  'public health', 'committee vote', 'executive order',
-]
 
 const INTERACTION_PENALTY_WEIGHTS = { view_detail: 0.8, expand_card: 0.4, bookmark: 0.2 }
 
-const SCORE_WEIGHTS = { interest: 0.40, freshness: 0.25, serendipity: 0.15, penalty: 0.20 }
+// Env-configurable scoring weights — tune in production without redeploying
+const SCORE_WEIGHTS = {
+  interest:   parseFloat(process.env.W_INTEREST)   || 0.35,
+  freshness:  parseFloat(process.env.W_FRESHNESS)  || 0.20,
+  serendipity:parseFloat(process.env.W_SERENDIPITY)|| 0.15,
+  penalty:    parseFloat(process.env.W_PENALTY)    || 0.15,
+  popularity: parseFloat(process.env.W_POPULARITY) || 0.15,
+}
+const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
 
-function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet }) {
+function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds }) {
   // InterestScore (0–1): how well does this bill match the user's interests?
   let interestScore = 0.3 // base/default
   if (interestTerms.has(bill.searchTerm)) interestScore = 1.0
   else if (bill._isEmerging) interestScore = 0.7
   else if (bill._isDiscovery) interestScore = 0.5
 
-  // FreshnessScore (0–1): exponential decay over 30 days
+  // FreshnessScore (0–1): exponential decay over FRESHNESS_HALFLIFE days
   const daysSinceUpdate = Math.max(0, (Date.now() - new Date(bill.updateDate).getTime()) / 86400000)
-  const freshnessScore = Math.exp(-daysSinceUpdate / 30)
+  const freshnessScore = Math.exp(-daysSinceUpdate / FRESHNESS_HALFLIFE)
 
   // InteractionPenalty (0–1): de-rank bills the user already saw
   let interactionPenalty = 0
@@ -1598,9 +1603,13 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
   // SerendipityBonus (0–1): reward bills from discovery terms
   const serendipityBonus = discoveryTermSet.has(bill.searchTerm) ? 0.8 : 0
 
+  // PopularityBoost (0–1): collaborative signal from other students
+  const popularityBoost = popularBillIds.has(billKey) ? 0.7 : 0
+
   const total = (interestScore * SCORE_WEIGHTS.interest)
     + (freshnessScore * SCORE_WEIGHTS.freshness)
     + (serendipityBonus * SCORE_WEIGHTS.serendipity)
+    + (popularityBoost * SCORE_WEIGHTS.popularity)
     - (interactionPenalty * SCORE_WEIGHTS.penalty)
 
   bill._score = total
@@ -1633,6 +1642,39 @@ async function getUserInteractions(userId) {
   return { interactionMap, topicCounts }
 }
 
+// Collaborative filtering: find bills popular among all students in the last 30 days
+// Returns a Set of bill_ids with high engagement (bookmarks weighted 3×, views 1×)
+const _popularBillsCache = { data: null, ts: 0 }
+async function getPopularBillIds() {
+  // Cache for 1 hour to avoid hammering Supabase
+  if (_popularBillsCache.data && Date.now() - _popularBillsCache.ts < 3600000) {
+    return _popularBillsCache.data
+  }
+  if (!supabase) return new Set()
+
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString()
+  const { data, error } = await supabase
+    .from('bill_interactions')
+    .select('bill_id, action_type')
+    .gte('created_at', cutoff)
+
+  if (error || !data) return new Set()
+
+  // Weight: bookmark = 3, view_detail = 1, expand_card = 0.5
+  const scores = {}
+  for (const row of data) {
+    const w = row.action_type === 'bookmark' ? 3 : row.action_type === 'view_detail' ? 1 : 0.5
+    scores[row.bill_id] = (scores[row.bill_id] || 0) + w
+  }
+
+  // Top 20 most popular bills
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  const result = new Set(sorted.map(([id]) => id))
+  _popularBillsCache.data = result
+  _popularBillsCache.ts = Date.now()
+  return result
+}
+
 // Optional auth — returns user or null (never throws)
 async function getOptionalUser(req) {
   const authHeader = req.headers.authorization
@@ -1644,13 +1686,32 @@ async function getOptionalUser(req) {
   } catch { return null }
 }
 
-// Pick 3 discovery terms, rotated daily for variety
-function pickDiscoveryTerms() {
-  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000)
-  const offset = dayOfYear % DISCOVERY_TERMS.length
+// Pick discovery terms from interest categories the user DOESN'T have
+// Falls back to general civic terms if user has all categories
+const FALLBACK_DISCOVERY = ['bipartisan', 'appropriations', 'federal budget']
+
+function pickDiscoveryTerms(userInterests = []) {
+  const allKeys = Object.keys(INTEREST_MAP)
+  const unused = allKeys.filter(k => !userInterests.includes(k))
+
+  if (unused.length === 0) {
+    // User has every interest — use fallback civic terms
+    return FALLBACK_DISCOVERY
+  }
+
+  // Shuffle unused interests, pick 2-3, grab one search term from each
+  const shuffled = [...unused]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+
   const terms = []
-  for (let i = 0; i < 3; i++) {
-    terms.push(DISCOVERY_TERMS[(offset + i) % DISCOVERY_TERMS.length])
+  const count = Math.min(3, shuffled.length)
+  for (let i = 0; i < count; i++) {
+    const mapped = INTEREST_MAP[shuffled[i]]
+    // Pick a random term from this interest category
+    terms.push(mapped[Math.floor(Math.random() * mapped.length)])
   }
   return terms
 }

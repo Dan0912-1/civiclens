@@ -245,10 +245,17 @@ export default function Results() {
           const id = makeBillId(b)
           return analyses[id]?.topic_tag === activeFilter
         })
+    // Blend backend rankScore (algorithm) with Groq relevance (AI) for final ordering
+    // When relevance is available: 50% algorithm + 50% AI relevance (normalized to 0-1)
+    // When not yet personalized: fall back to algorithm score alone
     return [...filtered].sort((a, b) => {
-      const relA = analyses[makeBillId(a)]?.relevance ?? -1
-      const relB = analyses[makeBillId(b)]?.relevance ?? -1
-      return relB - relA
+      const relA = analyses[makeBillId(a)]?.relevance
+      const relB = analyses[makeBillId(b)]?.relevance
+      const algA = a.rankScore ?? 0.5
+      const algB = b.rankScore ?? 0.5
+      const scoreA = relA != null ? (algA * 0.5) + ((relA / 10) * 0.5) : algA
+      const scoreB = relB != null ? (algB * 0.5) + ((relB / 10) * 0.5) : algB
+      return scoreB - scoreA
     })
   }, [activeTab, activeFilter, bills, analyses])
 
