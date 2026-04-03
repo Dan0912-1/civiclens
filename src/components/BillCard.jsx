@@ -167,7 +167,13 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
       {isLoading && personalizationFailed && (
         <div className={styles.analyzeFailed}>
           <span>Personalization unavailable</span>
-          <p className={styles.failedSubtext}>You can still read the full bill details.</p>
+          {onPersonalize ? (
+            <button className={styles.retryBtn} onClick={onPersonalize}>
+              Try again
+            </button>
+          ) : (
+            <p className={styles.failedSubtext}>You can still read the full bill details.</p>
+          )}
         </div>
       )}
 

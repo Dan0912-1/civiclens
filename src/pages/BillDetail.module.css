@@ -249,6 +249,20 @@
   margin-bottom: var(--space-xl);
 }
 
+.retryBtn {
+  background: var(--amber);
+  color: var(--navy);
+  border: none;
+  padding: 0.4rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.retryBtn:hover {
+  opacity: 0.85;
+}
+
 .spinner {
   width: 20px;
   height: 20px;

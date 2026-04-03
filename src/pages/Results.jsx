@@ -359,6 +359,11 @@ export default function Results() {
                     bill={bill}
                     analysis={analyses[billId] || null}
                     personalizationFailed={failedBills.has(billId)}
+                    onPersonalize={failedBills.has(billId) ? () => {
+                      setFailedBills(prev => { const next = new Set(prev); next.delete(billId); return next })
+                      setSettledBills(prev => { const next = new Set(prev); next.delete(billId); return next })
+                      personalizeBillsBatch([bill])
+                    } : undefined}
                     isBookmarked={bookmarkedIds.has(billId)}
                     onToggleBookmark={() => toggleBookmark(billId, bill, analyses[billId])}
                     onTrackInteraction={handleTrackInteraction}

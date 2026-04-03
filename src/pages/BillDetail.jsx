@@ -48,6 +48,7 @@ export default function BillDetail() {
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [personalizationError, setPersonalizationError] = useState(false)
 
   // Track view_detail interaction once we have analysis (for topic_tag)
   useEffect(() => {
@@ -71,7 +72,6 @@ export default function BillDetail() {
 
   useEffect(() => {
     fetchBillDetail()
-    if (!analysis) fetchPersonalization()
   }, [congress, type, number])
 
   async function fetchBillDetail() {
@@ -112,6 +112,7 @@ export default function BillDetail() {
     const stored = sessionStorage.getItem('civicProfile')
     if (!stored || !bill) return
 
+    setPersonalizationError(false)
     const profile = JSON.parse(stored)
     try {
       const resp = await fetch(`${API_BASE}/api/personalize`, {
@@ -122,9 +123,12 @@ export default function BillDetail() {
       if (resp.ok) {
         const data = await resp.json()
         if (data.analysis) setAnalysis(data.analysis)
+        else setPersonalizationError(true)
+      } else {
+        setPersonalizationError(true)
       }
     } catch {
-      // Personalization is optional on detail page
+      setPersonalizationError(true)
     }
   }
 
@@ -270,6 +274,16 @@ export default function BillDetail() {
                 ? analysis.sources.join(' and ')
                 : 'bill data from LegiScan'}
             </div>
+          </div>
+        ) : personalizationError ? (
+          <div className={styles.loadingAnalysis}>
+            <span>Personalization unavailable right now.</span>
+            <button
+              className={styles.retryBtn}
+              onClick={() => fetchPersonalization()}
+            >
+              Try again
+            </button>
           </div>
         ) : (
           <div className={styles.loadingAnalysis}>

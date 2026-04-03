@@ -728,9 +728,10 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
       setCache(cacheKey, result)
       res.json(result)
-    } catch {
-      // JSON parse failed — return raw for debugging
-      res.json({ analysis: null, raw: data.choices[0].message.content })
+    } catch (parseErr) {
+      // JSON parse failed — return error so frontend can show retry
+      console.error(`[personalize] JSON parse error for ${bill.type}${bill.number}:`, parseErr.message)
+      res.status(502).json({ error: 'Personalization returned invalid format', retryable: true })
     }
 
   } catch (err) {
@@ -938,6 +939,16 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       } else {
         results[s.value.billId] = s.value.result
       }
+    } else if (s.status === 'rejected') {
+      // Promise itself rejected — find which bill by checking reason
+      console.error('[batch] Promise rejected:', s.reason)
+    }
+  }
+
+  // Ensure every bill appears in either results or errors (no bill left in limbo)
+  for (const { billId } of billsToPersonalize) {
+    if (!results[billId] && !errors[billId]) {
+      errors[billId] = 'Personalization failed unexpectedly'
     }
   }
 

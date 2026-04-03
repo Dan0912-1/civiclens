@@ -190,6 +190,21 @@
   margin-top: var(--space-xs);
 }
 
+.retryBtn {
+  background: var(--amber);
+  color: var(--navy);
+  border: none;
+  padding: 0.3rem 0.8rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: var(--space-sm);
+}
+.retryBtn:hover {
+  opacity: 0.85;
+}
+
 /* Headline */
 .headline {
   font-family: var(--font-display);
