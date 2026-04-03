@@ -127,6 +127,29 @@
   font-style: italic;
 }
 
+/* On-demand personalize button (search page) */
+.personalizeBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: var(--space-md) 0;
+  padding: 0.5rem 1.25rem;
+  background: var(--navy);
+  color: var(--white);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.personalizeBtn:hover {
+  background: var(--navy-light);
+  transform: translateY(-1px);
+}
+
 /* Analyzing */
 .analyzing {
   display: flex;

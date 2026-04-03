@@ -17,6 +17,7 @@ const About = lazy(() => import('./pages/About.jsx'))
 const Bookmarks = lazy(() => import('./pages/Bookmarks.jsx'))
 const Privacy = lazy(() => import('./pages/Privacy.jsx'))
 const Terms = lazy(() => import('./pages/Terms.jsx'))
+const Search = lazy(() => import('./pages/Search.jsx'))
 
 function PageLoader() {
   return (
@@ -213,6 +214,7 @@ export default function App() {
           <Route path="/"          element={<Home />} />
           <Route path="/profile"   element={<Profile />} />
           <Route path="/results"   element={<Results />} />
+          <Route path="/search"    element={<Search />} />
           <Route path="/bill/:congress/:type/:number" element={<BillDetail />} />
           <Route path="/about"     element={<About />} />
           <Route path="/bookmarks" element={<Bookmarks />} />
