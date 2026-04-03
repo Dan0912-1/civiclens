@@ -239,7 +239,7 @@ export default function Search() {
                     analysis={analyses[billId] || null}
                     personalizationFailed={failedBills.has(billId)}
                     personalizing={personalizingBills.has(billId)}
-                    onPersonalize={profile ? () => personalizeBill(bill) : undefined}
+                    onPersonalize={() => personalizeBill(bill)}
                     isBookmarked={bookmarkedIds.has(billId)}
                     onToggleBookmark={user ? () => toggleBookmark(billId, bill, analyses[billId]) : undefined}
                     onTrackInteraction={handleTrackInteraction}
