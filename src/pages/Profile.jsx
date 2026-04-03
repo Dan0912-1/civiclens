@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { saveProfile } from '../lib/userProfile'
 import styles from './Profile.module.css'
@@ -29,8 +29,10 @@ const FAMILY_OPTIONS = [
 
 export default function Profile() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   const [step, setStep] = useState(1)
+  const returnTo = location.state?.returnTo || null
 
   const [profile, setProfile] = useState(() => {
     const stored = sessionStorage.getItem('civicProfile')
@@ -73,7 +75,7 @@ export default function Profile() {
       // Save to sessionStorage and navigate
       sessionStorage.setItem('civicProfile', JSON.stringify(profile))
       if (user) saveProfile(user.id, profile)
-      navigate('/results')
+      navigate(returnTo || '/results')
     }
   }
 

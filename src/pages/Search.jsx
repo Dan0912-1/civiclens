@@ -145,7 +145,7 @@ export default function Search() {
 
   async function personalizeBill(bill) {
     if (!profile) {
-      navigate('/profile')
+      navigate('/profile', { state: { returnTo: `/search?${searchParams.toString()}` } })
       return
     }
     const billId = makeBillId(bill)
@@ -280,7 +280,7 @@ export default function Search() {
         {!profile && hasSearched && bills.length > 0 && (
           <div className={styles.profileHint}>
             Want personalized explanations?{' '}
-            <button className={styles.profileHintLink} onClick={() => navigate('/profile')}>
+            <button className={styles.profileHintLink} onClick={() => navigate('/profile', { state: { returnTo: `/search?${searchParams.toString()}` } })}>
               Set up your profile
             </button>{' '}
             to unlock the Personalize button on each bill.

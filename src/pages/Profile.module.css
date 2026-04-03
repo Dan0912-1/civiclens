@@ -247,7 +247,8 @@
   background: var(--cream);
 }
 
-.interestActive {
+.interestActive,
+.interestActive:hover {
   background: var(--navy);
   border-color: var(--navy);
   color: var(--white);
