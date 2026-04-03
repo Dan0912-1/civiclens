@@ -91,12 +91,60 @@ export default function Results() {
     fetchBills()
   }, [profile])
 
-  // Personalize bills in small batches to avoid overwhelming APIs
-  async function personalizeBatch(billsToPersonalize) {
-    const BATCH_SIZE = 2
-    for (let i = 0; i < billsToPersonalize.length; i += BATCH_SIZE) {
-      const batch = billsToPersonalize.slice(i, i + BATCH_SIZE)
-      await Promise.all(batch.map(bill => personalizeBill(bill)))
+  // Personalize a batch of bills in a single API call (all Groq calls run in parallel server-side)
+  async function personalizeBillsBatch(billsToPersonalize) {
+    if (!billsToPersonalize.length) return
+    try {
+      const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bills: billsToPersonalize, profile })
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.results) {
+          // Update all analyses at once
+          setAnalyses(prev => {
+            const next = { ...prev }
+            for (const [billId, result] of Object.entries(data.results)) {
+              if (result?.analysis) next[billId] = result.analysis
+            }
+            return next
+          })
+          // Mark all as settled
+          const settledIds = Object.keys(data.results)
+          setSettledBills(prev => {
+            const next = new Set(prev)
+            settledIds.forEach(id => next.add(id))
+            return next
+          })
+        }
+        if (data.errors) {
+          setFailedBills(prev => {
+            const next = new Set(prev)
+            Object.keys(data.errors).forEach(id => next.add(id))
+            return next
+          })
+          setSettledBills(prev => {
+            const next = new Set(prev)
+            Object.keys(data.errors).forEach(id => next.add(id))
+            return next
+          })
+        }
+      }
+    } catch (err) {
+      console.error('Batch personalization failed:', err)
+      // Mark all as failed
+      setFailedBills(prev => {
+        const next = new Set(prev)
+        billsToPersonalize.forEach(b => next.add(`${b.type}${b.number}-${b.congress}`))
+        return next
+      })
+      setSettledBills(prev => {
+        const next = new Set(prev)
+        billsToPersonalize.forEach(b => next.add(`${b.type}${b.number}-${b.congress}`))
+        return next
+      })
     }
   }
 
@@ -123,12 +171,12 @@ export default function Results() {
       const data = await resp.json()
       if (data.bills) {
         setBills(data.bills)
-        // Personalize the first visible batch, then the rest
+        // Personalize first 5 in one batch call (all parallel server-side)
         const firstBatch = data.bills.slice(0, BILLS_PER_PAGE)
-        personalizeBatch(firstBatch).then(() => {
-          // Personalize remaining bills in background
+        personalizeBillsBatch(firstBatch).then(() => {
+          // Background: personalize remaining bills
           const rest = data.bills.slice(BILLS_PER_PAGE)
-          if (rest.length) personalizeBatch(rest)
+          if (rest.length) personalizeBillsBatch(rest)
         })
       } else {
         setBillError('Could not load bills. Please try again.')
@@ -137,28 +185,6 @@ export default function Results() {
       setBillError('Unable to connect. Please check your internet connection and try again.')
     } finally {
       setLoadingBills(false)
-    }
-  }
-
-  async function personalizeBill(bill) {
-    const billId = `${bill.type}${bill.number}-${bill.congress}`
-    try {
-      const resp = await fetch(`${API_BASE}/api/personalize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bill, profile })
-      })
-      if (resp.ok) {
-        const data = await resp.json()
-        if (data.analysis) {
-          setAnalyses(prev => ({ ...prev, [billId]: data.analysis }))
-        }
-      }
-    } catch (err) {
-      console.error('Personalization failed for', billId, err)
-      setFailedBills(prev => new Set([...prev, billId]))
-    } finally {
-      setSettledBills(prev => new Set([...prev, billId]))
     }
   }
 

@@ -288,6 +288,11 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     setCache(cacheKey, result)
     res.json(result)
 
+    // Pre-fetch bill texts in background so they're cached before personalization
+    prefetchBillTexts(result.bills).catch(err =>
+      console.error('[prefetch] Background bill text fetch error:', err.message)
+    )
+
   } catch (err) {
     console.error('Legislation fetch error:', err)
     res.status(500).json({ error: 'Failed to fetch legislation', detail: err.message })
@@ -330,7 +335,8 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
 
   // Fetch full bill content (text + CRS summary) for accurate personalization
   const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
-  const { billContent, sources } = await getBillContent(bill.congress, billType, bill.number, bill.title)
+  const billData = await fetchBillContent(bill.congress, billType, bill.number)
+  const { billContent, sources } = buildBillContent(billData)
   console.log(`[personalize] ${bill.type}${bill.number}-${bill.congress}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
   const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
@@ -437,6 +443,210 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
     console.error('Groq error:', err)
     res.status(500).json({ error: 'Personalization failed', detail: err.message })
   }
+})
+
+// ─── Batch personalization endpoint ─────────────────────────────────────────
+// Personalizes multiple bills in a single request, parallelizing all Groq calls.
+app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
+  const { bills, profile } = req.body
+  if (!Array.isArray(bills) || !bills.length || !profile) {
+    return res.status(400).json({ error: 'bills (array) and profile are required' })
+  }
+  if (bills.length > 10) {
+    return res.status(400).json({ error: 'Maximum 10 bills per batch' })
+  }
+
+  const sortedInterests = (profile.interests || []).sort()
+  const interestsKey = sortedInterests.join('-')
+  const results = {}
+  const errors = {}
+  const billsToPersonalize = [] // { bill, cacheKey, billType }
+
+  // 1. Batch-check personalization cache (Supabase)
+  const cacheKeys = bills.map(b =>
+    `v3-personalize-${b.type}${b.number}-${b.congress}-${profile.grade}-${interestsKey}`
+  )
+
+  let cachedResults = new Map()
+  if (supabase) {
+    try {
+      const { data } = await supabase
+        .from('personalization_cache')
+        .select('cache_key, response')
+        .in('cache_key', cacheKeys)
+      if (data) cachedResults = new Map(data.map(d => [d.cache_key, d.response]))
+    } catch {}
+  }
+
+  // Also check in-memory cache
+  for (let i = 0; i < bills.length; i++) {
+    const bill = bills[i]
+    const cacheKey = cacheKeys[i]
+    const billId = `${bill.type}${bill.number}-${bill.congress}`
+
+    const cached = cachedResults.get(cacheKey) || getCache(cacheKey)
+    if (cached) {
+      results[billId] = cached
+    } else {
+      billsToPersonalize.push({
+        bill,
+        cacheKey,
+        billId,
+        billType: bill.type?.toLowerCase().replace(/\./g, '') || '',
+      })
+    }
+  }
+
+  if (!billsToPersonalize.length) {
+    return res.json({ results, errors })
+  }
+
+  // 2. Fetch bill texts for uncached bills (check Supabase text cache first)
+  const textCacheKeys = billsToPersonalize.map(b => `bt-${b.bill.congress}-${b.billType}-${b.bill.number}`)
+  const textCache = await getBillTextsFromSupabase(textCacheKeys)
+
+  // For any missing from Supabase text cache, fetch from Congress.gov in parallel
+  const textFetches = billsToPersonalize.map(async (b, i) => {
+    const key = textCacheKeys[i]
+    const memCached = getCache(key)
+    if (memCached) return { ...b, billData: memCached }
+
+    const dbCached = textCache.get(key)
+    if (dbCached && (dbCached.bill_text || dbCached.crs_summary)) {
+      const billData = {
+        text: dbCached.bill_text || null,
+        wordCount: dbCached.word_count || 0,
+        version: dbCached.version || '',
+        crsSummary: dbCached.crs_summary || null,
+        crsVersion: dbCached.crs_version || '',
+      }
+      setCache(key, billData)
+      return { ...b, billData }
+    }
+
+    // Fetch from Congress.gov
+    const billData = await fetchBillContent(b.bill.congress, b.billType, b.bill.number)
+    return { ...b, billData }
+  })
+
+  const billsWithText = await Promise.all(textFetches)
+
+  // 3. Fire ALL Groq personalization calls in parallel
+  const groqPromises = billsWithText.map(async ({ bill, cacheKey, billId, billData }) => {
+    const { billContent, sources } = buildBillContent(billData)
+
+    const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
+
+Your job: show ONE specific student how a bill touches THEIR life — not abstract policy talk.
+
+═══ ABSOLUTE RULES ═══
+1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
+2. NEVER tell them what to think, feel, or do about the bill's merits.
+3. IMPACT ONLY: concrete, factual changes to THIS student's daily reality.
+4. Plain language a 9th grader understands. No jargon, no legalese, no acronyms without explanation.
+5. HYPER-PERSONALIZE: reference their state, grade, job, family, interests BY NAME. Generic summaries = failure.
+6. STATE CONTEXT MATTERS: if their state already has a relevant law (e.g. California minimum wage is $16.50/hr, higher than federal), SAY SO and explain how the federal bill interacts with it.
+7. USE REAL NUMBERS when possible: dollar amounts, percentages, dates, ages affected.
+8. If the bill has no meaningful impact on this student, say so directly with relevance ≤ 2.
+9. ONLY use facts from the provided bill text and CRS summary. Never invent provisions or details not in the source material. If the bill text was not available, say "based on available information" and keep claims conservative.
+10. Include 2-3 civic_actions that are genuinely actionable — with real websites (congress.gov, senate.gov, house.gov) or specific steps.
+11. NEVER instruct the student to take personal action (like "delete the app" or "change your password") in headline, summary, if_it_passes, or if_it_fails. Those fields describe WHAT CHANGES, not what the student should do. Save all actionable steps for civic_actions only.
+
+═══ RELEVANCE SCORING ═══
+- 9-10: Bill directly changes something in their daily life right now (their paycheck, their school, their healthcare)
+- 7-8: Bill affects something they'll encounter within 1-2 years (college costs, job market)
+- 5-6: Bill affects their broader community or future (state funding, industry shifts)
+- 3-4: Tangential connection through interests or family
+- 1-2: No meaningful connection to this student's life
+
+═══ JSON OUTPUT — return ONLY this, no other text ═══
+{
+  "headline": "Max 12 words. The single most concrete impact on THIS student. Not a bill title rewrite.",
+  "summary": "2-3 sentences. What does this bill actually DO? Why should THIS specific student care? Reference their state, job, family, or interests directly. Include a real number or specific detail.",
+  "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Be concrete — 'your paycheck goes up $X' not 'wages may increase.'",
+  "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
+  "relevance": <number 1-10 using the scoring guide above>,
+  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
+  "civic_actions": [
+    {
+      "action": "Short imperative title (e.g. Call Senator Padilla's office)",
+      "how": "One sentence with a specific step: URL, phone number, or exact action. e.g. 'Visit congress.gov/bill/119th-congress/senate-bill/567 to read the full text and track its status.'",
+      "time": "Realistic estimate: '5 minutes' / '15 minutes' / '1 hour'"
+    }
+  ]
+}`
+
+    const userPrompt = `STUDENT PROFILE:
+- State: ${profile.state}
+- Grade: ${profile.grade} (approximately ${gradeToAge(profile.grade)} years old)
+- Has a part-time job: ${profile.hasJob ? 'Yes' : 'No'}
+- Family situation: ${profile.familySituation || 'Not specified'}
+- Top interests: ${(profile.interests || []).join(', ') || 'Not specified'}
+- Other context: ${profile.additionalContext || 'None provided'}
+
+BILL:
+- Bill: ${bill.type} ${bill.number} (${bill.congress}th Congress)
+- Title: ${bill.title}
+- Chamber: ${bill.originChamber || 'Congress'}
+- Latest Action: ${bill.latestAction}
+- Date of Last Action: ${bill.latestActionDate}
+${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
+Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
+
+    try {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-oss-120b',
+          max_tokens: 900,
+          temperature: 0.6,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      })
+
+      const data = await resp.json()
+      if (!data.choices?.[0]?.message?.content) {
+        throw new Error(data.error?.message || 'No response from Groq')
+      }
+
+      let text = data.choices[0].message.content.trim()
+      text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(text)
+      parsed.sources = sources
+      const result = { analysis: parsed }
+
+      // Cache in both layers
+      setCache(cacheKey, result)
+      setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+
+      return { billId, result }
+    } catch (err) {
+      console.error(`[batch] Groq error for ${billId}:`, err.message)
+      return { billId, error: err.message }
+    }
+  })
+
+  const settled = await Promise.allSettled(groqPromises)
+  for (const s of settled) {
+    if (s.status === 'fulfilled' && s.value) {
+      if (s.value.error) {
+        errors[s.value.billId] = s.value.error
+      } else {
+        results[s.value.billId] = s.value.result
+      }
+    }
+  }
+
+  console.log(`[personalize-batch] ${Object.keys(results).length} ok, ${Object.keys(errors).length} errors`)
+  res.json({ results, errors })
 })
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
@@ -891,16 +1101,72 @@ if (supabase) {
 // ─── Bill text & CRS summary fetching ───────────────────────────────────────
 // Fetches the full legislative text from Congress.gov and strips HTML to plain text.
 // Also fetches CRS (Congressional Research Service) expert summaries when available.
+// Caches persistently in Supabase so Congress.gov is only hit once per bill.
 
-const BILL_TEXT_WORD_LIMIT = 4000 // bills under this go directly to personalization
+const BILL_TEXT_WORD_LIMIT = 4000
 
-async function fetchBillText(congress, type, number) {
-  const cacheKey = `billtext-${congress}-${type}-${number}`
-  const cached = getCache(cacheKey)
-  if (cached) return cached
+function stripHtml(html) {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
+// ── Supabase bill text cache (persistent) ──
+async function getBillTextFromSupabase(cacheKey) {
+  if (!supabase) return null
   try {
-    // Step 1: Get text versions list from Congress.gov
+    const { data, error } = await supabase
+      .from('bill_text_cache')
+      .select('bill_text, word_count, version, crs_summary, crs_version')
+      .eq('cache_key', cacheKey)
+      .single()
+    if (error || !data) return null
+    return data
+  } catch { return null }
+}
+
+async function setBillTextToSupabase(cacheKey, billText, wordCount, version, crsSummary, crsVersion) {
+  if (!supabase) return
+  try {
+    await supabase
+      .from('bill_text_cache')
+      .upsert({
+        cache_key: cacheKey,
+        bill_text: billText || '',
+        word_count: wordCount || 0,
+        version: version || '',
+        crs_summary: crsSummary || '',
+        crs_version: crsVersion || '',
+      }, { onConflict: 'cache_key' })
+  } catch (err) {
+    console.error('[bill_text_cache] Write error:', err.message)
+  }
+}
+
+// Batch-fetch multiple bill texts from Supabase in one query
+async function getBillTextsFromSupabase(cacheKeys) {
+  if (!supabase || !cacheKeys.length) return new Map()
+  try {
+    const { data, error } = await supabase
+      .from('bill_text_cache')
+      .select('cache_key, bill_text, word_count, version, crs_summary, crs_version')
+      .in('cache_key', cacheKeys)
+    if (error || !data) return new Map()
+    return new Map(data.map(d => [d.cache_key, d]))
+  } catch { return new Map() }
+}
+
+async function fetchBillTextFromCongress(congress, type, number) {
+  try {
     const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/text?api_key=${CONGRESS_KEY}`
     const resp = await fetch(url)
     if (!resp.ok) return null
@@ -909,50 +1175,25 @@ async function fetchBillText(congress, type, number) {
     const versions = data.textVersions || []
     if (!versions.length) return null
 
-    // Pick the latest version (last in the array = most recent)
     const latest = versions[versions.length - 1]
-    // Congress.gov uses "Formatted Text" (not "Formatted Text as HTML")
     const htmFormat = latest.formats?.find(f =>
       f.type === 'Formatted Text' || f.type === 'Formatted Text as HTML'
     )
     if (!htmFormat?.url) return null
 
-    // Step 2: Fetch the actual HTML content
     const htmlResp = await fetch(htmFormat.url)
     if (!htmlResp.ok) return null
 
-    const html = await htmlResp.text()
-
-    // Step 3: Strip HTML tags to get plain text
-    const plainText = html
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/\s+/g, ' ')
-      .trim()
-
+    const plainText = stripHtml(await htmlResp.text())
     const wordCount = plainText.split(/\s+/).length
-    const result = { text: plainText, wordCount, version: latest.type || 'Unknown version' }
-
-    setCache(cacheKey, result)
-    return result
+    return { text: plainText, wordCount, version: latest.type || 'Unknown version' }
   } catch (err) {
-    console.error(`[billtext] Failed to fetch text for ${type}${number}-${congress}:`, err.message)
+    console.error(`[billtext] Failed for ${type}${number}-${congress}:`, err.message)
     return null
   }
 }
 
-async function fetchCRSSummary(congress, type, number) {
-  const cacheKey = `crssummary-${congress}-${type}-${number}`
-  const cached = getCache(cacheKey)
-  if (cached) return cached
-
+async function fetchCRSFromCongress(congress, type, number) {
   try {
     const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/summaries?api_key=${CONGRESS_KEY}`
     const resp = await fetch(url)
@@ -962,111 +1203,94 @@ async function fetchCRSSummary(congress, type, number) {
     const summaries = data.summaries || []
     if (!summaries.length) return null
 
-    // Pick the most detailed summary (last = most recent version, usually most complete)
     const best = summaries[summaries.length - 1]
-    // CRS summaries come as HTML — strip tags
-    const plainSummary = (best.text || '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/&nbsp;/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/\s+/g, ' ')
-      .trim()
-
+    const plainSummary = stripHtml(best.text || '')
     if (!plainSummary) return null
+    return { summary: plainSummary, versionCode: best.versionCode || '' }
+  } catch (err) {
+    console.error(`[crssummary] Failed for ${type}${number}-${congress}:`, err.message)
+    return null
+  }
+}
 
-    const result = { summary: plainSummary, versionCode: best.versionCode || '', actionDate: best.actionDate || '' }
+// Fetch bill text + CRS, checking Supabase first, then Congress.gov
+async function fetchBillContent(congress, type, number) {
+  const cacheKey = `bt-${congress}-${type}-${number}`
+
+  // L1: in-memory
+  const memCached = getCache(cacheKey)
+  if (memCached) return memCached
+
+  // L2: Supabase persistent
+  const dbCached = await getBillTextFromSupabase(cacheKey)
+  if (dbCached && (dbCached.bill_text || dbCached.crs_summary)) {
+    const result = {
+      text: dbCached.bill_text || null,
+      wordCount: dbCached.word_count || 0,
+      version: dbCached.version || '',
+      crsSummary: dbCached.crs_summary || null,
+      crsVersion: dbCached.crs_version || '',
+    }
     setCache(cacheKey, result)
     return result
-  } catch (err) {
-    console.error(`[crssummary] Failed to fetch CRS summary for ${type}${number}-${congress}:`, err.message)
-    return null
   }
-}
 
-// Two-pass compression for long bills: extract key provisions via LLM
-async function compressBillText(fullText, billTitle) {
-  const cacheKey = `compressed-${billTitle.slice(0, 50).replace(/\s+/g, '-')}-${fullText.length}`
-  const cached = getCache(cacheKey)
-  if (cached) return cached
-
-  try {
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
-        max_tokens: 1500,
-        temperature: 0.2,
-        messages: [
-          {
-            role: 'system',
-            content: `You are a legislative analyst. Extract ALL key provisions from this bill text. Be comprehensive — do not omit any substantive provision, dollar amount, date, deadline, affected group, or enforcement mechanism. Output a structured plain-text digest. No opinions, just facts.`
-          },
-          {
-            role: 'user',
-            content: `Bill: ${billTitle}\n\nFull text (may be truncated):\n${fullText.slice(0, 30000)}\n\nExtract every key provision, dollar amount, affected group, date, and enforcement mechanism. Be thorough — missing a provision means a student won't learn about it.`
-          }
-        ]
-      })
-    })
-
-    const data = await resp.json()
-    const digest = data.choices?.[0]?.message?.content?.trim() || null
-    if (digest) {
-      setCache(cacheKey, digest)
-    }
-    return digest
-  } catch (err) {
-    console.error('[compress] Bill text compression failed:', err.message)
-    return null
-  }
-}
-
-// Orchestrates fetching bill text + CRS summary, compressing if needed
-async function getBillContent(congress, type, number, billTitle) {
-  // Fetch bill text and CRS summary in parallel
-  const [billTextResult, crsSummary] = await Promise.all([
-    fetchBillText(congress, type, number),
-    fetchCRSSummary(congress, type, number),
+  // L3: Congress.gov (parallel fetch text + CRS)
+  const [textResult, crsResult] = await Promise.all([
+    fetchBillTextFromCongress(congress, type, number),
+    fetchCRSFromCongress(congress, type, number),
   ])
 
+  const result = {
+    text: textResult?.text || null,
+    wordCount: textResult?.wordCount || 0,
+    version: textResult?.version || '',
+    crsSummary: crsResult?.summary || null,
+    crsVersion: crsResult?.versionCode || '',
+  }
+
+  // Persist to Supabase + in-memory
+  setCache(cacheKey, result)
+  setBillTextToSupabase(cacheKey, result.text, result.wordCount, result.version, result.crsSummary, result.crsVersion)
+
+  return result
+}
+
+// Build the content string for the personalization prompt
+function buildBillContent(billData) {
   let billContent = ''
   let sources = []
 
-  // Always include CRS summary if available
-  if (crsSummary) {
-    billContent += `CONGRESSIONAL RESEARCH SERVICE SUMMARY:\n${crsSummary.summary}\n\n`
+  if (billData.crsSummary) {
+    billContent += `CONGRESSIONAL RESEARCH SERVICE SUMMARY:\n${billData.crsSummary}\n\n`
     sources.push('Congressional Research Service summary')
   }
 
-  // Include bill text — full if short, compressed if long
-  if (billTextResult) {
-    if (billTextResult.wordCount <= BILL_TEXT_WORD_LIMIT) {
-      billContent += `FULL BILL TEXT (${billTextResult.version}):\n${billTextResult.text}\n`
+  if (billData.text) {
+    if (billData.wordCount <= BILL_TEXT_WORD_LIMIT) {
+      billContent += `FULL BILL TEXT (${billData.version}):\n${billData.text}\n`
       sources.push('full bill text from Congress.gov')
     } else {
-      // Long bill — compress via LLM first
-      const digest = await compressBillText(billTextResult.text, billTitle)
-      if (digest) {
-        billContent += `BILL PROVISIONS DIGEST (extracted from ${billTextResult.wordCount.toLocaleString()}-word bill, ${billTextResult.version}):\n${digest}\n`
-        sources.push('AI-extracted provisions from full bill text')
-      } else {
-        // Fallback: use truncated text
-        const truncated = billTextResult.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
-        billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billTextResult.wordCount.toLocaleString()}, ${billTextResult.version}):\n${truncated}\n`
-        sources.push('partial bill text from Congress.gov')
-      }
+      const truncated = billData.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
+      billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billData.wordCount.toLocaleString()}, ${billData.version}):\n${truncated}\n`
+      sources.push('bill text from Congress.gov')
     }
   }
 
-  if (!billContent && !crsSummary) {
+  if (!billContent) {
     sources.push('bill title and metadata only')
   }
 
   return { billContent, sources }
+}
+
+// Fire-and-forget: pre-fetch bill texts for all returned bills
+async function prefetchBillTexts(bills) {
+  const fetches = bills.map(b => {
+    const type = b.type?.toLowerCase().replace(/\./g, '') || ''
+    return fetchBillContent(b.congress, type, b.number).catch(() => null)
+  })
+  await Promise.allSettled(fetches)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
