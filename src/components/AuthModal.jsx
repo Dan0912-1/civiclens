@@ -29,13 +29,17 @@ export default function AuthModal({ isOpen, onClose }) {
 
   async function handleGoogle() {
     setError('')
+    setLoading(true)
     const { error } = await signInWithGoogle()
+    setLoading(false)
     if (error) setError(error.message)
   }
 
   async function handleApple() {
     setError('')
+    setLoading(true)
     const { error } = await signInWithApple()
+    setLoading(false)
     if (error) setError(error.message)
   }
 

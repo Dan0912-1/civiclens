@@ -3,8 +3,10 @@ import { supabase } from '../lib/supabase'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
+import { SignInWithApple } from '@capacitor-community/apple-sign-in'
 
 const isNative = Capacitor.getPlatform() !== 'web'
+const isIOS = Capacitor.getPlatform() === 'ios'
 
 const AuthContext = createContext({
   user: null,
@@ -90,6 +92,32 @@ export function AuthProvider({ children }) {
   async function signInWithApple() {
     if (!supabase) return { error: { message: 'Auth not configured' } }
 
+    // On iOS, use native Sign in with Apple for reliability
+    if (isIOS) {
+      try {
+        const result = await SignInWithApple.authorize({
+          clientId: 'com.danieljacius.capitolkey',
+          redirectURI: 'https://drljemedyhpyvrzumusd.supabase.co/auth/v1/callback',
+          scopes: 'email name',
+        })
+        const idToken = result?.response?.identityToken
+        if (!idToken) return { error: { message: 'No identity token from Apple' } }
+
+        const { error } = await supabase.auth.signInWithIdToken({
+          provider: 'apple',
+          token: idToken,
+        })
+        return { error: error || null }
+      } catch (err) {
+        if (err?.message?.includes('1001') || err?.code === '1001') {
+          // User cancelled
+          return { error: null }
+        }
+        return { error: { message: err?.message || 'Apple sign-in failed' } }
+      }
+    }
+
+    // On Android native, use OAuth browser flow
     if (isNative) {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'apple',
@@ -103,6 +131,7 @@ export function AuthProvider({ children }) {
       return { error: null }
     }
 
+    // Web
     return supabase.auth.signInWithOAuth({
       provider: 'apple',
       options: { redirectTo: window.location.origin },
@@ -111,12 +140,30 @@ export function AuthProvider({ children }) {
 
   async function signInWithEmail(email, password) {
     if (!supabase) return { error: { message: 'Auth not configured' } }
-    return supabase.auth.signInWithPassword({ email, password })
+    const result = await supabase.auth.signInWithPassword({ email, password })
+    if (result.error?.message === 'Email not confirmed') {
+      // Resend confirmation and give user a better message
+      await supabase.auth.resend({ type: 'signup', email })
+      return { error: { message: 'Please check your email for a confirmation link. We just resent it.' } }
+    }
+    return result
   }
 
   async function signUpWithEmail(email, password) {
     if (!supabase) return { error: { message: 'Auth not configured' } }
-    return supabase.auth.signUp({ email, password })
+    const redirectTo = isNative
+      ? 'com.danieljacius.capitolkey://auth-callback'
+      : window.location.origin
+    const result = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: redirectTo },
+    })
+    // If identities array is empty, email is already registered
+    if (result.data?.user?.identities?.length === 0) {
+      return { error: { message: 'An account with this email already exists. Try signing in instead.' } }
+    }
+    return result
   }
 
   async function handleSignOut() {
