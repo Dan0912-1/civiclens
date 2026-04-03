@@ -95,14 +95,17 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(timer) }
   }, [loading])
 
-  // Set status bar style — nav is always navy so text should be light
+  // Set status bar style — nav is always navy so text should be light (native only)
   useEffect(() => {
-    import('@capacitor/status-bar')
-      .then(({ StatusBar, Style }) => {
-        StatusBar.setStyle({ style: Style.Dark }) // light text on dark nav
-        StatusBar.setBackgroundColor({ color: '#0d1b2a' }).catch(() => {}) // Android only
+    import('@capacitor/core')
+      .then(({ Capacitor }) => {
+        if (!Capacitor.isNativePlatform()) return
+        return import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
+          StatusBar.setStyle({ style: Style.Dark })
+          StatusBar.setBackgroundColor({ color: '#0d1b2a' }).catch(() => {})
+        })
       })
-      .catch(() => {}) // not in native context
+      .catch(() => {})
   }, [pathname])
 
   // Haptic feedback when pulling past the top of screen (iOS overscroll)
