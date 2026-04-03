@@ -321,8 +321,8 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()
-  // v2 cache key — invalidates all pre-bill-text personalizations
-  const cacheKey = `v2-personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
+  // v3 cache key — invalidates v2 results cached before format string fix
+  const cacheKey = `v3-personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
 
   // Check Supabase persistent cache first, fall back to in-memory
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
