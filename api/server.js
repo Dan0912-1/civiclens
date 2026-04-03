@@ -489,21 +489,26 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
       /^(HR|S|HB|SB|HRES|SRES|HJRES|SJRES|HCONRES|SCONRES|HJR|SJR|HCR|SCR)\s*(\d+)$/
     )
 
-    // For bill number searches, build a query LegiScan will match.
-    // State bills use SB/HB format; federal uses HR/S. Try the native format.
+    // For bill number searches, convert to natural language so LegiScan keyword search
+    // finds the bill. Direct bill number formats (SB310, SB00310) don't reliably match.
+    // "senate bill 310" works for both federal (SB310) and state (SB00310).
     let searchQuery = q
+    let targetBillNum = null // The number to match in results for exact-match promotion
     if (billNumMatch) {
       const prefix = billNumMatch[1]
       const num = billNumMatch[2]
-      if (state !== 'US') {
-        // State bills: S→SB, HR/H→HB so LegiScan finds e.g. "SB310"
-        const statePrefix = prefix === 'S' ? 'SB' : prefix === 'HR' || prefix === 'H' ? 'HB' : prefix
-        searchQuery = `${statePrefix}${num}`
-      } else {
-        // Federal: S stays S, HR→HB for LegiScan format
-        const fedPrefix = prefix === 'HR' ? 'HB' : prefix === 'S' ? 'SB' : prefix
-        searchQuery = `${fedPrefix}${num}`
+      targetBillNum = parseInt(num, 10)
+      // Map prefix to chamber keyword for natural language search
+      const chamberMap = {
+        S: 'senate bill', SB: 'senate bill',
+        HR: 'house bill', HB: 'house bill', H: 'house bill',
+        HRES: 'house resolution', SRES: 'senate resolution',
+        HJR: 'house joint resolution', HJRES: 'house joint resolution',
+        SJR: 'senate joint resolution', SJRES: 'senate joint resolution',
+        HCR: 'house concurrent resolution', HCONRES: 'house concurrent resolution',
+        SCR: 'senate concurrent resolution', SCONRES: 'senate concurrent resolution',
       }
+      searchQuery = `${chamberMap[prefix] || prefix.toLowerCase()} ${num}`
     }
 
     const data = await legiscanRequest('search', { state, query: searchQuery, year: '2', page })
@@ -529,10 +534,9 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
     const termLower = q.toLowerCase()
     unique.sort((a, b) => {
       // Exact bill number match gets highest priority
-      if (billNumMatch) {
-        const targetNum = parseInt(billNumMatch[2], 10)
-        const aExact = a.number === targetNum ? 1 : 0
-        const bExact = b.number === targetNum ? 1 : 0
+      if (targetBillNum) {
+        const aExact = a.number === targetBillNum ? 1 : 0
+        const bExact = b.number === targetBillNum ? 1 : 0
         if (aExact !== bExact) return bExact - aExact
       }
       // Title contains search term gets next priority
