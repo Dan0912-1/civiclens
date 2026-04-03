@@ -489,7 +489,24 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
       /^(HR|S|HB|SB|HRES|SRES|HJRES|SJRES|HCONRES|SCONRES|HJR|SJR|HCR|SCR)\s*(\d+)$/
     )
 
-    const data = await legiscanRequest('search', { state, query: q, year: '2', page })
+    // For bill number searches, build a query LegiScan will match.
+    // State bills use SB/HB format; federal uses HR/S. Try the native format.
+    let searchQuery = q
+    if (billNumMatch) {
+      const prefix = billNumMatch[1]
+      const num = billNumMatch[2]
+      if (state !== 'US') {
+        // State bills: S→SB, HR/H→HB so LegiScan finds e.g. "SB310"
+        const statePrefix = prefix === 'S' ? 'SB' : prefix === 'HR' || prefix === 'H' ? 'HB' : prefix
+        searchQuery = `${statePrefix}${num}`
+      } else {
+        // Federal: S stays S, HR→HB for LegiScan format
+        const fedPrefix = prefix === 'HR' ? 'HB' : prefix === 'S' ? 'SB' : prefix
+        searchQuery = `${fedPrefix}${num}`
+      }
+    }
+
+    const data = await legiscanRequest('search', { state, query: searchQuery, year: '2', page })
     if (!data.searchresult) return res.json({ bills: [], pagination: { page, totalResults: 0, hasMore: false } })
 
     const summary = data.searchresult.summary || {}
