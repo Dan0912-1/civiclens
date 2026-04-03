@@ -283,29 +283,47 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
   const { interests = [], grade, state, interactionSummary } = req.body
 
-  const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-  const summaryHash = interactionSummary ? Object.keys(interactionSummary.topicCounts || {}).sort().join(',') : ''
-  const cacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}-${summaryHash}`
-  const cached = getCache(cacheKey)
-  if (cached) return res.json(cached)
+  // ── Optional auth: enables server-side interaction scoring ──
+  const user = await getOptionalUser(req)
+  const userId = user?.id || null
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  // For anonymous users, use in-memory cache (no interaction data to personalize)
+  if (!userId) {
+    const anonCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}`
+    const cached = getCache(anonCacheKey)
+    if (cached) return res.json(cached)
+  }
 
   try {
-    // Build search terms, weighted by interaction history if available
-    const searchTerms = interactionSummary
-      ? buildWeightedSearchTerms(interests, interactionSummary)
+    // ── 1. Fetch interaction history server-side for auth'd users ──
+    const { interactionMap, topicCounts } = await getUserInteractions(userId)
+
+    // Build interaction summary from server data (or fall back to client-sent)
+    const effectiveTopicCounts = Object.keys(topicCounts).length > 0
+      ? topicCounts
+      : (interactionSummary?.topicCounts || {})
+
+    // ── 2. Build search terms: interest terms + discovery terms ──
+    const searchTerms = Object.keys(effectiveTopicCounts).length > 0
+      ? buildWeightedSearchTerms(interests, effectiveTopicCounts)
       : buildSearchTerms(interests)
+
+    const discoveryTerms = pickDiscoveryTerms(interests)
+    const discoveryTermSet = new Set(discoveryTerms)
+    const popularBillIds = await getPopularBillIds()
     const allBills = []
 
-    // Search federal bills (US Congress) via LegiScan
-    // Use more terms and higher per-term limit so federal results aren't outnumbered by state
+    // ── 3. Fetch from LegiScan: interest terms + discovery terms ──
+    // Interest-matched federal bills (6 terms × 10 results)
     const federalFetches = searchTerms.slice(0, 6).map(term =>
       legiscanRequest('search', { state: 'US', query: term, year: '2' })
         .then(data => {
           if (!data.searchresult) return []
-          // searchresult contains summary + numbered results
           return Object.values(data.searchresult)
-            .filter(r => r.bill_id) // skip summary object
-            .slice(0, 10) // limit per term
+            .filter(r => r.bill_id)
+            .slice(0, 10)
             .map(hit => transformLegiScanBill(hit, term))
         })
         .catch(err => {
@@ -314,7 +332,23 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
         })
     )
 
-    // Search state bills if user has a state set
+    // Discovery federal bills (3 trending terms × 6 results)
+    const discoveryFetches = discoveryTerms.map(term =>
+      legiscanRequest('search', { state: 'US', query: term, year: '2' })
+        .then(data => {
+          if (!data.searchresult) return []
+          return Object.values(data.searchresult)
+            .filter(r => r.bill_id)
+            .slice(0, 6)
+            .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
+        })
+        .catch(err => {
+          console.error(`LegiScan discovery search error "${term}":`, err.message)
+          return []
+        })
+    )
+
+    // State bills (3 interest terms × 4 results)
     const stateFetches = state && state !== 'DC' ? searchTerms.slice(0, 3).map(term =>
       legiscanRequest('search', { state, query: term, year: '2' })
         .then(data => {
@@ -330,17 +364,17 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
         })
     ) : []
 
-    const [federalResults, stateResults] = await Promise.all([
+    const [federalResults, discoveryResults, stateResults] = await Promise.all([
       Promise.all(federalFetches),
+      Promise.all(discoveryFetches),
       Promise.all(stateFetches),
     ])
     for (const bills of federalResults) allBills.push(...bills)
+    for (const bills of discoveryResults) allBills.push(...bills)
     for (const bills of stateResults) allBills.push(...bills)
 
-    // Sort by recency first so dedup keeps the newest version
+    // ── 4. Deduplicate (keep newest version) ──
     allBills.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
-
-    // Deduplicate by legiscan_bill_id (most reliable unique key)
     const seen = new Set()
     const unique = allBills.filter(b => {
       const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
@@ -349,37 +383,76 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       return true
     })
 
-    // Re-sort: prioritize bills matching user's interests, then recency
+    // ── 5. Build scoring context ──
     const interestTerms = new Set()
     for (const interest of interests) {
       if (INTEREST_MAP[interest]) {
         for (const t of INTEREST_MAP[interest]) interestTerms.add(t)
       }
     }
-    unique.sort((a, b) => {
-      const aMatch = interestTerms.has(a.searchTerm) ? 1 : 0
-      const bMatch = interestTerms.has(b.searchTerm) ? 1 : 0
-      if (aMatch !== bMatch) return bMatch - aMatch
-      return new Date(b.updateDate) - new Date(a.updateDate)
-    })
+    // Mark emerging-interest bills (user engages but not in profile)
+    const emergingInterests = new Set()
+    for (const [tag, count] of Object.entries(effectiveTopicCounts)) {
+      const key = TAG_TO_INTEREST[tag]
+      if (key && !interests.includes(key) && count > 3 && INTEREST_MAP[key]) {
+        for (const t of INTEREST_MAP[key]) emergingInterests.add(t)
+      }
+    }
+    for (const bill of unique) {
+      if (emergingInterests.has(bill.searchTerm)) bill._isEmerging = true
+    }
 
-    // Balanced split: ~10 federal, ~5 state (if available), total 15
-    const federal = unique.filter(b => !b.isStateBill)
-    const stateBills = unique.filter(b => b.isStateBill)
-    const maxFederal = stateBills.length >= 5 ? 10 : 15 - Math.min(stateBills.length, 5)
-    const maxState = Math.min(stateBills.length, 5)
-    const balanced = [...federal.slice(0, maxFederal), ...stateBills.slice(0, maxState)]
-    // Re-sort the balanced set by interest match then recency
-    balanced.sort((a, b) => {
-      const aMatch = interestTerms.has(a.searchTerm) ? 1 : 0
-      const bMatch = interestTerms.has(b.searchTerm) ? 1 : 0
-      if (aMatch !== bMatch) return bMatch - aMatch
-      return new Date(b.updateDate) - new Date(a.updateDate)
-    })
+    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds }
+
+    // ── 6. Score every bill ──
+    for (const bill of unique) computeBillScore(bill, scoringCtx)
+
+    // ── 7. 70/30 interest-discovery split with federal/state balance ──
+    const interestPool = unique.filter(b => !b._isDiscovery)
+    const discoveryPool = unique.filter(b => b._isDiscovery)
+    interestPool.sort((a, b) => b._score - a._score)
+    discoveryPool.sort((a, b) => b._score - a._score)
+
+    // Target: 15 bills total, ~70% interest (~10-11), ~30% discovery (~4-5)
+    const TARGET_TOTAL = 15
+    const targetInterest = Math.round(TARGET_TOTAL * 0.7)
+    const targetDiscovery = TARGET_TOTAL - targetInterest
+
+    // Pick top interest bills, balanced federal/state
+    const interestFederal = interestPool.filter(b => !b.isStateBill)
+    const interestState = interestPool.filter(b => b.isStateBill)
+    const maxInterestState = Math.min(interestState.length, Math.round(targetInterest * 0.35))
+    const maxInterestFederal = targetInterest - maxInterestState
+    const pickedInterest = [
+      ...interestFederal.slice(0, maxInterestFederal),
+      ...interestState.slice(0, maxInterestState),
+    ]
+
+    // Pick top discovery bills
+    const pickedDiscovery = discoveryPool
+      .filter(b => !pickedInterest.some(p => (p.legiscan_bill_id || '') === (b.legiscan_bill_id || '')))
+      .slice(0, targetDiscovery)
+
+    // Combine and sort by score
+    const balanced = [...pickedInterest, ...pickedDiscovery]
+    balanced.sort((a, b) => b._score - a._score)
+
+    // Clean internal fields but keep _score as `rankScore` for frontend re-ranking
+    for (const bill of balanced) {
+      bill.rankScore = bill._score
+      delete bill._score
+      delete bill._isDiscovery
+      delete bill._isEmerging
+    }
 
     const result = { bills: balanced }
 
-    setCache(cacheKey, result)
+    // Cache for anonymous users only (auth'd feeds are personalized per interaction history)
+    if (!userId) {
+      const anonCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}`
+      setCache(anonCacheKey, result)
+    }
+
     res.json(result)
 
     // Pre-fetch bill texts in background so they're cached before personalization
@@ -1490,6 +1563,159 @@ const INTEREST_MAP = {
   community:    ['national service', 'community grants', 'AmeriCorps'],
 }
 
+// ─── Hybrid Interest-Discovery scoring ──────────────────────────────────────
+
+const INTERACTION_PENALTY_WEIGHTS = { view_detail: 0.8, expand_card: 0.4, bookmark: 0.2 }
+
+// Env-configurable scoring weights — tune in production without redeploying
+const SCORE_WEIGHTS = {
+  interest:   parseFloat(process.env.W_INTEREST)   || 0.35,
+  freshness:  parseFloat(process.env.W_FRESHNESS)  || 0.20,
+  serendipity:parseFloat(process.env.W_SERENDIPITY)|| 0.15,
+  penalty:    parseFloat(process.env.W_PENALTY)    || 0.15,
+  popularity: parseFloat(process.env.W_POPULARITY) || 0.15,
+}
+const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
+
+function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds }) {
+  // InterestScore (0–1): how well does this bill match the user's interests?
+  let interestScore = 0.3 // base/default
+  if (interestTerms.has(bill.searchTerm)) interestScore = 1.0
+  else if (bill._isEmerging) interestScore = 0.7
+  else if (bill._isDiscovery) interestScore = 0.5
+
+  // FreshnessScore (0–1): exponential decay over FRESHNESS_HALFLIFE days
+  const daysSinceUpdate = Math.max(0, (Date.now() - new Date(bill.updateDate).getTime()) / 86400000)
+  const freshnessScore = Math.exp(-daysSinceUpdate / FRESHNESS_HALFLIFE)
+
+  // InteractionPenalty (0–1): de-rank bills the user already saw
+  let interactionPenalty = 0
+  const billKey = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+  const interactions = interactionMap.get(billKey)
+  if (interactions) {
+    for (const { action_type, daysSince } of interactions) {
+      const base = INTERACTION_PENALTY_WEIGHTS[action_type] || 0
+      const decayed = base * Math.exp(-daysSince / 14) // penalty halves every ~2 weeks
+      interactionPenalty = Math.max(interactionPenalty, decayed)
+    }
+  }
+
+  // SerendipityBonus (0–1): reward bills from discovery terms
+  const serendipityBonus = discoveryTermSet.has(bill.searchTerm) ? 0.8 : 0
+
+  // PopularityBoost (0–1): collaborative signal from other students
+  const popularityBoost = popularBillIds.has(billKey) ? 0.7 : 0
+
+  const total = (interestScore * SCORE_WEIGHTS.interest)
+    + (freshnessScore * SCORE_WEIGHTS.freshness)
+    + (serendipityBonus * SCORE_WEIGHTS.serendipity)
+    + (popularityBoost * SCORE_WEIGHTS.popularity)
+    - (interactionPenalty * SCORE_WEIGHTS.penalty)
+
+  bill._score = total
+  return total
+}
+
+// Fetch user's last 60 days of interactions for server-side scoring
+async function getUserInteractions(userId) {
+  if (!supabase || !userId) return { interactionMap: new Map(), topicCounts: {} }
+
+  const cutoff = new Date(Date.now() - 60 * 86400000).toISOString()
+  const { data, error } = await supabase
+    .from('bill_interactions')
+    .select('bill_id, action_type, topic_tag, created_at')
+    .eq('user_id', userId)
+    .gte('created_at', cutoff)
+
+  if (error || !data) return { interactionMap: new Map(), topicCounts: {} }
+
+  const interactionMap = new Map()
+  const topicCounts = {}
+
+  for (const row of data) {
+    const daysSince = (Date.now() - new Date(row.created_at).getTime()) / 86400000
+    if (!interactionMap.has(row.bill_id)) interactionMap.set(row.bill_id, [])
+    interactionMap.get(row.bill_id).push({ action_type: row.action_type, daysSince })
+    if (row.topic_tag) topicCounts[row.topic_tag] = (topicCounts[row.topic_tag] || 0) + 1
+  }
+
+  return { interactionMap, topicCounts }
+}
+
+// Collaborative filtering: find bills popular among all students in the last 30 days
+// Returns a Set of bill_ids with high engagement (bookmarks weighted 3×, views 1×)
+const _popularBillsCache = { data: null, ts: 0 }
+async function getPopularBillIds() {
+  // Cache for 1 hour to avoid hammering Supabase
+  if (_popularBillsCache.data && Date.now() - _popularBillsCache.ts < 3600000) {
+    return _popularBillsCache.data
+  }
+  if (!supabase) return new Set()
+
+  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString()
+  const { data, error } = await supabase
+    .from('bill_interactions')
+    .select('bill_id, action_type')
+    .gte('created_at', cutoff)
+
+  if (error || !data) return new Set()
+
+  // Weight: bookmark = 3, view_detail = 1, expand_card = 0.5
+  const scores = {}
+  for (const row of data) {
+    const w = row.action_type === 'bookmark' ? 3 : row.action_type === 'view_detail' ? 1 : 0.5
+    scores[row.bill_id] = (scores[row.bill_id] || 0) + w
+  }
+
+  // Top 20 most popular bills
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 20)
+  const result = new Set(sorted.map(([id]) => id))
+  _popularBillsCache.data = result
+  _popularBillsCache.ts = Date.now()
+  return result
+}
+
+// Optional auth — returns user or null (never throws)
+async function getOptionalUser(req) {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !supabase) return null
+  try {
+    const token = authHeader.replace('Bearer ', '')
+    const { data: { user }, error } = await supabase.auth.getUser(token)
+    return error ? null : user
+  } catch { return null }
+}
+
+// Pick discovery terms from interest categories the user DOESN'T have
+// Falls back to general civic terms if user has all categories
+const FALLBACK_DISCOVERY = ['bipartisan', 'appropriations', 'federal budget']
+
+function pickDiscoveryTerms(userInterests = []) {
+  const allKeys = Object.keys(INTEREST_MAP)
+  const unused = allKeys.filter(k => !userInterests.includes(k))
+
+  if (unused.length === 0) {
+    // User has every interest — use fallback civic terms
+    return FALLBACK_DISCOVERY
+  }
+
+  // Shuffle unused interests, pick 2-3, grab one search term from each
+  const shuffled = [...unused]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+
+  const terms = []
+  const count = Math.min(3, shuffled.length)
+  for (let i = 0; i < count; i++) {
+    const mapped = INTEREST_MAP[shuffled[i]]
+    // Pick a random term from this interest category
+    terms.push(mapped[Math.floor(Math.random() * mapped.length)])
+  }
+  return terms
+}
+
 // Reverse mapping: topic tag → interest key
 const TAG_TO_INTEREST = {
   'Education': 'education',
@@ -1520,8 +1746,7 @@ function buildSearchTerms(interests = []) {
   return unique.slice(0, 5)
 }
 
-function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
-  const { topicCounts = {} } = interactionSummary
+function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   const base = ['student loan', 'education funding', 'youth']
   // When interests exist, include only 1 base term so interest terms dominate
   const terms = interests.length === 0 ? [...base] : [base[0]]
@@ -1558,12 +1783,13 @@ function buildWeightedSearchTerms(interests = [], interactionSummary = {}) {
   }
 
   const unique = [...new Set(terms)]
+  // Light shuffle to add variety without destroying relevance order
   for (let i = unique.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [unique[i], unique[j]] = [unique[j], unique[i]]
   }
 
-  return unique.slice(0, 7) // increased from 5 for more variety
+  return unique.slice(0, 7)
 }
 
 // ─── Auto-create bill_text_cache table if missing ──────────────────────────

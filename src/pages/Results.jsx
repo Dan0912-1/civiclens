@@ -169,9 +169,14 @@ export default function Results() {
       if (interactionSummary && interactionSummary.totalInteractions > 0) {
         body.interactionSummary = interactionSummary
       }
+      const headers = { 'Content-Type': 'application/json' }
+      // Pass auth token so backend can score bills using interaction history
+      const session = supabase ? (await supabase.auth.getSession())?.data?.session : null
+      if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
       const resp = await fetch(`${API_BASE}/api/legislation`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
       })
       const data = await resp.json()
@@ -240,10 +245,17 @@ export default function Results() {
           const id = makeBillId(b)
           return analyses[id]?.topic_tag === activeFilter
         })
+    // Blend backend rankScore (algorithm) with Groq relevance (AI) for final ordering
+    // When relevance is available: 50% algorithm + 50% AI relevance (normalized to 0-1)
+    // When not yet personalized: fall back to algorithm score alone
     return [...filtered].sort((a, b) => {
-      const relA = analyses[makeBillId(a)]?.relevance ?? -1
-      const relB = analyses[makeBillId(b)]?.relevance ?? -1
-      return relB - relA
+      const relA = analyses[makeBillId(a)]?.relevance
+      const relB = analyses[makeBillId(b)]?.relevance
+      const algA = a.rankScore ?? 0.5
+      const algB = b.rankScore ?? 0.5
+      const scoreA = relA != null ? (algA * 0.5) + ((relA / 10) * 0.5) : algA
+      const scoreB = relB != null ? (algB * 0.5) + ((relB / 10) * 0.5) : algB
+      return scoreB - scoreA
     })
   }, [activeTab, activeFilter, bills, analyses])
 
