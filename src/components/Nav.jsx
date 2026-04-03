@@ -93,12 +93,6 @@ export default function Nav() {
 
           {/* Auth — pushed to far right */}
           <div className={styles.auth}>
-            <button
-              className={`${styles.link} ${pathname === '/search' ? styles.active : ''}`}
-              onClick={() => navigate('/search')}
-            >
-              Search
-            </button>
             {user ? (
               <>
                 <button

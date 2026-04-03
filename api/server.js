@@ -376,12 +376,16 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     // ── 4. Deduplicate (keep newest version) ──
     allBills.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
     const seen = new Set()
-    const unique = allBills.filter(b => {
+    const uniqueById = allBills.filter(b => {
       const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
       if (seen.has(id)) return false
       seen.add(id)
       return true
     })
+
+    // Also deduplicate companion bills (same bill in Senate vs House) and
+    // amended versions by comparing normalized titles
+    const unique = deduplicateCompanionBills(uniqueById)
 
     // ── 5. Build scoring context ──
     const interestTerms = new Set()
@@ -413,9 +417,9 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     interestPool.sort((a, b) => b._score - a._score)
     discoveryPool.sort((a, b) => b._score - a._score)
 
-    // Target: 15 bills total, ~70% interest (~10-11), ~30% discovery (~4-5)
+    // Target: 15 bills total, ~80% interest (~12), ~20% discovery (~3)
     const TARGET_TOTAL = 15
-    const targetInterest = Math.round(TARGET_TOTAL * 0.7)
+    const targetInterest = Math.round(TARGET_TOTAL * 0.8)
     const targetDiscovery = TARGET_TOTAL - targetInterest
 
     // Pick top interest bills, balanced federal/state
@@ -521,14 +525,15 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
     const transform = state === 'US' ? transformLegiScanBill : transformLegiScanStateBill
     const bills = hits.map(hit => transform(hit, q))
 
-    // Deduplicate by legiscan_bill_id
+    // Deduplicate by legiscan_bill_id then by similar titles (companion bills)
     const seen = new Set()
-    const unique = bills.filter(b => {
+    const uniqueById = bills.filter(b => {
       const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
       if (seen.has(id)) return false
       seen.add(id)
       return true
     })
+    const unique = deduplicateCompanionBills(uniqueById)
 
     // Sort: title-match relevance first, then recency. If bill number search, exact match goes first.
     const termLower = q.toLowerCase()
@@ -1645,6 +1650,52 @@ async function prefetchBillTexts(bills) {
   await Promise.allSettled(fetches)
 }
 
+// ─── Deduplicate companion bills (Senate/House versions, amended versions) ──
+// Bills with very similar titles are likely companion bills or amended versions.
+// Keep the one with the most recent action date.
+function normalizeTitleForDedup(title) {
+  return title
+    .toLowerCase()
+    .replace(/\b(act of \d{4})\b/g, 'act')     // "Act of 2025" → "act"
+    .replace(/\b(a bill|an act|a resolution)\b/g, '')
+    .replace(/[^a-z0-9\s]/g, '')                 // strip punctuation
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function titleSimilarity(a, b) {
+  const wordsA = new Set(a.split(' ').filter(w => w.length > 2))
+  const wordsB = new Set(b.split(' ').filter(w => w.length > 2))
+  if (wordsA.size === 0 || wordsB.size === 0) return 0
+  let overlap = 0
+  for (const w of wordsA) if (wordsB.has(w)) overlap++
+  const smaller = Math.min(wordsA.size, wordsB.size)
+  return overlap / smaller
+}
+
+function deduplicateCompanionBills(bills) {
+  const result = []
+  const usedIndices = new Set()
+
+  for (let i = 0; i < bills.length; i++) {
+    if (usedIndices.has(i)) continue
+    const normA = normalizeTitleForDedup(bills[i].title)
+
+    // Check remaining bills for near-duplicate titles
+    for (let j = i + 1; j < bills.length; j++) {
+      if (usedIndices.has(j)) continue
+      // Only compare bills in the same state/scope (both federal or same state)
+      if (bills[i].state !== bills[j].state) continue
+      const normB = normalizeTitleForDedup(bills[j].title)
+      if (titleSimilarity(normA, normB) >= 0.85) {
+        usedIndices.add(j) // drop the later (less recent) duplicate
+      }
+    }
+    result.push(bills[i])
+  }
+  return result
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function makeBillId(bill) {
   if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
@@ -1812,7 +1863,7 @@ function pickDiscoveryTerms(userInterests = []) {
   }
 
   const terms = []
-  const count = Math.min(3, shuffled.length)
+  const count = Math.min(2, shuffled.length)
   for (let i = 0; i < count; i++) {
     const mapped = INTEREST_MAP[shuffled[i]]
     // Pick a random term from this interest category
@@ -1836,8 +1887,8 @@ const TAG_TO_INTEREST = {
 function buildSearchTerms(interests = []) {
   const base = ['student loan', 'education funding', 'youth']
 
-  // When interests exist, include only 1 base term so interest terms dominate
-  const terms = interests.length === 0 ? [...base] : [base[0]]
+  // Only use base terms when user has no selected interests
+  const terms = interests.length === 0 ? [...base] : []
   for (const interest of interests) {
     if (INTEREST_MAP[interest]) terms.push(...INTEREST_MAP[interest])
   }
@@ -1853,8 +1904,8 @@ function buildSearchTerms(interests = []) {
 
 function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   const base = ['student loan', 'education funding', 'youth']
-  // When interests exist, include only 1 base term so interest terms dominate
-  const terms = interests.length === 0 ? [...base] : [base[0]]
+  // Only use base terms when user has no selected interests
+  const terms = interests.length === 0 ? [...base] : []
 
   // Map topic tags to interest keys with interaction counts
   const interestCounts = {}
