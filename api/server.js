@@ -297,14 +297,15 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     const allBills = []
 
     // Search federal bills (US Congress) via LegiScan
-    const federalFetches = searchTerms.slice(0, 5).map(term =>
+    // Use more terms and higher per-term limit so federal results aren't outnumbered by state
+    const federalFetches = searchTerms.slice(0, 6).map(term =>
       legiscanRequest('search', { state: 'US', query: term, year: '2' })
         .then(data => {
           if (!data.searchresult) return []
           // searchresult contains summary + numbered results
           return Object.values(data.searchresult)
             .filter(r => r.bill_id) // skip summary object
-            .slice(0, 8) // limit per term
+            .slice(0, 10) // limit per term
             .map(hit => transformLegiScanBill(hit, term))
         })
         .catch(err => {
@@ -320,7 +321,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
           if (!data.searchresult) return []
           return Object.values(data.searchresult)
             .filter(r => r.bill_id)
-            .slice(0, 5)
+            .slice(0, 4)
             .map(hit => transformLegiScanStateBill(hit, term))
         })
         .catch(err => {
@@ -362,7 +363,21 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       return new Date(b.updateDate) - new Date(a.updateDate)
     })
 
-    const result = { bills: unique.slice(0, 15) }
+    // Balanced split: ~10 federal, ~5 state (if available), total 15
+    const federal = unique.filter(b => !b.isStateBill)
+    const stateBills = unique.filter(b => b.isStateBill)
+    const maxFederal = stateBills.length >= 5 ? 10 : 15 - Math.min(stateBills.length, 5)
+    const maxState = Math.min(stateBills.length, 5)
+    const balanced = [...federal.slice(0, maxFederal), ...stateBills.slice(0, maxState)]
+    // Re-sort the balanced set by interest match then recency
+    balanced.sort((a, b) => {
+      const aMatch = interestTerms.has(a.searchTerm) ? 1 : 0
+      const bMatch = interestTerms.has(b.searchTerm) ? 1 : 0
+      if (aMatch !== bMatch) return bMatch - aMatch
+      return new Date(b.updateDate) - new Date(a.updateDate)
+    })
+
+    const result = { bills: balanced }
 
     setCache(cacheKey, result)
     res.json(result)

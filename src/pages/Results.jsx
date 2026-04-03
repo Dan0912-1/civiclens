@@ -297,29 +297,6 @@ export default function Results() {
           </button>
         </div>
 
-        {/* Trending interests */}
-        {interactionSummary && interactionSummary.totalInteractions > 5 && (
-          <div className={styles.trendingBar}>
-            <span className={styles.trendingLabel}>Your trending interests</span>
-            <div className={styles.trendingPills}>
-              {Object.entries(interactionSummary.topicCounts)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 3)
-                .map(([topic, count]) => (
-                  <button
-                    key={topic}
-                    className={styles.trendingPill}
-                    data-topic={topic}
-                    onClick={() => setActiveFilter(topic)}
-                  >
-                    {topic} <span className={styles.trendingCount}>{count}</span>
-                  </button>
-                ))
-              }
-            </div>
-          </div>
-        )}
-
         {/* Filter bar */}
         {topicTags.length > 1 && (
           <div className={styles.filterBar}>
