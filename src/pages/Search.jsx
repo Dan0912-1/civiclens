@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
@@ -9,6 +9,15 @@ import BillCard from '../components/BillCard.jsx'
 import styles from './Search.module.css'
 
 const API_BASE = getApiBase()
+
+const SUGGESTION_CHIPS = [
+  'Student Loans',
+  'Climate',
+  'Healthcare',
+  'Gun Policy',
+  'Immigration',
+  'Education',
+]
 
 function makeBillId(bill) {
   if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
@@ -21,6 +30,7 @@ export default function Search() {
   const { user } = useAuth()
 
   const initialQuery = searchParams.get('q') || ''
+  const initialTab = searchParams.get('tab') || 'federal'
   const [inputValue, setInputValue] = useState(initialQuery)
   const [bills, setBills] = useState([])
   const [loading, setLoading] = useState(false)
@@ -31,7 +41,11 @@ export default function Search() {
   const [totalResults, setTotalResults] = useState(0)
   const [hasSearched, setHasSearched] = useState(false)
 
-  // Personalization state — on-demand per bill
+  // Filters
+  const [activeTab, setActiveTab] = useState(initialTab)
+  const [chamberFilter, setChamberFilter] = useState('All')
+
+  // Personalization state
   const [analyses, setAnalyses] = useState({})
   const [personalizingBills, setPersonalizingBills] = useState(new Set())
   const [failedBills, setFailedBills] = useState(new Set())
@@ -44,7 +58,6 @@ export default function Search() {
     } catch { return null }
   })()
 
-  // Load bookmarks for logged-in users
   useEffect(() => {
     if (!user) return
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
@@ -52,14 +65,20 @@ export default function Search() {
 
   // Fetch when URL search param changes
   const activeQuery = searchParams.get('q') || ''
+  const activeTabParam = searchParams.get('tab') || 'federal'
+
+  useEffect(() => {
+    if (activeTabParam !== activeTab) setActiveTab(activeTabParam)
+  }, [activeTabParam])
+
   useEffect(() => {
     if (activeQuery) {
       setInputValue(activeQuery)
-      fetchResults(activeQuery, 1, true)
+      fetchResults(activeQuery, 1, true, activeTab)
     }
-  }, [activeQuery])
+  }, [activeQuery, activeTab])
 
-  async function fetchResults(query, pageNum, reset = false) {
+  async function fetchResults(query, pageNum, reset = false, tab = activeTab) {
     if (reset) {
       setLoading(true)
       setBills([])
@@ -70,8 +89,9 @@ export default function Search() {
     setError('')
     setHasSearched(true)
 
+    const stateParam = tab === 'state' ? 'CT' : 'US'
     try {
-      const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}`)
+      const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}&state=${stateParam}`)
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
         throw new Error(data.error || 'Search failed')
@@ -93,19 +113,36 @@ export default function Search() {
     }
   }
 
+  // Client-side chamber filter
+  const filteredBills = useMemo(() => {
+    if (chamberFilter === 'All') return bills
+    return bills.filter(b => b.originChamber === chamberFilter)
+  }, [bills, chamberFilter])
+
   function handleSubmit(e) {
     e.preventDefault()
     const q = inputValue.trim()
     if (!q || q.length < 2) return
-    // Update URL which triggers the useEffect fetch
-    setSearchParams({ q })
+    setSearchParams({ q, tab: activeTab })
+  }
+
+  function handleTabSwitch(tab) {
+    setActiveTab(tab)
+    setChamberFilter('All')
+    if (activeQuery) {
+      setSearchParams({ q: activeQuery, tab })
+    }
+  }
+
+  function handleChipClick(topic) {
+    setInputValue(topic)
+    setSearchParams({ q: topic, tab: activeTab })
   }
 
   function handleLoadMore() {
     if (activeQuery) fetchResults(activeQuery, page + 1, false)
   }
 
-  // On-demand personalization for a single bill
   async function personalizeBill(bill) {
     if (!profile) {
       navigate('/profile')
@@ -166,34 +203,80 @@ export default function Search() {
     }
   }
 
+  const filterLabel = [
+    activeTab === 'state' ? 'Connecticut' : 'Federal',
+    chamberFilter !== 'All' ? chamberFilter : null,
+  ].filter(Boolean).join(' \u00B7 ')
+
   return (
     <main className={styles.page}>
       <div className={styles.container}>
 
         <div className={styles.header}>
           <h1 className={styles.heading}>Search Bills</h1>
-          <p className={styles.subhead}>Find any federal or state bill by keyword.</p>
+          <p className={styles.subhead}>Search federal and state legislation by keyword, topic, or bill number.</p>
         </div>
 
-        <form className={styles.searchForm} onSubmit={handleSubmit}>
-          <input
-            className={styles.searchInput}
-            type="text"
-            value={inputValue}
-            onChange={e => setInputValue(e.target.value)}
-            placeholder="e.g. student loans, climate, minimum wage..."
-            autoFocus
-          />
-          <button
-            className={styles.searchBtn}
-            type="submit"
-            disabled={loading || inputValue.trim().length < 2}
-          >
-            {loading ? 'Searching...' : 'Search'}
-          </button>
-        </form>
+        {/* Search card */}
+        <div className={styles.searchCard}>
+          <form className={styles.searchForm} onSubmit={handleSubmit}>
+            <div className={styles.searchInputWrap}>
+              <svg className={styles.searchIcon} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                className={styles.searchInput}
+                type="text"
+                value={inputValue}
+                onChange={e => setInputValue(e.target.value)}
+                placeholder="Search bills..."
+                autoFocus
+              />
+            </div>
+            <button
+              className={styles.searchBtn}
+              type="submit"
+              disabled={loading || inputValue.trim().length < 2}
+            >
+              {loading ? 'Searching...' : 'Search'}
+            </button>
+          </form>
+          <p className={styles.searchHint}>
+            Try a topic like "climate" or a bill number like "HR 1234" or "S 5678"
+          </p>
+        </div>
 
-        {/* Profile hint for personalization */}
+        {/* Filter bar */}
+        <div className={styles.filterSection}>
+          <div className={styles.tabBar}>
+            <button
+              className={`${styles.tab} ${activeTab === 'federal' ? styles.tabActive : ''}`}
+              onClick={() => handleTabSwitch('federal')}
+            >
+              Federal
+            </button>
+            <button
+              className={`${styles.tab} ${activeTab === 'state' ? styles.tabActive : ''}`}
+              onClick={() => handleTabSwitch('state')}
+            >
+              State (CT)
+            </button>
+          </div>
+          <div className={styles.filterBar}>
+            {['All', 'House', 'Senate'].map(chamber => (
+              <button
+                key={chamber}
+                className={`${styles.filterBtn} ${chamberFilter === chamber ? styles.filterActive : ''}`}
+                onClick={() => setChamberFilter(chamber)}
+              >
+                {chamber}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Profile hint */}
         {!profile && hasSearched && bills.length > 0 && (
           <div className={styles.profileHint}>
             Want personalized explanations?{' '}
@@ -224,13 +307,13 @@ export default function Search() {
         )}
 
         {/* Results */}
-        {!loading && !error && bills.length > 0 && (
+        {!loading && !error && filteredBills.length > 0 && (
           <>
             <div className={styles.meta}>
-              {totalResults} result{totalResults !== 1 ? 's' : ''} for "{activeQuery}"
+              {totalResults} result{totalResults !== 1 ? 's' : ''} for "{activeQuery}" &middot; {filterLabel}
             </div>
             <div className={styles.grid}>
-              {bills.map((bill, i) => {
+              {filteredBills.map((bill, i) => {
                 const billId = makeBillId(bill)
                 return (
                   <BillCard
@@ -258,6 +341,14 @@ export default function Search() {
           </>
         )}
 
+        {/* Chamber filter empty (bills exist but none match chamber) */}
+        {!loading && !error && hasSearched && bills.length > 0 && filteredBills.length === 0 && (
+          <div className={styles.empty}>
+            <p className={styles.emptyHeading}>No {chamberFilter} bills found</p>
+            <p>Try selecting "All" to see all results, or adjust your search.</p>
+          </div>
+        )}
+
         {/* Empty state */}
         {!loading && !error && hasSearched && bills.length === 0 && (
           <div className={styles.empty}>
@@ -269,8 +360,23 @@ export default function Search() {
         {/* Initial prompt before any search */}
         {!hasSearched && !loading && (
           <div className={styles.prompt}>
+            <svg className={styles.promptIcon} width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
             <p className={styles.promptHeading}>What legislation are you looking for?</p>
-            <p>Search by topic, keyword, or bill number.</p>
+            <p className={styles.promptSub}>Search by topic, keyword, or bill number.</p>
+            <div className={styles.suggestionChips}>
+              {SUGGESTION_CHIPS.map(chip => (
+                <button
+                  key={chip}
+                  className={styles.suggestionChip}
+                  onClick={() => handleChipClick(chip)}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

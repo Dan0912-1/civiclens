@@ -483,6 +483,12 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
   if (cached) return res.json(cached)
 
   try {
+    // Detect bill number patterns like "HR 1234", "H.R. 1234", "S 5678", "SB123"
+    const normalized = q.replace(/\./g, '').replace(/\s+/g, ' ').trim().toUpperCase()
+    const billNumMatch = normalized.match(
+      /^(HR|S|HB|SB|HRES|SRES|HJRES|SJRES|HCONRES|SCONRES|HJR|SJR|HCR|SCR)\s*(\d+)$/
+    )
+
     const data = await legiscanRequest('search', { state, query: q, year: '2', page })
     if (!data.searchresult) return res.json({ bills: [], pagination: { page, totalResults: 0, hasMore: false } })
 
@@ -502,8 +508,23 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
       return true
     })
 
-    // Sort by recency
-    unique.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
+    // Sort: title-match relevance first, then recency. If bill number search, exact match goes first.
+    const termLower = q.toLowerCase()
+    unique.sort((a, b) => {
+      // Exact bill number match gets highest priority
+      if (billNumMatch) {
+        const targetNum = parseInt(billNumMatch[2], 10)
+        const aExact = a.number === targetNum ? 1 : 0
+        const bExact = b.number === targetNum ? 1 : 0
+        if (aExact !== bExact) return bExact - aExact
+      }
+      // Title contains search term gets next priority
+      const aInTitle = a.title.toLowerCase().includes(termLower) ? 1 : 0
+      const bInTitle = b.title.toLowerCase().includes(termLower) ? 1 : 0
+      if (aInTitle !== bInTitle) return bInTitle - aInTitle
+      // Then by recency
+      return new Date(b.updateDate) - new Date(a.updateDate)
+    })
 
     const pageSize = hits.length
     const hasMore = page * pageSize < totalResults
