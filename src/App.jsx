@@ -50,9 +50,9 @@ export default function App() {
     let cancelled = false
 
     async function splashSequence() {
-      let Haptics, ImpactStyle, NotificationType
+      let Haptics, ImpactStyle
       try {
-        ;({ Haptics, ImpactStyle, NotificationType } = await import('@capacitor/haptics'))
+        ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
       } catch { /* not native */ }
 
       const delay = ms => new Promise(r => setTimeout(r, ms))
@@ -60,38 +60,23 @@ export default function App() {
         if (Haptics && !cancelled) await Haptics.impact({ style })
       }
 
-      // Smooth wave: rapid light taps accelerating into heavy, then decelerating out
-      // Phase 1: gentle intro (light, spaced)
-      await tap(ImpactStyle.Light);  await delay(50)
-      await tap(ImpactStyle.Light);  await delay(45)
-      await tap(ImpactStyle.Light);  await delay(40)
-      // Phase 2: build (medium, tighter)
-      await tap(ImpactStyle.Medium); await delay(35)
+      // Quick haptic wave: build → peak → release
+      await tap(ImpactStyle.Light);  await delay(30)
+      await tap(ImpactStyle.Medium); await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
+      await tap(ImpactStyle.Heavy);  await delay(25)
       await tap(ImpactStyle.Medium); await delay(30)
-      await tap(ImpactStyle.Medium); await delay(28)
-      // Phase 3: peak (heavy, rapid)
-      await tap(ImpactStyle.Heavy);  await delay(25)
-      await tap(ImpactStyle.Heavy);  await delay(25)
-      await tap(ImpactStyle.Heavy);  await delay(25)
-      // Phase 4: release (medium, loosening)
-      await tap(ImpactStyle.Medium); await delay(30)
-      await tap(ImpactStyle.Medium); await delay(40)
-      // Phase 5: fade (light, spacing out)
-      await tap(ImpactStyle.Light);  await delay(50)
-      await tap(ImpactStyle.Light);  await delay(60)
       await tap(ImpactStyle.Light)
-
-      await delay(300)
 
       if (!cancelled) {
         try {
           const { SplashScreen } = await import('@capacitor/splash-screen')
-          await SplashScreen.hide({ fadeOutDuration: 500 })
+          await SplashScreen.hide({ fadeOutDuration: 300 })
         } catch {}
       }
     }
 
-    const timer = setTimeout(splashSequence, 800)
+    const timer = setTimeout(splashSequence, 200)
     return () => { cancelled = true; clearTimeout(timer) }
   }, [loading])
 
