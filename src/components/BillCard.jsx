@@ -38,7 +38,7 @@ function RelevanceMeter({ score }) {
   )
 }
 
-const WEB_ORIGIN = 'https://capitolkey.com'
+const WEB_ORIGIN = 'https://civiclens-six.vercel.app'
 
 function shareBill(bill, analysis) {
   const text = `${bill.title} — ${analysis?.headline || ''}`
