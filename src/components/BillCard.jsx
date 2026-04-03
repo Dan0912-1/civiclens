@@ -148,7 +148,15 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
       )}
 
       {/* Analysis — personalizing in progress */}
-      {isLoading && !personalizationFailed && (personalizing || !onPersonalize) && (
+      {isLoading && !personalizationFailed && personalizing && (
+        <div className={styles.analyzing}>
+          <div className={styles.analyzeSpinner} />
+          <span>Personalizing for you...</span>
+        </div>
+      )}
+
+      {/* Analysis — auto-personalizing (Results page only: no onPersonalize prop) */}
+      {isLoading && !personalizationFailed && !onPersonalize && (
         <div className={styles.analyzing}>
           <div className={styles.analyzeSpinner} />
           <span>Personalizing for you...</span>
