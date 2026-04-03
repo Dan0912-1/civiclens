@@ -19,7 +19,7 @@ app.set('trust proxy', 1)
 // ─── Security headers ────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: false, // CSP handled by frontend / Capacitor
-  crossOriginEmbedderPolicy: false, // allow loading Congress.gov resources
+  crossOriginEmbedderPolicy: false, // allow loading external resources
 }))
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ app.use(cors({
 app.use(express.json())
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
-// Protects expensive endpoints from abuse (AI personalization, Congress.gov proxy)
+// Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
 const legislationLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute
   max: 15,                  // 15 requests per minute per IP
@@ -74,9 +74,9 @@ const authLimiter = rateLimit({
   message: { error: 'Too many requests — please try again later.' },
 })
 
-const CONGRESS_KEY = process.env.CONGRESS_API_KEY
+const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const GROQ_KEY = process.env.GROQ_API_KEY
-const CONGRESS_BASE = 'https://api.congress.gov/v3'
+const LEGISCAN_BASE = 'https://api.legiscan.com/'
 // FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
 const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
   ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : null
@@ -150,6 +150,80 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
   }
 }
 
+// ─── LegiScan API helpers ───────────────────────────────────────────────────
+async function legiscanRequest(op, params = {}) {
+  const url = new URL(LEGISCAN_BASE)
+  url.searchParams.set('key', LEGISCAN_KEY)
+  url.searchParams.set('op', op)
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, v)
+  }
+  const resp = await fetch(url.toString())
+  if (!resp.ok) throw new Error(`LegiScan ${op} failed: ${resp.status}`)
+  const data = await resp.json()
+  if (data.status === 'ERROR') throw new Error(`LegiScan ${op}: ${JSON.stringify(data)}`)
+  return data
+}
+
+// Transform LegiScan search result → frontend bill object
+function transformLegiScanBill(hit, searchTerm = '') {
+  const billNum = hit.bill_number || ''
+  // Parse bill type and number from e.g. "HB2275", "SB123", "HJR45"
+  const match = billNum.match(/^([A-Z]+?)(\d+)$/)
+  const rawType = match ? match[1] : billNum
+  const number = match ? parseInt(match[2], 10) : 0
+  // Map LegiScan type prefixes to Congress.gov style lowercase types
+  const typeMap = { HB: 'hr', SB: 's', HR: 'hres', SR: 'sres', HJR: 'hjres', SJR: 'sjres', HCR: 'hconres', SCR: 'sconres' }
+  const type = typeMap[rawType] || rawType.toLowerCase()
+
+  // Derive chamber from type prefix
+  const chamber = rawType.startsWith('S') ? 'Senate' : 'House'
+
+  // Determine congress number from the session or default to current
+  const congress = 119 // Current congress — LegiScan doesn't expose this directly for federal
+
+  return {
+    congress,
+    type,
+    number,
+    title: hit.title || '',
+    originChamber: chamber,
+    latestAction: hit.last_action || 'No recent action',
+    latestActionDate: hit.last_action_date || '',
+    url: hit.url || '',
+    updateDate: hit.last_action_date || '',
+    searchTerm,
+    legiscan_bill_id: hit.bill_id,
+    state: hit.state || 'US',
+  }
+}
+
+// Transform a LegiScan state bill (CT, NY, etc.) → frontend bill object
+function transformLegiScanStateBill(hit, searchTerm = '') {
+  const billNum = hit.bill_number || ''
+  const match = billNum.match(/^([A-Z]+?)(\d+)$/)
+  const rawType = match ? match[1] : billNum
+  const number = match ? parseInt(match[2], 10) : 0
+
+  const chamber = rawType.startsWith('S') ? 'Senate' : 'House'
+
+  return {
+    congress: 0, // Not a federal bill
+    type: rawType.toLowerCase(),
+    number,
+    title: hit.title || '',
+    originChamber: chamber,
+    latestAction: hit.last_action || 'No recent action',
+    latestActionDate: hit.last_action_date || '',
+    url: hit.url || '',
+    updateDate: hit.last_action_date || '',
+    searchTerm,
+    legiscan_bill_id: hit.bill_id,
+    state: hit.state || '',
+    isStateBill: true,
+  }
+}
+
 // ─── Health checks ────────────────────────────────────────────────────────────
 // Railway's proxy verifies GET / to confirm the service is up
 app.get('/', (req, res) => {
@@ -195,14 +269,14 @@ function validatePersonalizeBody(body) {
   const errors = []
   if (!body.bill) errors.push('bill is required')
   if (!body.profile) errors.push('profile is required')
-  if (body.bill && (!body.bill.type || !body.bill.number || !body.bill.congress)) {
-    errors.push('bill must include type, number, and congress')
+  if (body.bill && (!body.bill.type || !body.bill.number)) {
+    errors.push('bill must include type and number')
   }
   return errors
 }
 
-// ─── Fetch bills from Congress.gov ───────────────────────────────────────────
-// Searches recent bills filtered by student-relevant topics
+// ─── Fetch bills from LegiScan ──────────────────────────────────────────────
+// Searches recent federal + state bills filtered by student-relevant topics
 app.post('/api/legislation', legislationLimiter, async (req, res) => {
   const valErrors = validateLegislationBody(req.body)
   if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
@@ -211,7 +285,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
   const summaryHash = interactionSummary ? Object.keys(interactionSummary.topicCounts || {}).sort().join(',') : ''
-  const cacheKey = `bills-${interests.sort().join('-')}-${grade}-${today}-${summaryHash}`
+  const cacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}-${summaryHash}`
   const cached = getCache(cacheKey)
   if (cached) return res.json(cached)
 
@@ -222,48 +296,53 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       : buildSearchTerms(interests)
     const allBills = []
 
-    // Fetch bills for all search terms in parallel
-    const fetches = searchTerms.slice(0, 5).map(term => {
-      const url = `${CONGRESS_BASE}/bill?query=${encodeURIComponent(term)}&sort=updateDate+desc&limit=8&api_key=${CONGRESS_KEY}`
-      return fetch(url)
-        .then(resp => {
-          if (!resp.ok) {
-            console.error(`Congress API error: ${resp.status} for term "${term}"`)
-            return null
-          }
-          return resp.json()
-        })
+    // Search federal bills (US Congress) via LegiScan
+    const federalFetches = searchTerms.slice(0, 5).map(term =>
+      legiscanRequest('search', { state: 'US', query: term, year: '2' })
         .then(data => {
-          if (!data?.bills) return []
-          return data.bills.map(b => ({
-            congress: b.congress,
-            type: b.type,
-            number: b.number,
-            title: b.title,
-            originChamber: b.originChamber,
-            latestAction: b.latestAction?.text || 'No recent action',
-            latestActionDate: b.latestAction?.actionDate || '',
-            url: b.url,
-            updateDate: b.updateDate,
-            searchTerm: term,
-          }))
+          if (!data.searchresult) return []
+          // searchresult contains summary + numbered results
+          return Object.values(data.searchresult)
+            .filter(r => r.bill_id) // skip summary object
+            .slice(0, 8) // limit per term
+            .map(hit => transformLegiScanBill(hit, term))
         })
         .catch(err => {
-          console.error(`Fetch error for term "${term}":`, err.message)
+          console.error(`LegiScan search error for US "${term}":`, err.message)
           return []
         })
-    })
+    )
 
-    const results = await Promise.all(fetches)
-    for (const bills of results) allBills.push(...bills)
+    // Search state bills if user has a state set
+    const stateFetches = state && state !== 'DC' ? searchTerms.slice(0, 3).map(term =>
+      legiscanRequest('search', { state, query: term, year: '2' })
+        .then(data => {
+          if (!data.searchresult) return []
+          return Object.values(data.searchresult)
+            .filter(r => r.bill_id)
+            .slice(0, 5)
+            .map(hit => transformLegiScanStateBill(hit, term))
+        })
+        .catch(err => {
+          console.error(`LegiScan search error for ${state} "${term}":`, err.message)
+          return []
+        })
+    ) : []
 
-    // Sort by recency first so dedup keeps the newest congress version
+    const [federalResults, stateResults] = await Promise.all([
+      Promise.all(federalFetches),
+      Promise.all(stateFetches),
+    ])
+    for (const bills of federalResults) allBills.push(...bills)
+    for (const bills of stateResults) allBills.push(...bills)
+
+    // Sort by recency first so dedup keeps the newest version
     allBills.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
 
-    // Deduplicate by type+number (ignoring congress so reintroduced bills collapse)
+    // Deduplicate by legiscan_bill_id (most reliable unique key)
     const seen = new Set()
     const unique = allBills.filter(b => {
-      const id = `${b.type}${b.number}`
+      const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
       if (seen.has(id)) return false
       seen.add(id)
       return true
@@ -283,7 +362,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       return new Date(b.updateDate) - new Date(a.updateDate)
     })
 
-    const result = { bills: unique.slice(0, 10) }
+    const result = { bills: unique.slice(0, 15) }
 
     setCache(cacheKey, result)
     res.json(result)
@@ -300,21 +379,96 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 })
 
 // ─── Get single bill detail ───────────────────────────────────────────────────
+// Supports both LegiScan bill ID (?legiscan_id=123) and legacy congress/type/number URL
 app.get('/api/bill/:congress/:type/:number', async (req, res) => {
   const { congress, type, number } = req.params
-  const cacheKey = `bill-${congress}-${type}-${number}`
-  const cached = getCache(cacheKey)
-  if (cached) return res.json(cached)
+  const legiscanId = req.query.legiscan_id
 
-  try {
-    const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}?api_key=${CONGRESS_KEY}`
-    const resp = await fetch(url)
-    const data = await resp.json()
+  if (legiscanId) {
+    const cacheKey = `bill-ls-${legiscanId}`
+    const cached = getCache(cacheKey)
+    if (cached) return res.json(cached)
 
-    setCache(cacheKey, data)
-    res.json(data)
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch bill detail' })
+    try {
+      const data = await legiscanRequest('getBill', { id: legiscanId })
+      const b = data.bill
+      // Transform to a shape the frontend expects
+      const result = {
+        bill: {
+          congress: b.state === 'US' ? 119 : 0,
+          type: type,
+          number: parseInt(number),
+          title: b.title,
+          description: b.description || '',
+          originChamber: b.body_id === 1 ? 'House' : 'Senate',
+          latestAction: { text: b.status_desc || b.last_action || '', actionDate: b.status_date || b.last_action_date || '' },
+          url: b.url || '',
+          sponsors: (b.sponsors || []).map(s => ({
+            firstName: s.first_name || s.name?.split(' ')[0] || '',
+            lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
+            party: s.party || '',
+            state: s.state || '',
+          })),
+          cosponsors: { count: (b.sponsors || []).length > 1 ? (b.sponsors.length - 1) : 0 },
+          policyArea: { name: b.subjects?.[0]?.subject_name || '' },
+          introducedDate: b.status_date || '',
+          committees: { count: (b.committee || []).length },
+          state: b.state || 'US',
+          legiscan_bill_id: b.bill_id,
+        },
+      }
+      setCache(cacheKey, result)
+      res.json(result)
+    } catch (err) {
+      console.error('LegiScan getBill error:', err.message)
+      res.status(500).json({ error: 'Failed to fetch bill detail' })
+    }
+  } else {
+    // Fallback: try to search LegiScan for this bill by number
+    const cacheKey = `bill-${congress}-${type}-${number}`
+    const cached = getCache(cacheKey)
+    if (cached) return res.json(cached)
+
+    try {
+      const billNumber = `${type.toUpperCase()}${number}`
+      const data = await legiscanRequest('search', { state: 'US', query: billNumber, year: '2' })
+      const results = data.searchresult ? Object.values(data.searchresult).filter(r => r.bill_id) : []
+      const match = results.find(r => r.bill_number === billNumber)
+      if (match) {
+        const detailData = await legiscanRequest('getBill', { id: match.bill_id })
+        const b = detailData.bill
+        const result = {
+          bill: {
+            congress: 119,
+            type,
+            number: parseInt(number),
+            title: b.title,
+            description: b.description || '',
+            originChamber: b.body_id === 1 ? 'House' : 'Senate',
+            latestAction: { text: b.status_desc || b.last_action || '', actionDate: b.status_date || '' },
+            url: b.url || '',
+            sponsors: (b.sponsors || []).map(s => ({
+              firstName: s.first_name || s.name?.split(' ')[0] || '',
+              lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
+              party: s.party || '',
+              state: s.state || '',
+            })),
+            cosponsors: { count: Math.max(0, (b.sponsors || []).length - 1) },
+            policyArea: { name: b.subjects?.[0]?.subject_name || '' },
+            introducedDate: b.status_date || '',
+            committees: { count: (b.committee || []).length },
+            legiscan_bill_id: b.bill_id,
+          },
+        }
+        setCache(cacheKey, result)
+        res.json(result)
+      } else {
+        res.status(404).json({ error: 'Bill not found' })
+      }
+    } catch (err) {
+      console.error('Bill detail fetch error:', err.message)
+      res.status(500).json({ error: 'Failed to fetch bill detail' })
+    }
   }
 })
 
@@ -333,15 +487,15 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  // Fetch full bill content (text + CRS summary) for accurate personalization
+  // Fetch full bill content for accurate personalization
   const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
-  const billData = await fetchBillContent(bill.congress, billType, bill.number)
+  const billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
   const { billContent, sources } = buildBillContent(billData)
   console.log(`[personalize] ${bill.type}${bill.number}-${bill.congress}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
   const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
 
-Your job: show ONE specific student how a bill touches THEIR life — not abstract policy talk.
+Your job: show ONE specific student how a federal or state bill touches THEIR life — not abstract policy talk.
 
 ═══ ABSOLUTE RULES ═══
 1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
@@ -389,7 +543,7 @@ Your job: show ONE specific student how a bill touches THEIR life — not abstra
 - Other context: ${profile.additionalContext || 'None provided'}
 
 BILL:
-- Bill: ${bill.type} ${bill.number} (${bill.congress}th Congress)
+- Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
 - Title: ${bill.title}
 - Chamber: ${bill.originChamber || 'Congress'}
 - Latest Action: ${bill.latestAction}
@@ -502,10 +656,12 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
 
   // 2. Fetch bill texts for uncached bills (check Supabase text cache first)
-  const textCacheKeys = billsToPersonalize.map(b => `bt-${b.bill.congress}-${b.billType}-${b.bill.number}`)
+  const textCacheKeys = billsToPersonalize.map(b =>
+    b.bill.legiscan_bill_id ? `bt-ls-${b.bill.legiscan_bill_id}` : `bt-${b.bill.congress}-${b.billType}-${b.bill.number}`
+  )
   const textCache = await getBillTextsFromSupabase(textCacheKeys)
 
-  // For any missing from Supabase text cache, fetch from Congress.gov in parallel
+  // For any missing from Supabase text cache, fetch from LegiScan in parallel
   const textFetches = billsToPersonalize.map(async (b, i) => {
     const key = textCacheKeys[i]
     const memCached = getCache(key)
@@ -524,8 +680,8 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       return { ...b, billData }
     }
 
-    // Fetch from Congress.gov
-    const billData = await fetchBillContent(b.bill.congress, b.billType, b.bill.number)
+    // Fetch from LegiScan
+    const billData = await fetchBillContent(b.bill.congress, b.billType, b.bill.number, b.bill.legiscan_bill_id)
     return { ...b, billData }
   })
 
@@ -537,7 +693,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
     const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
 
-Your job: show ONE specific student how a bill touches THEIR life — not abstract policy talk.
+Your job: show ONE specific student how a federal or state bill touches THEIR life — not abstract policy talk.
 
 ═══ ABSOLUTE RULES ═══
 1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
@@ -585,7 +741,7 @@ Your job: show ONE specific student how a bill touches THEIR life — not abstra
 - Other context: ${profile.additionalContext || 'None provided'}
 
 BILL:
-- Bill: ${bill.type} ${bill.number} (${bill.congress}th Congress)
+- Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
 - Title: ${bill.title}
 - Chamber: ${bill.originChamber || 'Congress'}
 - Latest Action: ${bill.latestAction}
@@ -913,26 +1069,22 @@ async function checkBillUpdates() {
     }
   }
 
-  // 3. Fetch current status for each unique bill from Congress.gov
+  // 3. Fetch current status for each unique bill from LegiScan
   const currentStatuses = new Map()
   for (const [billId, billInfo] of uniqueBills) {
     try {
-      const { congress, type, number } = billInfo
-      if (!congress || !type || !number) continue
+      const legiscanId = billInfo.legiscan_bill_id
+      if (!legiscanId) continue
 
-      const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}?api_key=${CONGRESS_KEY}`
-      const resp = await fetch(url)
-      if (!resp.ok) continue
-
-      const data = await resp.json()
-      const latestAction = data.bill?.latestAction?.text || ''
+      const data = await legiscanRequest('getBill', { id: legiscanId })
+      const b = data.bill
       currentStatuses.set(billId, {
-        latestAction,
-        latestActionDate: data.bill?.latestAction?.actionDate || '',
+        latestAction: b.last_action || b.status_desc || '',
+        latestActionDate: b.last_action_date || b.status_date || '',
       })
 
-      // Rate-limit: Congress.gov asks for max ~1 req/sec
-      await new Promise(r => setTimeout(r, 1100))
+      // Small delay to respect rate limits
+      await new Promise(r => setTimeout(r, 200))
     } catch (err) {
       console.error(`[cron] Failed to fetch bill ${billId}:`, err.message)
     }
@@ -1165,57 +1317,51 @@ async function getBillTextsFromSupabase(cacheKeys) {
   } catch { return new Map() }
 }
 
-async function fetchBillTextFromCongress(congress, type, number) {
+// Fetch bill text from LegiScan using getBill (to get doc_id) then getBillText
+async function fetchBillTextFromLegiScan(legiscanBillId) {
   try {
-    const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/text?api_key=${CONGRESS_KEY}`
-    const resp = await fetch(url)
-    if (!resp.ok) return null
+    // First get the bill to find available text documents
+    const billData = await legiscanRequest('getBill', { id: legiscanBillId })
+    const texts = billData.bill?.texts || []
+    if (!texts.length) return null
 
-    const data = await resp.json()
-    const versions = data.textVersions || []
-    if (!versions.length) return null
+    // Get the latest text version
+    const latest = texts[texts.length - 1]
+    if (!latest.doc_id) return null
 
-    const latest = versions[versions.length - 1]
-    const htmFormat = latest.formats?.find(f =>
-      f.type === 'Formatted Text' || f.type === 'Formatted Text as HTML'
-    )
-    if (!htmFormat?.url) return null
+    const textData = await legiscanRequest('getBillText', { id: latest.doc_id })
+    const doc = textData.text?.doc
+    const mime = textData.text?.mime || ''
 
-    const htmlResp = await fetch(htmFormat.url)
-    if (!htmlResp.ok) return null
+    if (!doc) return null
 
-    const plainText = stripHtml(await htmlResp.text())
+    // doc is base64-encoded — decode it
+    const decoded = Buffer.from(doc, 'base64')
+    let plainText = ''
+
+    if (mime.includes('html') || mime.includes('htm')) {
+      plainText = stripHtml(decoded.toString('utf-8'))
+    } else if (mime.includes('text')) {
+      plainText = decoded.toString('utf-8').replace(/\s+/g, ' ').trim()
+    } else {
+      // PDF or RTF — use the bill description as fallback
+      plainText = billData.bill?.description || ''
+    }
+
+    if (!plainText) return null
+
     const wordCount = plainText.split(/\s+/).length
-    return { text: plainText, wordCount, version: latest.type || 'Unknown version' }
+    return { text: plainText, wordCount, version: latest.type || 'Latest version' }
   } catch (err) {
-    console.error(`[billtext] Failed for ${type}${number}-${congress}:`, err.message)
+    console.error(`[billtext] LegiScan failed for bill ${legiscanBillId}:`, err.message)
     return null
   }
 }
 
-async function fetchCRSFromCongress(congress, type, number) {
-  try {
-    const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/summaries?api_key=${CONGRESS_KEY}`
-    const resp = await fetch(url)
-    if (!resp.ok) return null
-
-    const data = await resp.json()
-    const summaries = data.summaries || []
-    if (!summaries.length) return null
-
-    const best = summaries[summaries.length - 1]
-    const plainSummary = stripHtml(best.text || '')
-    if (!plainSummary) return null
-    return { summary: plainSummary, versionCode: best.versionCode || '' }
-  } catch (err) {
-    console.error(`[crssummary] Failed for ${type}${number}-${congress}:`, err.message)
-    return null
-  }
-}
-
-// Fetch bill text + CRS, checking Supabase first, then Congress.gov
-async function fetchBillContent(congress, type, number) {
-  const cacheKey = `bt-${congress}-${type}-${number}`
+// Fetch bill content, checking caches first, then LegiScan
+// Accepts either legiscanBillId (preferred) or congress/type/number (legacy)
+async function fetchBillContent(congress, type, number, legiscanBillId) {
+  const cacheKey = legiscanBillId ? `bt-ls-${legiscanBillId}` : `bt-${congress}-${type}-${number}`
 
   // L1: in-memory
   const memCached = getCache(cacheKey)
@@ -1235,18 +1381,31 @@ async function fetchBillContent(congress, type, number) {
     return result
   }
 
-  // L3: Congress.gov (parallel fetch text + CRS)
-  const [textResult, crsResult] = await Promise.all([
-    fetchBillTextFromCongress(congress, type, number),
-    fetchCRSFromCongress(congress, type, number),
-  ])
+  // L3: LegiScan API
+  let textResult = null
+  if (legiscanBillId) {
+    textResult = await fetchBillTextFromLegiScan(legiscanBillId)
+  } else {
+    // Try to find the bill on LegiScan by searching
+    try {
+      const billNumber = `${type.toUpperCase()}${number}`
+      const searchData = await legiscanRequest('search', { state: 'US', query: billNumber, year: '2' })
+      const hits = searchData.searchresult ? Object.values(searchData.searchresult).filter(r => r.bill_id) : []
+      const match = hits.find(r => r.bill_number === billNumber)
+      if (match) {
+        textResult = await fetchBillTextFromLegiScan(match.bill_id)
+      }
+    } catch (err) {
+      console.error(`[billtext] LegiScan search fallback failed:`, err.message)
+    }
+  }
 
   const result = {
     text: textResult?.text || null,
     wordCount: textResult?.wordCount || 0,
     version: textResult?.version || '',
-    crsSummary: crsResult?.summary || null,
-    crsVersion: crsResult?.versionCode || '',
+    crsSummary: null, // LegiScan doesn't have CRS summaries
+    crsVersion: '',
   }
 
   // Persist to Supabase + in-memory
@@ -1269,11 +1428,11 @@ function buildBillContent(billData) {
   if (billData.text) {
     if (billData.wordCount <= BILL_TEXT_WORD_LIMIT) {
       billContent += `FULL BILL TEXT (${billData.version}):\n${billData.text}\n`
-      sources.push('full bill text from Congress.gov')
+      sources.push('full bill text via LegiScan')
     } else {
       const truncated = billData.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
       billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billData.wordCount.toLocaleString()}, ${billData.version}):\n${truncated}\n`
-      sources.push('bill text from Congress.gov')
+      sources.push('bill text via LegiScan')
     }
   }
 
@@ -1288,7 +1447,7 @@ function buildBillContent(billData) {
 async function prefetchBillTexts(bills) {
   const fetches = bills.map(b => {
     const type = b.type?.toLowerCase().replace(/\./g, '') || ''
-    return fetchBillContent(b.congress, type, b.number).catch(() => null)
+    return fetchBillContent(b.congress, type, b.number, b.legiscan_bill_id).catch(() => null)
   })
   await Promise.allSettled(fetches)
 }
@@ -1409,7 +1568,7 @@ async function ensureBillTextCache() {
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
-  console.log(`   Congress key: ${process.env.CONGRESS_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   LegiScan key: ${process.env.LEGISCAN_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Groq key: ${process.env.GROQ_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)

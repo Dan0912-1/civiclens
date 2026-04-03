@@ -50,8 +50,8 @@ export default function About() {
           <div className={styles.techGrid}>
             {[
               {
-                name: 'Congress.gov API',
-                desc: 'Official U.S. government data source for all federal legislation. Real bills, real status, updated daily.',
+                name: 'LegiScan API',
+                desc: 'Covers all 50 states and Congress. Real federal and state bills, real status, updated daily.',
                 badge: 'Data source'
               },
               {

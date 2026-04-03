@@ -77,7 +77,11 @@ export default function BillDetail() {
   async function fetchBillDetail() {
     setLoading(true)
     try {
-      const resp = await fetch(`${API_BASE}/api/bill/${congress}/${type}/${number}`)
+      const legiscanId = passedBill?.legiscan_bill_id || new URLSearchParams(window.location.search).get('legiscan_id') || ''
+      const url = legiscanId
+        ? `${API_BASE}/api/bill/${congress}/${type}/${number}?legiscan_id=${legiscanId}`
+        : `${API_BASE}/api/bill/${congress}/${type}/${number}`
+      const resp = await fetch(url)
       if (resp.ok) {
         const data = await resp.json()
         setDetail(data.bill || data)
@@ -131,9 +135,13 @@ export default function BillDetail() {
 
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const displayTitle = bill?.title || detail?.title || `${type.toUpperCase()} ${number}`
-  const congressUrl = `https://www.congress.gov/bill/${congress}th-congress/${
-    type === 's' ? 'senate-bill' : type === 'hr' ? 'house-bill' : type === 'sjres' ? 'senate-joint-resolution' : 'house-joint-resolution'
-  }/${number}`
+  const billUrl = passedBill?.url || detail?.url || (
+    passedBill?.isStateBill
+      ? `https://legiscan.com/${passedBill.state}/bill/${type.toUpperCase()}${number}/2026`
+      : `https://www.congress.gov/bill/${congress}th-congress/${
+          type === 's' ? 'senate-bill' : type === 'hr' ? 'house-bill' : type === 'sjres' ? 'senate-joint-resolution' : 'house-joint-resolution'
+        }/${number}`
+  )
 
   if (loading && !bill) {
     return (
@@ -260,7 +268,7 @@ export default function BillDetail() {
             <div className={styles.sourceAttribution}>
               Powered by AI analysis of {analysis.sources?.length > 0
                 ? analysis.sources.join(' and ')
-                : 'bill data from Congress.gov'}
+                : 'bill data from LegiScan'}
             </div>
           </div>
         ) : (
@@ -316,9 +324,9 @@ export default function BillDetail() {
         <div className={styles.footer}>
           <button
             className={styles.congressLink}
-            onClick={() => openInAppBrowser(congressUrl)}
+            onClick={() => openInAppBrowser(billUrl)}
           >
-            Read full bill text on Congress.gov →
+            Read full bill text →
           </button>
         </div>
       </div>

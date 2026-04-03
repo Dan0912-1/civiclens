@@ -12,6 +12,11 @@ import styles from './Results.module.css'
 const API_BASE = getApiBase()
 const BILLS_PER_PAGE = 5
 
+function makeBillId(bill) {
+  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
+  return `${bill.type}${bill.number}-${bill.congress}`
+}
+
 export default function Results() {
   const navigate = useNavigate()
   const { user } = useAuth()
@@ -27,6 +32,7 @@ export default function Results() {
   const [interactionSummary, setInteractionSummary] = useState(null)
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
   const prevUserRef = useRef(null)
 
   const { refreshing, pullProgress } = usePullToRefresh(
@@ -137,12 +143,12 @@ export default function Results() {
       // Mark all as failed
       setFailedBills(prev => {
         const next = new Set(prev)
-        billsToPersonalize.forEach(b => next.add(`${b.type}${b.number}-${b.congress}`))
+        billsToPersonalize.forEach(b => next.add(makeBillId(b)))
         return next
       })
       setSettledBills(prev => {
         const next = new Set(prev)
-        billsToPersonalize.forEach(b => next.add(`${b.type}${b.number}-${b.congress}`))
+        billsToPersonalize.forEach(b => next.add(makeBillId(b)))
         return next
       })
     }
@@ -223,20 +229,23 @@ export default function Results() {
   )], [analyses])
 
   const allFilteredBills = useMemo(() => {
+    // First filter by tab (federal vs state)
+    let tabFiltered = bills.filter(b =>
+      activeTab === 'federal' ? !b.isStateBill : b.isStateBill
+    )
+    // Then filter by topic tag
     const filtered = activeFilter === 'All'
-      ? bills
-      : bills.filter(b => {
-          const id = `${b.type}${b.number}-${b.congress}`
+      ? tabFiltered
+      : tabFiltered.filter(b => {
+          const id = makeBillId(b)
           return analyses[id]?.topic_tag === activeFilter
         })
     return [...filtered].sort((a, b) => {
-      const idA = `${a.type}${a.number}-${a.congress}`
-      const idB = `${b.type}${b.number}-${b.congress}`
-      const relA = analyses[idA]?.relevance ?? -1
-      const relB = analyses[idB]?.relevance ?? -1
+      const relA = analyses[makeBillId(a)]?.relevance ?? -1
+      const relB = analyses[makeBillId(b)]?.relevance ?? -1
       return relB - relA
     })
-  }, [activeFilter, bills, analyses])
+  }, [activeTab, activeFilter, bills, analyses])
 
   const filteredBills = useMemo(() =>
     allFilteredBills.slice(0, visibleCount)
@@ -265,10 +274,26 @@ export default function Results() {
           </div>
           <h1 className={styles.heading}>Your Legislation</h1>
           <p className={styles.subhead}>
-            Real bills moving through Congress right now — explained for your life.
+            Real bills — explained for your life.
           </p>
           <button className={styles.editBtn} onClick={() => navigate('/profile')}>
             ← Edit my profile
+          </button>
+        </div>
+
+        {/* Federal / State tab switcher */}
+        <div className={styles.tabBar}>
+          <button
+            className={`${styles.tab} ${activeTab === 'federal' ? styles.tabActive : ''}`}
+            onClick={() => { setActiveTab('federal'); setVisibleCount(BILLS_PER_PAGE); setActiveFilter('All') }}
+          >
+            Federal
+          </button>
+          <button
+            className={`${styles.tab} ${activeTab === 'state' ? styles.tabActive : ''}`}
+            onClick={() => { setActiveTab('state'); setVisibleCount(BILLS_PER_PAGE); setActiveFilter('All') }}
+          >
+            {profile.state || 'State'}
           </button>
         </div>
 
@@ -332,13 +357,13 @@ export default function Results() {
           <>
             <div className={styles.meta}>
               Showing {filteredBills.length} of {allFilteredBills.length} bill{allFilteredBills.length !== 1 ? 's' : ''}
-              {bills.some(b => !settledBills.has(`${b.type}${b.number}-${b.congress}`)) && (
+              {bills.some(b => !settledBills.has(makeBillId(b))) && (
                 <span className={styles.analyzing}> · Personalizing remaining bills...</span>
               )}
             </div>
             <div className={styles.grid}>
               {filteredBills.map((bill, i) => {
-                const billId = `${bill.type}${bill.number}-${bill.congress}`
+                const billId = makeBillId(bill)
                 return (
                   <BillCard
                     key={billId}
@@ -373,8 +398,8 @@ export default function Results() {
         {/* Footer note */}
         <div className={styles.disclaimer}>
           <strong>CapitolKey is strictly nonpartisan.</strong> We explain impact, not position.
-          Bill data from <a href="https://api.congress.gov" target="_blank" rel="noopener noreferrer">Congress.gov</a> via the official API.
-          Personalizations generated by Claude AI (Anthropic).
+          Bill data from <a href="https://legiscan.com" target="_blank" rel="noopener noreferrer">LegiScan</a>.
+          Personalizations generated by AI.
         </div>
 
       </div>

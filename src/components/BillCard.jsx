@@ -87,7 +87,8 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
   }
 
   function openDetail() {
-    navigate(`/bill/${bill.congress}/${bill.type.toLowerCase()}/${bill.number}`, {
+    const legiscanParam = bill.legiscan_bill_id ? `?legiscan_id=${bill.legiscan_bill_id}` : ''
+    navigate(`/bill/${bill.congress || 0}/${bill.type.toLowerCase()}/${bill.number}${legiscanParam}`, {
       state: { bill, analysis }
     })
   }
