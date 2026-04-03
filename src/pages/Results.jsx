@@ -169,9 +169,14 @@ export default function Results() {
       if (interactionSummary && interactionSummary.totalInteractions > 0) {
         body.interactionSummary = interactionSummary
       }
+      const headers = { 'Content-Type': 'application/json' }
+      // Pass auth token so backend can score bills using interaction history
+      const session = supabase ? (await supabase.auth.getSession())?.data?.session : null
+      if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
+
       const resp = await fetch(`${API_BASE}/api/legislation`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(body)
       })
       const data = await resp.json()
