@@ -1,3 +1,4 @@
 export function getApiBase() {
-  return import.meta.env.VITE_API_BASE_URL || 'https://civiclens-production-07ed.up.railway.app'
+  // In dev, VITE_API_BASE_URL is empty so the Vite proxy handles /api/* → localhost:3001
+  return import.meta.env.VITE_API_BASE_URL || ''
 }

@@ -636,7 +636,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   for (let i = 0; i < bills.length; i++) {
     const bill = bills[i]
     const cacheKey = cacheKeys[i]
-    const billId = `${bill.type}${bill.number}-${bill.congress}`
+    const billId = makeBillId(bill)
 
     const cached = cachedResults.get(cacheKey) || getCache(cacheKey)
     if (cached) {
@@ -1453,6 +1453,11 @@ async function prefetchBillTexts(bills) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+function makeBillId(bill) {
+  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
+  return `${bill.type}${bill.number}-${bill.congress}`
+}
+
 function gradeToAge(grade) {
   const map = { '9': 14, '10': 15, '11': 16, '12': 17 }
   return map[String(grade)] || 16

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"node --env-file=.env api/server.js\"",
+    "dev": "concurrently \"vite\" \"PORT=3001 node --env-file=.env api/server.js\"",
     "build": "vite build",
     "preview": "vite preview",
     "server": "node --env-file=.env api/server.js",
