@@ -327,6 +327,10 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
+  // Fetch full bill content (text + CRS summary) for accurate personalization
+  const billType = bill.type?.toLowerCase().replace('.', '') || ''
+  const { billContent, sources } = await getBillContent(bill.congress, billType, bill.number, bill.title)
+
   const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
 
 Your job: show ONE specific student how a bill touches THEIR life — not abstract policy talk.
@@ -340,7 +344,7 @@ Your job: show ONE specific student how a bill touches THEIR life — not abstra
 6. STATE CONTEXT MATTERS: if their state already has a relevant law (e.g. California minimum wage is $16.50/hr, higher than federal), SAY SO and explain how the federal bill interacts with it.
 7. USE REAL NUMBERS when possible: dollar amounts, percentages, dates, ages affected.
 8. If the bill has no meaningful impact on this student, say so directly with relevance ≤ 2.
-9. Never invent facts. If you're unsure, say "based on the bill title" or "details pending."
+9. ONLY use facts from the provided bill text and CRS summary. Never invent provisions or details not in the source material. If the bill text was not available, say "based on available information" and keep claims conservative.
 10. Include 2-3 civic_actions that are genuinely actionable — with real websites (congress.gov, senate.gov, house.gov) or specific steps.
 11. NEVER instruct the student to take personal action (like "delete the app" or "change your password") in headline, summary, if_it_passes, or if_it_fails. Those fields describe WHAT CHANGES, not what the student should do. Save all actionable steps for civic_actions only.
 
@@ -382,7 +386,7 @@ BILL:
 - Chamber: ${bill.originChamber || 'Congress'}
 - Latest Action: ${bill.latestAction}
 - Date of Last Action: ${bill.latestActionDate}
-
+${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
   try {
@@ -415,6 +419,8 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       // Strip markdown code fences if the model added them
       text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
+      // Attach source attribution so the frontend can display it
+      parsed.sources = sources
       const result = { analysis: parsed }
       const billId = `${bill.type}${bill.number}-${bill.congress}`
       await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
@@ -878,6 +884,184 @@ if (supabase) {
   console.log('   Bill-update cron: \u2713 scheduled (daily 8:00 AM UTC)')
 } else {
   console.log('   Bill-update cron: \u2717 disabled (no Supabase)')
+}
+
+// ─── Bill text & CRS summary fetching ───────────────────────────────────────
+// Fetches the full legislative text from Congress.gov and strips HTML to plain text.
+// Also fetches CRS (Congressional Research Service) expert summaries when available.
+
+const BILL_TEXT_WORD_LIMIT = 4000 // bills under this go directly to personalization
+
+async function fetchBillText(congress, type, number) {
+  const cacheKey = `billtext-${congress}-${type}-${number}`
+  const cached = getCache(cacheKey)
+  if (cached) return cached
+
+  try {
+    // Step 1: Get text versions list from Congress.gov
+    const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/text?api_key=${CONGRESS_KEY}`
+    const resp = await fetch(url)
+    if (!resp.ok) return null
+
+    const data = await resp.json()
+    const versions = data.textVersions || []
+    if (!versions.length) return null
+
+    // Pick the latest version (last in the array = most recent)
+    const latest = versions[versions.length - 1]
+    const htmFormat = latest.formats?.find(f => f.type === 'Formatted Text as HTML')
+    if (!htmFormat?.url) return null
+
+    // Step 2: Fetch the actual HTML content
+    const htmlResp = await fetch(htmFormat.url)
+    if (!htmlResp.ok) return null
+
+    const html = await htmlResp.text()
+
+    // Step 3: Strip HTML tags to get plain text
+    const plainText = html
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const wordCount = plainText.split(/\s+/).length
+    const result = { text: plainText, wordCount, version: latest.type || 'Unknown version' }
+
+    setCache(cacheKey, result)
+    return result
+  } catch (err) {
+    console.error(`[billtext] Failed to fetch text for ${type}${number}-${congress}:`, err.message)
+    return null
+  }
+}
+
+async function fetchCRSSummary(congress, type, number) {
+  const cacheKey = `crssummary-${congress}-${type}-${number}`
+  const cached = getCache(cacheKey)
+  if (cached) return cached
+
+  try {
+    const url = `${CONGRESS_BASE}/bill/${congress}/${type.toLowerCase()}/${number}/summaries?api_key=${CONGRESS_KEY}`
+    const resp = await fetch(url)
+    if (!resp.ok) return null
+
+    const data = await resp.json()
+    const summaries = data.summaries || []
+    if (!summaries.length) return null
+
+    // Pick the most detailed summary (last = most recent version, usually most complete)
+    const best = summaries[summaries.length - 1]
+    // CRS summaries come as HTML — strip tags
+    const plainSummary = (best.text || '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    if (!plainSummary) return null
+
+    const result = { summary: plainSummary, versionCode: best.versionCode || '', actionDate: best.actionDate || '' }
+    setCache(cacheKey, result)
+    return result
+  } catch (err) {
+    console.error(`[crssummary] Failed to fetch CRS summary for ${type}${number}-${congress}:`, err.message)
+    return null
+  }
+}
+
+// Two-pass compression for long bills: extract key provisions via LLM
+async function compressBillText(fullText, billTitle) {
+  const cacheKey = `compressed-${billTitle.slice(0, 50).replace(/\s+/g, '-')}-${fullText.length}`
+  const cached = getCache(cacheKey)
+  if (cached) return cached
+
+  try {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-oss-120b',
+        max_tokens: 1500,
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content: `You are a legislative analyst. Extract ALL key provisions from this bill text. Be comprehensive — do not omit any substantive provision, dollar amount, date, deadline, affected group, or enforcement mechanism. Output a structured plain-text digest. No opinions, just facts.`
+          },
+          {
+            role: 'user',
+            content: `Bill: ${billTitle}\n\nFull text (may be truncated):\n${fullText.slice(0, 30000)}\n\nExtract every key provision, dollar amount, affected group, date, and enforcement mechanism. Be thorough — missing a provision means a student won't learn about it.`
+          }
+        ]
+      })
+    })
+
+    const data = await resp.json()
+    const digest = data.choices?.[0]?.message?.content?.trim() || null
+    if (digest) {
+      setCache(cacheKey, digest)
+    }
+    return digest
+  } catch (err) {
+    console.error('[compress] Bill text compression failed:', err.message)
+    return null
+  }
+}
+
+// Orchestrates fetching bill text + CRS summary, compressing if needed
+async function getBillContent(congress, type, number, billTitle) {
+  // Fetch bill text and CRS summary in parallel
+  const [billTextResult, crsSummary] = await Promise.all([
+    fetchBillText(congress, type, number),
+    fetchCRSSummary(congress, type, number),
+  ])
+
+  let billContent = ''
+  let sources = []
+
+  // Always include CRS summary if available
+  if (crsSummary) {
+    billContent += `CONGRESSIONAL RESEARCH SERVICE SUMMARY:\n${crsSummary.summary}\n\n`
+    sources.push('Congressional Research Service summary')
+  }
+
+  // Include bill text — full if short, compressed if long
+  if (billTextResult) {
+    if (billTextResult.wordCount <= BILL_TEXT_WORD_LIMIT) {
+      billContent += `FULL BILL TEXT (${billTextResult.version}):\n${billTextResult.text}\n`
+      sources.push('full bill text from Congress.gov')
+    } else {
+      // Long bill — compress via LLM first
+      const digest = await compressBillText(billTextResult.text, billTitle)
+      if (digest) {
+        billContent += `BILL PROVISIONS DIGEST (extracted from ${billTextResult.wordCount.toLocaleString()}-word bill, ${billTextResult.version}):\n${digest}\n`
+        sources.push('AI-extracted provisions from full bill text')
+      } else {
+        // Fallback: use truncated text
+        const truncated = billTextResult.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
+        billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billTextResult.wordCount.toLocaleString()}, ${billTextResult.version}):\n${truncated}\n`
+        sources.push('partial bill text from Congress.gov')
+      }
+    }
+  }
+
+  if (!billContent && !crsSummary) {
+    sources.push('bill title and metadata only')
+  }
+
+  return { billContent, sources }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -256,6 +256,12 @@ export default function BillDetail() {
                 </div>
               </div>
             )}
+
+            <div className={styles.sourceAttribution}>
+              Powered by AI analysis of {analysis.sources?.length > 0
+                ? analysis.sources.join(' and ')
+                : 'bill data from Congress.gov'}
+            </div>
           </div>
         ) : (
           <div className={styles.loadingAnalysis}>

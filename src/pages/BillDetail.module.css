@@ -225,6 +225,16 @@
   font-weight: 500;
 }
 
+.sourceAttribution {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-light);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
 /* Loading */
 .loadingAnalysis {
   display: flex;
