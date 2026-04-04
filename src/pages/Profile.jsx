@@ -120,13 +120,13 @@ export default function Profile() {
               <div className={styles.field}>
                 <label className={styles.label}>Your grade <span className={styles.req}>*</span></label>
                 <div className={styles.gradeGrid}>
-                  {['9', '10', '11', '12'].map(g => (
+                  {['9', '10', '11', '12', '18+'].map(g => (
                     <button
                       key={g}
                       className={`${styles.gradeBtn} ${profile.grade === g ? styles.gradeBtnActive : ''}`}
                       onClick={() => setProfile(p => ({ ...p, grade: g }))}
                     >
-                      {g === '9' ? '9th' : g === '10' ? '10th' : g === '11' ? '11th' : '12th'}
+                      {g === '18+' ? '18+' : `${g}th`}
                     </button>
                   ))}
                 </div>

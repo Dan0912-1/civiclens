@@ -83,8 +83,8 @@ export default function Privacy() {
           <p>
             For questions about this privacy policy or to request data deletion,
             email us at{' '}
-            <a href="mailto:support@capitolkey.app" style={{ color: 'var(--amber)' }}>
-              support@capitolkey.app
+            <a href="mailto:dejacius@gmail.com" style={{ color: 'var(--amber)' }}>
+              dejacius@gmail.com
             </a>.
           </p>
         </div>

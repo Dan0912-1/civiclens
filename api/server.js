@@ -252,7 +252,7 @@ app.get('/api/version', (req, res) => {
 })
 
 // ─── Input validation helpers ───────────────────────────────────────────────
-const VALID_GRADES = ['9', '10', '11', '12']
+const VALID_GRADES = ['9', '10', '11', '12', '18+']
 const VALID_INTERESTS = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
 
@@ -1709,7 +1709,7 @@ function makeBillId(bill) {
 }
 
 function gradeToAge(grade) {
-  const map = { '9': 14, '10': 15, '11': 16, '12': 17 }
+  const map = { '9': 14, '10': 15, '11': 16, '12': 17, '18+': 19 }
   return map[String(grade)] || 16
 }
 

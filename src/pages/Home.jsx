@@ -103,7 +103,7 @@ export default function Home() {
         <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
         <button onClick={() => navigate('/terms')}>Terms of Service</button>
         <button onClick={() => navigate('/about')}>About</button>
-        <a href="mailto:support@capitolkey.app">Contact</a>
+        <a href="mailto:dejacius@gmail.com">Contact</a>
       </footer>
 
     </main>

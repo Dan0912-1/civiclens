@@ -91,8 +91,8 @@ export default function Terms() {
           <h2>Contact</h2>
           <p>
             For questions about these terms, email us at{' '}
-            <a href="mailto:support@capitolkey.app" style={{ color: 'var(--amber)' }}>
-              support@capitolkey.app
+            <a href="mailto:dejacius@gmail.com" style={{ color: 'var(--amber)' }}>
+              dejacius@gmail.com
             </a>.
           </p>
         </div>
