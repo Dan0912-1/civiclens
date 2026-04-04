@@ -83,6 +83,9 @@ export default function Search() {
       setLoading(true)
       setBills([])
       setPage(1)
+      setAnalyses({})
+      setPersonalizingBills(new Set())
+      setFailedBills(new Set())
     } else {
       setLoadingMore(true)
     }

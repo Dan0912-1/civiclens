@@ -969,7 +969,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
 
       // Cache in both layers
       setCache(cacheKey, result)
-      setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+      await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
 
       return { billId, result }
     } catch (err) {
@@ -1132,6 +1132,9 @@ app.post('/api/push/test', async (req, res) => {
     if (!fcmAuth || !FCM_PROJECT_ID) {
       return res.status(503).json({ error: 'FCM not configured' })
     }
+    if (!supabase) {
+      return res.status(503).json({ error: 'Database not configured' })
+    }
 
     const { data: tokens } = await supabase
       .from('push_tokens')
@@ -1208,6 +1211,10 @@ app.get('/api/notifications/preferences', async (req, res) => {
 app.post('/api/notifications/preferences', async (req, res) => {
   try {
     const user = await requireAuth(req)
+
+    if (!supabase) {
+      return res.status(503).json({ error: 'Database not configured' })
+    }
 
     const update = { id: user.id, updated_at: new Date().toISOString() }
     if (typeof req.body.email_notifications === 'boolean') {
