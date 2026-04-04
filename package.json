@@ -10,7 +10,7 @@
     "server": "node --env-file=.env api/server.js",
     "start": "node api/server.js",
     "cap:sync": "vite build && cap sync",
-    "postinstall": "sed -i '' 's/from: \"7.0.0\"/from: \"8.0.0\"/' node_modules/@capacitor-community/apple-sign-in/Package.swift 2>/dev/null || true"
+    "postinstall": "bash scripts/patch-apple-signin.sh"
   },
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",
