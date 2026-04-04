@@ -200,12 +200,7 @@ export default function Results() {
   }
 
   function handleLoadMore() {
-    setLoadingMore(true)
-    setVisibleCount(prev => {
-      const next = prev + BILLS_PER_PAGE
-      setLoadingMore(false)
-      return next
-    })
+    setVisibleCount(prev => prev + BILLS_PER_PAGE)
   }
 
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {

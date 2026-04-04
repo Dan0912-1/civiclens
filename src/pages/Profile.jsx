@@ -63,7 +63,7 @@ export default function Profile() {
     return true
   }
 
-  function handleNext() {
+  async function handleNext() {
     if (!canAdvance()) {
       setError('Please fill in the required fields.')
       return
@@ -74,7 +74,7 @@ export default function Profile() {
     } else {
       // Save to sessionStorage and navigate
       sessionStorage.setItem('civicProfile', JSON.stringify(profile))
-      if (user) saveProfile(user.id, profile)
+      if (user) await saveProfile(user.id, profile)
       navigate(returnTo || '/results')
     }
   }

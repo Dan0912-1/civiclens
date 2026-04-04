@@ -349,7 +349,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     )
 
     // State bills (3 interest terms × 4 results)
-    const stateFetches = state && state !== 'DC' ? searchTerms.slice(0, 3).map(term =>
+    const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 3).map(term =>
       legiscanRequest('search', { state, query: term, year: '2' })
         .then(data => {
           if (!data.searchresult) return []
@@ -552,8 +552,7 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
       return new Date(b.updateDate) - new Date(a.updateDate)
     })
 
-    const pageSize = hits.length
-    const hasMore = page * pageSize < totalResults
+    const hasMore = hits.length >= 20 && page * 20 < totalResults
 
     const result = { bills: unique, pagination: { page, totalResults, hasMore } }
     setCache(cacheKey, result)
@@ -1428,7 +1427,7 @@ async function checkBillUpdates() {
               const errData = await fcmResp.json().catch(() => ({}))
               // Clean up stale tokens (UNREGISTERED or NOT_FOUND)
               const errCode = errData.error?.details?.[0]?.errorCode || ''
-              if (errCode === 'UNREGISTERED' || fcmResp.status === 404) {
+              if (errCode === 'UNREGISTERED' || fcmResp.status === 404 || fcmResp.status === 400) {
                 await supabase.from('push_tokens').delete().eq('token', token)
               }
             }
