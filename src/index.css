@@ -82,6 +82,7 @@ h1, h2, h3 {
 a {
   color: inherit;
   text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 button {
@@ -89,6 +90,7 @@ button {
   font-family: var(--font-body);
   border: none;
   background: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 input, select, textarea {
