@@ -8,6 +8,19 @@ import { SignInWithApple } from '@capacitor-community/apple-sign-in'
 const isNative = Capacitor.getPlatform() !== 'web'
 const isIOS = Capacitor.getPlatform() === 'ios'
 
+function generateNonce(length = 32) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const values = crypto.getRandomValues(new Uint8Array(length))
+  return Array.from(values, (v) => chars[v % chars.length]).join('')
+}
+
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 const AuthContext = createContext({
   user: null,
   loading: true,
@@ -95,10 +108,15 @@ export function AuthProvider({ children }) {
     // On iOS, use native Sign in with Apple
     if (isIOS) {
       try {
+        // Generate a nonce — Supabase requires it to verify Apple's identity token
+        const nonce = generateNonce()
+        const hashedNonce = await sha256(nonce)
+
         const result = await SignInWithApple.authorize({
           clientId: 'com.danieljacius.capitolkey',
           redirectURI: 'https://drljemedyhpyvrzumusd.supabase.co/auth/v1/callback',
           scopes: 'email name',
+          nonce: hashedNonce,
         })
         const idToken = result?.response?.identityToken
         if (!idToken) {
@@ -109,6 +127,7 @@ export function AuthProvider({ children }) {
         const { data, error } = await supabase.auth.signInWithIdToken({
           provider: 'apple',
           token: idToken,
+          nonce: nonce,
         })
         if (error) {
           console.error('[Apple Sign In] Supabase token exchange failed:', error.message, error)
