@@ -92,7 +92,7 @@ export function AuthProvider({ children }) {
   async function signInWithApple() {
     if (!supabase) return { error: { message: 'Auth not configured' } }
 
-    // On iOS, try native Sign in with Apple first, fall back to OAuth browser
+    // On iOS, use native Sign in with Apple
     if (isIOS) {
       try {
         const result = await SignInWithApple.authorize({
@@ -101,26 +101,29 @@ export function AuthProvider({ children }) {
           scopes: 'email name',
         })
         const idToken = result?.response?.identityToken
-        if (idToken) {
-          const { error } = await supabase.auth.signInWithIdToken({
-            provider: 'apple',
-            token: idToken,
-          })
-          if (!error) return { error: null }
-          // signInWithIdToken failed (e.g. bundle ID not in Supabase Client IDs) —
-          // fall through to OAuth browser flow
-          console.warn('Native Apple token exchange failed, using OAuth flow:', error.message)
+        if (!idToken) {
+          console.error('[Apple Sign In] No identity token in response:', JSON.stringify(result))
+          return { error: { message: 'No identity token from Apple. Please try again.' } }
         }
+
+        const { data, error } = await supabase.auth.signInWithIdToken({
+          provider: 'apple',
+          token: idToken,
+        })
+        if (error) {
+          console.error('[Apple Sign In] Supabase token exchange failed:', error.message, error)
+        }
+        return { error: error || null }
       } catch (err) {
         if (err?.message?.includes('1001') || err?.code === '1001') {
           return { error: null } // User cancelled
         }
-        // Native plugin failed — fall through to OAuth browser flow
-        console.warn('Native Apple Sign In failed, using OAuth flow:', err?.message)
+        console.error('[Apple Sign In] Plugin error:', err?.message, err)
+        return { error: { message: err?.message || 'Apple sign-in failed. Please try again.' } }
       }
     }
 
-    // Native fallback (iOS after native failure, or Android): use OAuth browser flow
+    // On Android native, use OAuth browser flow
     if (isNative) {
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'apple',
