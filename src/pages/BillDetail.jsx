@@ -96,6 +96,9 @@ export default function BillDetail() {
             latestAction: data.bill.latestAction?.text || 'No recent action',
             latestActionDate: data.bill.latestAction?.actionDate || '',
             url: data.bill.url,
+            legiscan_bill_id: data.bill.legiscan_bill_id,
+            state: data.bill.state,
+            isStateBill: data.bill.state && data.bill.state !== 'US',
           })
         }
       } else {
