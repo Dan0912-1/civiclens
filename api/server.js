@@ -817,8 +817,8 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   if (!Array.isArray(bills) || !bills.length || !profile) {
     return res.status(400).json({ error: 'bills (array) and profile are required' })
   }
-  if (bills.length > 10) {
-    return res.status(400).json({ error: 'Maximum 10 bills per batch' })
+  if (bills.length > 20) {
+    return res.status(400).json({ error: 'Maximum 20 bills per batch' })
   }
 
   const sortedInterests = (profile.interests || []).sort()
@@ -1021,7 +1021,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
   }
 
   // Process with concurrency limit of 3
-  const CONCURRENCY = 3
+  const CONCURRENCY = 8
   const settled = []
   for (let i = 0; i < billsWithText.length; i += CONCURRENCY) {
     const chunk = billsWithText.slice(i, i + CONCURRENCY)

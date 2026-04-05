@@ -178,12 +178,8 @@ export default function Results() {
       const data = await resp.json()
       if (data.bills) {
         setBills(data.bills)
-        // Personalize all bills — split into chunks of 10 (backend limit) and fire in parallel
-        const chunks = []
-        for (let i = 0; i < data.bills.length; i += 10) {
-          chunks.push(data.bills.slice(i, i + 10))
-        }
-        chunks.forEach(chunk => personalizeBillsBatch(chunk))
+        // Personalize all bills in one batch request
+        personalizeBillsBatch(data.bills)
       } else {
         setBillError('Could not load bills. Please try again.')
       }
