@@ -5,7 +5,10 @@ import { saveProfile } from '../lib/userProfile'
 import styles from './Profile.module.css'
 
 // TODO: Expand to all states after testing phase
-const US_STATES = ['CT']
+const US_STATES = [
+  { code: 'CT', name: 'Connecticut' },
+  { code: 'MD', name: 'Maryland' },
+]
 
 const INTERESTS = [
   { id: 'education',   label: 'Education',     emoji: '📚' },
@@ -113,7 +116,7 @@ export default function Profile() {
                   onChange={e => setProfile(p => ({ ...p, state: e.target.value }))}
                 >
                   <option value="">Select your state</option>
-                  {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                  {US_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
                 </select>
               </div>
 

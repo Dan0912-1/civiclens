@@ -92,7 +92,7 @@ export default function Search() {
     setError('')
     setHasSearched(true)
 
-    const stateParam = tab === 'state' ? 'CT' : 'US'
+    const stateParam = tab === 'state' ? (profile?.state || 'MD') : 'US'
     try {
       const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}&state=${stateParam}`)
       if (!resp.ok) {
