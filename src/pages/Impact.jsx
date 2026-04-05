@@ -60,12 +60,12 @@ export default function Impact() {
         <div className={styles.card}>
           <span className={styles.cardValue}>{metrics.totalUsers.toLocaleString()}</span>
           <span className={styles.cardLabel}>Students Reached</span>
-          <span className={styles.cardDesc}>Unique users who created a profile</span>
+          <span className={styles.cardDesc}>Unique students who received personalized legislation</span>
         </div>
         <div className={styles.card}>
           <span className={styles.cardValue}>{metrics.totalPersonalizations.toLocaleString()}</span>
           <span className={styles.cardLabel}>Bills Personalized</span>
-          <span className={styles.cardDesc}>AI-powered explanations generated</span>
+          <span className={styles.cardDesc}>AI-powered explanations delivered</span>
         </div>
         <div className={styles.card}>
           <span className={styles.cardValue}>{metrics.uniqueBillsPersonalized.toLocaleString()}</span>
