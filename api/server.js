@@ -5,6 +5,7 @@ import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
 import rateLimit from 'express-rate-limit'
+import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import cron from 'node-cron'
 import { Resend } from 'resend'
@@ -114,22 +115,24 @@ const supabase = SUPABASE_URL && SUPABASE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_KEY)
   : null
 
-// ─── In-memory cache for cheap/volatile Congress.gov calls ───────────────────
+// ─── In-memory cache for cheap/volatile API calls ────────────────────────────
 const cache = new Map()
-const CACHE_TTL = 1000 * 60 * 60 // 1 hour
+const CACHE_TTL = 1000 * 60 * 60 // 1 hour (default for bill details, search, etc.)
+const FEED_CACHE_TTL = 1000 * 60 * 60 * 4 // 4 hours for legislation feeds (bills change slowly)
 
 function getCache(key) {
   const entry = cache.get(key)
   if (!entry) return null
-  if (Date.now() - entry.timestamp > CACHE_TTL) {
+  const ttl = entry.ttl || CACHE_TTL
+  if (Date.now() - entry.timestamp > ttl) {
     cache.delete(key)
     return null
   }
   return entry.data
 }
 
-function setCache(key, data) {
-  cache.set(key, { data, timestamp: Date.now() })
+function setCache(key, data, ttl) {
+  cache.set(key, { data, timestamp: Date.now(), ttl })
 }
 
 // ─── Supabase-backed persistent cache for personalizations ──────────────────
@@ -304,12 +307,12 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10)
 
-  // For anonymous users, use in-memory cache (no interaction data to personalize)
-  if (!userId) {
-    const anonCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}`
-    const cached = getCache(anonCacheKey)
-    if (cached) return res.json(cached)
-  }
+  // Shared feed cache by interest+grade+state (bills don't change often).
+  // Auth'd users still get personalized ranking from interaction history,
+  // but the base bill list is shared to minimize LegiScan API calls.
+  const feedCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}`
+  const cachedFeed = getCache(feedCacheKey)
+  if (!userId && cachedFeed) return res.json(cachedFeed)
 
   try {
     // ── 1. Fetch interaction history server-side for auth'd users ──
@@ -328,65 +331,73 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     const discoveryTerms = pickDiscoveryTerms(interests)
     const discoveryTermSet = new Set(discoveryTerms)
     const popularBillIds = await getPopularBillIds()
-    const allBills = []
+    let allBills = []
 
-    // ── 3. Fetch from LegiScan: interest terms + discovery terms ──
-    // Interest-matched federal bills (6 terms × 10 results)
-    const federalFetches = searchTerms.slice(0, 6).map(term =>
-      legiscanRequest('search', { state: 'US', query: term, year: '2' })
-        .then(data => {
-          if (!data.searchresult) return []
-          return Object.values(data.searchresult)
-            .filter(r => r.bill_id)
-            .slice(0, 10)
-            .map(hit => transformLegiScanBill(hit, term))
-        })
-        .catch(err => {
-          console.error(`LegiScan search error for US "${term}":`, err.message)
-          return []
-        })
-    )
+    // ── 3. Check shared feed cache (saves LegiScan API calls) ──
+    // Auth'd users can reuse the cached bill list but re-score with their interactions
+    if (cachedFeed) {
+      // Deep-clone so scoring doesn't mutate the cached objects
+      allBills = cachedFeed.bills.map(b => ({ ...b }))
+      console.log(`[legislation] Feed cache hit for ${feedCacheKey} (${allBills.length} bills)`)
+    } else {
+      // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
+      // Interest-matched federal bills (6 terms × 10 results)
+      const federalFetches = searchTerms.slice(0, 6).map(term =>
+        legiscanRequest('search', { state: 'US', query: term, year: '2' })
+          .then(data => {
+            if (!data.searchresult) return []
+            return Object.values(data.searchresult)
+              .filter(r => r.bill_id)
+              .slice(0, 10)
+              .map(hit => transformLegiScanBill(hit, term))
+          })
+          .catch(err => {
+            console.error(`LegiScan search error for US "${term}":`, err.message)
+            return []
+          })
+      )
 
-    // Discovery federal bills (3 trending terms × 6 results)
-    const discoveryFetches = discoveryTerms.map(term =>
-      legiscanRequest('search', { state: 'US', query: term, year: '2' })
-        .then(data => {
-          if (!data.searchresult) return []
-          return Object.values(data.searchresult)
-            .filter(r => r.bill_id)
-            .slice(0, 6)
-            .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
-        })
-        .catch(err => {
-          console.error(`LegiScan discovery search error "${term}":`, err.message)
-          return []
-        })
-    )
+      // Discovery federal bills (3 trending terms × 6 results)
+      const discoveryFetches = discoveryTerms.map(term =>
+        legiscanRequest('search', { state: 'US', query: term, year: '2' })
+          .then(data => {
+            if (!data.searchresult) return []
+            return Object.values(data.searchresult)
+              .filter(r => r.bill_id)
+              .slice(0, 6)
+              .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
+          })
+          .catch(err => {
+            console.error(`LegiScan discovery search error "${term}":`, err.message)
+            return []
+          })
+      )
 
-    // State bills (3 interest terms × 4 results)
-    const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 3).map(term =>
-      legiscanRequest('search', { state, query: term, year: '2' })
-        .then(data => {
-          if (!data.searchresult) return []
-          return Object.values(data.searchresult)
-            .filter(r => r.bill_id)
-            .slice(0, 4)
-            .map(hit => transformLegiScanStateBill(hit, term))
-        })
-        .catch(err => {
-          console.error(`LegiScan search error for ${state} "${term}":`, err.message)
-          return []
-        })
-    ) : []
+      // State bills (3 interest terms × 4 results)
+      const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 3).map(term =>
+        legiscanRequest('search', { state, query: term, year: '2' })
+          .then(data => {
+            if (!data.searchresult) return []
+            return Object.values(data.searchresult)
+              .filter(r => r.bill_id)
+              .slice(0, 4)
+              .map(hit => transformLegiScanStateBill(hit, term))
+          })
+          .catch(err => {
+            console.error(`LegiScan search error for ${state} "${term}":`, err.message)
+            return []
+          })
+      ) : []
 
-    const [federalResults, discoveryResults, stateResults] = await Promise.all([
-      Promise.all(federalFetches),
-      Promise.all(discoveryFetches),
-      Promise.all(stateFetches),
-    ])
-    for (const bills of federalResults) allBills.push(...bills)
-    for (const bills of discoveryResults) allBills.push(...bills)
-    for (const bills of stateResults) allBills.push(...bills)
+      const [federalResults, discoveryResults, stateResults] = await Promise.all([
+        Promise.all(federalFetches),
+        Promise.all(discoveryFetches),
+        Promise.all(stateFetches),
+      ])
+      for (const bills of federalResults) allBills.push(...bills)
+      for (const bills of discoveryResults) allBills.push(...bills)
+      for (const bills of stateResults) allBills.push(...bills)
+    }
 
     // ── 4. Deduplicate (keep newest version) ──
     allBills.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
@@ -466,11 +477,8 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
     const result = { bills: balanced }
 
-    // Cache for anonymous users only (auth'd feeds are personalized per interaction history)
-    if (!userId) {
-      const anonCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}-${today}`
-      setCache(anonCacheKey, result)
-    }
+    // Shared feed cache with 4-hour TTL (bills change slowly)
+    setCache(feedCacheKey, result, FEED_CACHE_TTL)
 
     res.json(result)
 
@@ -681,8 +689,11 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { bill, profile } = req.body
 
   const sortedInterests = (profile.interests || []).sort()
-  // v3 cache key — invalidates v2 results cached before format string fix
-  const cacheKey = `v3-personalize-${bill.type}${bill.number}-${bill.congress}-${profile.grade}-${sortedInterests.join('-')}`
+  // v4 cache key — includes full profile fields that affect personalization output
+  const profileHash = crypto.createHash('md5').update(
+    `${profile.grade}-${profile.state || ''}-${profile.hasJob || false}-${profile.familySituation || ''}-${sortedInterests.join('-')}-${profile.additionalContext || ''}`
+  ).digest('hex').slice(0, 12)
+  const cacheKey = `v4-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
 
   // Check Supabase persistent cache first, fall back to in-memory
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
@@ -813,14 +824,17 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
 
   const sortedInterests = (profile.interests || []).sort()
-  const interestsKey = sortedInterests.join('-')
+  // v4 cache key — includes full profile fields that affect personalization output
+  const profileHash = crypto.createHash('md5').update(
+    `${profile.grade}-${profile.state || ''}-${profile.hasJob || false}-${profile.familySituation || ''}-${sortedInterests.join('-')}-${profile.additionalContext || ''}`
+  ).digest('hex').slice(0, 12)
   const results = {}
   const errors = {}
   const billsToPersonalize = [] // { bill, cacheKey, billType }
 
   // 1. Batch-check personalization cache (Supabase)
   const cacheKeys = bills.map(b =>
-    `v3-personalize-${b.type}${b.number}-${b.congress}-${profile.grade}-${interestsKey}`
+    `v4-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
   )
 
   let cachedResults = new Map()
@@ -1468,6 +1482,89 @@ if (supabase) {
 } else {
   console.log('   Bill-update cron: \u2717 disabled (no Supabase)')
 }
+
+// ─── Pre-warm feed cache ────────────────────────────────────────────────────
+// Fetches feeds for popular interest/grade/state combos before school hours
+// so the first students to load the app get instant cache hits instead of
+// triggering a burst of LegiScan API calls.
+const PREWARM_GRADES = ['9', '10', '11', '12']
+const PREWARM_INTEREST_COMBOS = [
+  ['education', 'technology'],
+  ['environment', 'healthcare'],
+  ['economy', 'civil_rights'],
+  ['technology', 'economy'],
+  ['education', 'environment'],
+]
+
+async function prewarmFeedCache() {
+  console.log('[prewarm] Starting feed cache warm-up...')
+  let warmed = 0
+
+  for (const interests of PREWARM_INTEREST_COMBOS) {
+    for (const grade of PREWARM_GRADES) {
+      const feedCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-US`
+      if (getCache(feedCacheKey)) continue // already cached
+
+      try {
+        const searchTerms = buildSearchTerms(interests)
+        const federalFetches = searchTerms.slice(0, 6).map(term =>
+          legiscanRequest('search', { state: 'US', query: term, year: '2' })
+            .then(data => {
+              if (!data.searchresult) return []
+              return Object.values(data.searchresult)
+                .filter(r => r.bill_id).slice(0, 10)
+                .map(hit => transformLegiScanBill(hit, term))
+            })
+            .catch(() => [])
+        )
+        const results = await Promise.all(federalFetches)
+        const allBills = results.flat()
+
+        // Deduplicate
+        const seen = new Set()
+        const unique = allBills.filter(b => {
+          const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
+          if (seen.has(id)) return false
+          seen.add(id)
+          return true
+        })
+
+        const deduped = deduplicateCompanionBills(unique)
+        deduped.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
+        const bills = deduped.slice(0, 15)
+        setCache(feedCacheKey, { bills }, FEED_CACHE_TTL)
+        warmed++
+
+        // Small delay between combos to stay under LegiScan's 100 req/min
+        await new Promise(r => setTimeout(r, 4000))
+      } catch (err) {
+        console.error(`[prewarm] Error for ${interests.join(',')} grade ${grade}:`, err.message)
+      }
+    }
+  }
+
+  console.log(`[prewarm] Done. Warmed ${warmed} feed cache entries.`)
+
+  // Also pre-fetch bill texts for all warmed bills
+  const allCachedBills = []
+  for (const interests of PREWARM_INTEREST_COMBOS) {
+    for (const grade of PREWARM_GRADES) {
+      const key = `ls-bills-${interests.sort().join('-')}-${grade}-US`
+      const cached = getCache(key)
+      if (cached?.bills) allCachedBills.push(...cached.bills)
+    }
+  }
+  const uniqueBills = [...new Map(allCachedBills.map(b => [b.legiscan_bill_id || b.title, b])).values()]
+  prefetchBillTexts(uniqueBills).catch(err =>
+    console.error('[prewarm] Bill text prefetch error:', err.message)
+  )
+}
+
+// Weekdays at 6:00 AM ET (11:00 UTC) — before US school hours
+cron.schedule('0 11 * * 1-5', () => {
+  prewarmFeedCache().catch(err => console.error('[prewarm] Unhandled error:', err))
+})
+console.log('   Feed pre-warm cron: ✓ scheduled (weekdays 6:00 AM ET / 11:00 UTC)')
 
 // ─── Bill text & CRS summary fetching ───────────────────────────────────────
 // Fetches the full legislative text from Congress.gov and strips HTML to plain text.
