@@ -155,6 +155,10 @@
   color: var(--navy);
 }
 
+.gradeBtnFull {
+  grid-column: 1 / -1;
+}
+
 .gradeBtnActive {
   background: var(--navy);
   border-color: var(--navy);
