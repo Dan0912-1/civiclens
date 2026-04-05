@@ -57,6 +57,13 @@ export default function Search() {
   const navigate = useNavigate()
   const { user } = useAuth()
 
+  const profile = (() => {
+    try {
+      const stored = sessionStorage.getItem('civicProfile')
+      return stored ? JSON.parse(stored) : null
+    } catch { return null }
+  })()
+
   const initialQuery = searchParams.get('q') || ''
   const initialTab = searchParams.get('tab') || 'federal'
   const [inputValue, setInputValue] = useState(initialQuery)
@@ -79,13 +86,6 @@ export default function Search() {
   const [personalizingBills, setPersonalizingBills] = useState(new Set())
   const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
-
-  const profile = (() => {
-    try {
-      const stored = sessionStorage.getItem('civicProfile')
-      return stored ? JSON.parse(stored) : null
-    } catch { return null }
-  })()
 
   useEffect(() => {
     if (!user) return
