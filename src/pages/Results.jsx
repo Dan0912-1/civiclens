@@ -10,7 +10,7 @@ import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
 
 const API_BASE = getApiBase()
-const BILLS_PER_PAGE = 5
+const BILLS_PER_PAGE = 3
 
 function makeBillId(bill) {
   if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
@@ -313,7 +313,7 @@ export default function Results() {
         {/* Loading state */}
         {loadingBills && (
           <div className={styles.loadingGrid}>
-            {[...Array(6)].map((_, i) => (
+            {[...Array(3)].map((_, i) => (
               <div key={i} className={styles.skeleton} style={{ animationDelay: `${i * 0.1}s` }} />
             ))}
           </div>

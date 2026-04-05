@@ -373,14 +373,14 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
           })
       )
 
-      // State bills (3 interest terms × 4 results)
-      const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 3).map(term =>
+      // State bills (6 interest terms × 6 results — need enough to pick 6 after dedup)
+      const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
         legiscanRequest('search', { state, query: term, year: '2' })
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
               .filter(r => r.bill_id)
-              .slice(0, 4)
+              .slice(0, 6)
               .map(hit => transformLegiScanStateBill(hit, term))
           })
           .catch(err => {
@@ -437,35 +437,19 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     // ── 6. Score every bill ──
     for (const bill of unique) computeBillScore(bill, scoringCtx)
 
-    // ── 7. 70/30 interest-discovery split with federal/state balance ──
-    const interestPool = unique.filter(b => !b._isDiscovery)
-    const discoveryPool = unique.filter(b => b._isDiscovery)
-    interestPool.sort((a, b) => b._score - a._score)
-    discoveryPool.sort((a, b) => b._score - a._score)
+    // ── 7. Pick exactly 6 federal + 6 state bills ──
+    const TARGET_PER_TYPE = 6
 
-    // Target: 15 bills total, ~80% interest (~12), ~20% discovery (~3)
-    const TARGET_TOTAL = 15
-    const targetInterest = Math.round(TARGET_TOTAL * 0.8)
-    const targetDiscovery = TARGET_TOTAL - targetInterest
+    const federalPool = unique.filter(b => !b.isStateBill)
+    const statePool = unique.filter(b => b.isStateBill)
+    federalPool.sort((a, b) => b._score - a._score)
+    statePool.sort((a, b) => b._score - a._score)
 
-    // Pick top interest bills, balanced federal/state
-    const interestFederal = interestPool.filter(b => !b.isStateBill)
-    const interestState = interestPool.filter(b => b.isStateBill)
-    const maxInterestState = Math.min(interestState.length, Math.round(targetInterest * 0.35))
-    const maxInterestFederal = targetInterest - maxInterestState
-    const pickedInterest = [
-      ...interestFederal.slice(0, maxInterestFederal),
-      ...interestState.slice(0, maxInterestState),
-    ]
+    const pickedFederal = federalPool.slice(0, TARGET_PER_TYPE)
+    const pickedState = statePool.slice(0, TARGET_PER_TYPE)
 
-    // Pick top discovery bills
-    const pickedDiscovery = discoveryPool
-      .filter(b => !pickedInterest.some(p => (p.legiscan_bill_id || '') === (b.legiscan_bill_id || '')))
-      .slice(0, targetDiscovery)
-
-    // Combine and sort by score
-    const balanced = [...pickedInterest, ...pickedDiscovery]
-    balanced.sort((a, b) => b._score - a._score)
+    // Combine — federal first, then state (frontend separates by tab)
+    const balanced = [...pickedFederal, ...pickedState]
 
     // Clean internal fields but keep _score as `rankScore` for frontend re-ranking
     for (const bill of balanced) {
