@@ -366,8 +366,3 @@
   }
 }
 
-@media (max-width: 480px) {
-  .topicScroll {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
