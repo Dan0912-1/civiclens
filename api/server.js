@@ -903,8 +903,8 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   const billsWithText = await Promise.all(textFetches)
 
-  // 3. Fire ALL Groq personalization calls in parallel
-  const groqPromises = billsWithText.map(async ({ bill, cacheKey, billId, billData }) => {
+  // 3. Fire Groq calls with concurrency limit (3 at a time) and retry on transient failures
+  async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
 
     const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
@@ -965,48 +965,71 @@ BILL:
 ${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
-    try {
-      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'openai/gpt-oss-120b',
-          max_tokens: 900,
-          temperature: 0.6,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ]
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${GROQ_KEY}`
+          },
+          signal: AbortSignal.timeout(30000),
+          body: JSON.stringify({
+            model: 'openai/gpt-oss-120b',
+            max_tokens: 900,
+            temperature: 0.6,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ]
+          })
         })
-      })
 
-      const data = await resp.json()
-      if (!data.choices?.[0]?.message?.content) {
-        throw new Error(data.error?.message || 'No response from Groq')
+        // Retry on rate limit or server error
+        if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
+          const delay = (attempt + 1) * 2000 // 2s, 4s
+          console.log(`[batch] Groq ${resp.status} for ${billId}, retry ${attempt + 1} in ${delay}ms`)
+          await new Promise(r => setTimeout(r, delay))
+          continue
+        }
+
+        const data = await resp.json()
+        if (!data.choices?.[0]?.message?.content) {
+          throw new Error(data.error?.message || 'No response from Groq')
+        }
+
+        let text = data.choices[0].message.content.trim()
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+        const parsed = JSON.parse(text)
+        parsed.sources = sources
+        const result = { analysis: parsed }
+
+        setCache(cacheKey, result)
+        await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+
+        return { billId, result }
+      } catch (err) {
+        if (attempt < MAX_RETRIES && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+          console.log(`[batch] Timeout for ${billId}, retry ${attempt + 1}`)
+          continue
+        }
+        console.error(`[batch] Groq error for ${billId}:`, err.message)
+        return { billId, error: err.message }
       }
-
-      let text = data.choices[0].message.content.trim()
-      text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(text)
-      parsed.sources = sources
-      const result = { analysis: parsed }
-
-      // Cache in both layers
-      setCache(cacheKey, result)
-      await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
-
-      return { billId, result }
-    } catch (err) {
-      console.error(`[batch] Groq error for ${billId}:`, err.message)
-      return { billId, error: err.message }
     }
-  })
+    return { billId, error: 'Max retries exceeded' }
+  }
 
-  const settled = await Promise.allSettled(groqPromises)
+  // Process with concurrency limit of 3
+  const CONCURRENCY = 3
+  const settled = []
+  for (let i = 0; i < billsWithText.length; i += CONCURRENCY) {
+    const chunk = billsWithText.slice(i, i + CONCURRENCY)
+    const chunkResults = await Promise.allSettled(chunk.map(b => personalizeOneBill(b)))
+    settled.push(...chunkResults)
+  }
   for (const s of settled) {
     if (s.status === 'fulfilled' && s.value) {
       if (s.value.error) {

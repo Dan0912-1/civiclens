@@ -106,41 +106,37 @@ export default function Results() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bills: billsToPersonalize, profile })
       })
-      if (resp.ok) {
-        const data = await resp.json()
-        if (data.results) {
-          // Update all analyses at once
-          setAnalyses(prev => {
-            const next = { ...prev }
-            for (const [billId, result] of Object.entries(data.results)) {
-              if (result?.analysis) next[billId] = result.analysis
-            }
-            return next
-          })
-          // Mark all as settled
-          const settledIds = Object.keys(data.results)
-          setSettledBills(prev => {
-            const next = new Set(prev)
-            settledIds.forEach(id => next.add(id))
-            return next
-          })
-        }
-        if (data.errors) {
-          setFailedBills(prev => {
-            const next = new Set(prev)
-            Object.keys(data.errors).forEach(id => next.add(id))
-            return next
-          })
-          setSettledBills(prev => {
-            const next = new Set(prev)
-            Object.keys(data.errors).forEach(id => next.add(id))
-            return next
-          })
-        }
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
+      if (data.results) {
+        setAnalyses(prev => {
+          const next = { ...prev }
+          for (const [billId, result] of Object.entries(data.results)) {
+            if (result?.analysis) next[billId] = result.analysis
+          }
+          return next
+        })
+        const settledIds = Object.keys(data.results)
+        setSettledBills(prev => {
+          const next = new Set(prev)
+          settledIds.forEach(id => next.add(id))
+          return next
+        })
+      }
+      if (data.errors) {
+        setFailedBills(prev => {
+          const next = new Set(prev)
+          Object.keys(data.errors).forEach(id => next.add(id))
+          return next
+        })
+        setSettledBills(prev => {
+          const next = new Set(prev)
+          Object.keys(data.errors).forEach(id => next.add(id))
+          return next
+        })
       }
     } catch (err) {
       console.error('Batch personalization failed:', err)
-      // Mark all as failed
       setFailedBills(prev => {
         const next = new Set(prev)
         billsToPersonalize.forEach(b => next.add(makeBillId(b)))
@@ -182,13 +178,12 @@ export default function Results() {
       const data = await resp.json()
       if (data.bills) {
         setBills(data.bills)
-        // Personalize first 5 in one batch call (all parallel server-side)
-        const firstBatch = data.bills.slice(0, BILLS_PER_PAGE)
-        personalizeBillsBatch(firstBatch).then(() => {
-          // Background: personalize remaining bills
-          const rest = data.bills.slice(BILLS_PER_PAGE)
-          if (rest.length) personalizeBillsBatch(rest)
-        })
+        // Personalize all bills — split into chunks of 10 (backend limit) and fire in parallel
+        const chunks = []
+        for (let i = 0; i < data.bills.length; i += 10) {
+          chunks.push(data.bills.slice(i, i + 10))
+        }
+        chunks.forEach(chunk => personalizeBillsBatch(chunk))
       } else {
         setBillError('Could not load bills. Please try again.')
       }
