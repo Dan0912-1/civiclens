@@ -258,35 +258,42 @@ app.get('/api/impact', async (req, res) => {
   if (cached) return res.json(cached)
 
   try {
-    const [registeredUsers, personalizations, interactions, cacheRows] = await Promise.all([
+    const [users, personalizations, interactions] = await Promise.all([
       supabase.from('user_profiles').select('id', { count: 'exact', head: true }),
       supabase.from('personalization_cache').select('cache_key', { count: 'exact', head: true }),
       supabase.from('bill_interactions').select('id', { count: 'exact', head: true }),
-      supabase.from('personalization_cache').select('cache_key, bill_id, response'),
     ])
 
-    // Count distinct users by extracting profile hash (last 12 chars) from cache keys
-    // Cache key format: v4-personalize-{billType}{billNumber}-{congress}-{profileHash}
-    // This counts EVERYONE who got a personalization — including anonymous users
-    const profileHashes = new Set()
-    const billIds = new Set()
+    // Count distinct bills — try RPC first, fall back to client-side count
+    let uniqueBillCount = 0
+    const rpc = await supabase.rpc('count_distinct_bills')
+    if (!rpc.error && rpc.data != null) {
+      uniqueBillCount = rpc.data
+    } else {
+      const { data: billIds } = await supabase
+        .from('personalization_cache')
+        .select('bill_id')
+      if (billIds) uniqueBillCount = new Set(billIds.map(r => r.bill_id)).size
+    }
+
+    // Topic breakdown from personalization cache
+    const { data: topicData } = await supabase
+      .from('personalization_cache')
+      .select('response')
+
     const topicCounts = {}
-    if (cacheRows.data) {
-      for (const row of cacheRows.data) {
-        const hash = row.cache_key.split('-').pop()
-        if (hash) profileHashes.add(hash)
-        if (row.bill_id) billIds.add(row.bill_id)
+    if (topicData) {
+      for (const row of topicData) {
         const tag = row.response?.analysis?.topic_tag
         if (tag) topicCounts[tag] = (topicCounts[tag] || 0) + 1
       }
     }
 
     const metrics = {
-      totalUsers: profileHashes.size,
-      registeredUsers: registeredUsers.count || 0,
+      totalUsers: users.count || 0,
       totalPersonalizations: personalizations.count || 0,
       totalInteractions: interactions.count || 0,
-      uniqueBillsPersonalized: billIds.size,
+      uniqueBillsPersonalized: uniqueBillCount,
       topicBreakdown: topicCounts,
     }
 
