@@ -91,7 +91,7 @@ const authLimiter = rateLimit({
 })
 
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
-const GROQ_KEY = process.env.GROQ_API_KEY
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
 // FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
 const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
@@ -681,7 +681,7 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
   }
 })
 
-// ─── Personalization endpoint (Groq GPT-OSS 120B) ──────────────────────────
+// ─── Personalization endpoint (Claude Haiku 4.5) ────────────────────────────
 app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const valErrors = validatePersonalizeBody(req.body)
   if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
@@ -764,19 +764,20 @@ ${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. 
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
   try {
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_KEY}`
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01'
       },
+      signal: AbortSignal.timeout(30000),
       body: JSON.stringify({
-        model: 'openai/gpt-oss-120b',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 900,
         temperature: 0.6,
-        response_format: { type: 'json_object' },
+        system: systemPrompt,
         messages: [
-          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ]
       })
@@ -784,16 +785,14 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
 
     const data = await resp.json()
 
-    if (!data.choices?.[0]?.message?.content) {
-      return res.status(500).json({ error: 'No response from Groq', detail: data })
+    if (!data.content?.[0]?.text) {
+      return res.status(500).json({ error: 'No response from Claude', detail: data })
     }
 
     try {
-      let text = data.choices[0].message.content.trim()
-      // Strip markdown code fences if the model added them
+      let text = data.content[0].text.trim()
       text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
-      // Attach source attribution so the frontend can display it
       parsed.sources = sources
       const result = { analysis: parsed }
       const billId = `${bill.type}${bill.number}-${bill.congress}`
@@ -801,19 +800,18 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
       setCache(cacheKey, result)
       res.json(result)
     } catch (parseErr) {
-      // JSON parse failed — return error so frontend can show retry
       console.error(`[personalize] JSON parse error for ${bill.type}${bill.number}:`, parseErr.message)
       res.status(502).json({ error: 'Personalization returned invalid format', retryable: true })
     }
 
   } catch (err) {
-    console.error('Groq error:', err)
+    console.error('Claude error:', err)
     res.status(500).json({ error: 'Personalization failed', detail: err.message })
   }
 })
 
 // ─── Batch personalization endpoint ─────────────────────────────────────────
-// Personalizes multiple bills in a single request, parallelizing all Groq calls.
+// Personalizes multiple bills in a single request, parallelizing all Claude calls.
 app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   const { bills, profile } = req.body
   if (!Array.isArray(bills) || !bills.length || !profile) {
@@ -903,7 +901,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   const billsWithText = await Promise.all(textFetches)
 
-  // 3. Fire Groq calls with concurrency limit (3 at a time) and retry on transient failures
+  // 3. Fire Claude calls with concurrency limit (3 at a time) and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
 
@@ -968,20 +966,20 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
     const MAX_RETRIES = 2
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${GROQ_KEY}`
+            'x-api-key': ANTHROPIC_KEY,
+            'anthropic-version': '2023-06-01'
           },
           signal: AbortSignal.timeout(30000),
           body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
+            model: 'claude-haiku-4-5-20251001',
             max_tokens: 900,
             temperature: 0.6,
-            response_format: { type: 'json_object' },
+            system: systemPrompt,
             messages: [
-              { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt }
             ]
           })
@@ -990,17 +988,17 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
         // Retry on rate limit or server error
         if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
           const delay = (attempt + 1) * 2000 // 2s, 4s
-          console.log(`[batch] Groq ${resp.status} for ${billId}, retry ${attempt + 1} in ${delay}ms`)
+          console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1} in ${delay}ms`)
           await new Promise(r => setTimeout(r, delay))
           continue
         }
 
         const data = await resp.json()
-        if (!data.choices?.[0]?.message?.content) {
-          throw new Error(data.error?.message || 'No response from Groq')
+        if (!data.content?.[0]?.text) {
+          throw new Error(data.error?.message || 'No response from Claude')
         }
 
-        let text = data.choices[0].message.content.trim()
+        let text = data.content[0].text.trim()
         text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
         const parsed = JSON.parse(text)
         parsed.sources = sources
@@ -1015,7 +1013,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
           console.log(`[batch] Timeout for ${billId}, retry ${attempt + 1}`)
           continue
         }
-        console.error(`[batch] Groq error for ${billId}:`, err.message)
+        console.error(`[batch] Claude error for ${billId}:`, err.message)
         return { billId, error: err.message }
       }
     }
@@ -2112,7 +2110,7 @@ const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   LegiScan key: ${process.env.LEGISCAN_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
-  console.log(`   Groq key: ${process.env.GROQ_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
