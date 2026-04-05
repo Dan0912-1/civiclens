@@ -61,6 +61,7 @@ export default function Nav() {
                 <button className={styles.dropItem} onClick={() => handleNav('/')}>Home</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/search')}>Search bills</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/about')}>How it works</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/impact')}>Impact</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My profile</button>
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved bills</button>

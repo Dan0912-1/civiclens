@@ -102,6 +102,7 @@ export default function Home() {
         <span>&copy; {new Date().getFullYear()} CapitolKey</span>
         <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
         <button onClick={() => navigate('/terms')}>Terms of Service</button>
+        <button onClick={() => navigate('/impact')}>Impact</button>
         <button onClick={() => navigate('/about')}>About</button>
         <a href="mailto:dejacius@gmail.com">Contact</a>
       </footer>
