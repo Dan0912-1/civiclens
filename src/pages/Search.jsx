@@ -10,6 +10,34 @@ import styles from './Search.module.css'
 
 const API_BASE = getApiBase()
 
+const US_STATES = [
+  { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' }, { code: 'AR', name: 'Arkansas' },
+  { code: 'CA', name: 'California' }, { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' }, { code: 'DE', name: 'Delaware' },
+  { code: 'FL', name: 'Florida' }, { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' }, { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' }, { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' }, { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' }, { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' }, { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' }, { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' }, { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' }, { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' }, { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' }, { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' }, { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' }, { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' }, { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' }, { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' }, { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' }, { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' }, { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' }, { code: 'VA', name: 'Virginia' },
+  { code: 'WA', name: 'Washington' }, { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' }, { code: 'WY', name: 'Wyoming' },
+]
+
 const SUGGESTION_CHIPS = [
   'Student Loans',
   'Climate',
@@ -44,6 +72,7 @@ export default function Search() {
   // Filters
   const [activeTab, setActiveTab] = useState(initialTab)
   const [chamberFilter, setChamberFilter] = useState('All')
+  const [selectedState, setSelectedState] = useState(profile?.state || '')
 
   // Personalization state
   const [analyses, setAnalyses] = useState({})
@@ -78,7 +107,7 @@ export default function Search() {
     }
   }, [activeQuery, activeTab])
 
-  async function fetchResults(query, pageNum, reset = false, tab = activeTab) {
+  async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride) {
     if (reset) {
       setLoading(true)
       setBills([])
@@ -92,7 +121,7 @@ export default function Search() {
     setError('')
     setHasSearched(true)
 
-    const stateParam = tab === 'state' ? (profile?.state || 'MD') : 'US'
+    const stateParam = tab === 'state' ? (stateOverride || selectedState || profile?.state || 'US') : 'US'
     try {
       const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}&state=${stateParam}`)
       if (!resp.ok) {
@@ -207,7 +236,9 @@ export default function Search() {
   }
 
   const filterLabel = [
-    activeTab === 'state' ? 'Connecticut' : 'Federal',
+    activeTab === 'state'
+      ? (US_STATES.find(s => s.code === (selectedState || profile?.state))?.name || 'State')
+      : 'Federal',
     chamberFilter !== 'All' ? chamberFilter : null,
   ].filter(Boolean).join(' \u00B7 ')
 
@@ -263,9 +294,25 @@ export default function Search() {
               className={`${styles.tab} ${activeTab === 'state' ? styles.tabActive : ''}`}
               onClick={() => handleTabSwitch('state')}
             >
-              State (CT)
+              State
             </button>
           </div>
+          {activeTab === 'state' && (
+            <select
+              className={styles.stateSelect}
+              value={selectedState}
+              onChange={e => {
+                const code = e.target.value
+                setSelectedState(code)
+                if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
+              }}
+            >
+              <option value="">Select a state</option>
+              {US_STATES.map(s => (
+                <option key={s.code} value={s.code}>{s.name}</option>
+              ))}
+            </select>
+          )}
           <div className={styles.filterBar}>
             {['All', 'House', 'Senate'].map(chamber => (
               <button

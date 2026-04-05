@@ -153,6 +153,18 @@
   gap: var(--space-xs);
 }
 
+.stateSelect {
+  height: 36px;
+  padding: 0 var(--space-sm);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--white);
+  color: var(--navy);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
 .filterBtn {
   padding: 0.45rem 1rem;
   border: 1.5px solid var(--border);
