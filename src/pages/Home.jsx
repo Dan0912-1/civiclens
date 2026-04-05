@@ -28,11 +28,14 @@ const DEMO_BILLS = [
 
 const TOPICS = [
   { id: 'education', label: 'Education', emoji: '📚' },
-  { id: 'healthcare', label: 'Healthcare', emoji: '🏥' },
-  { id: 'economy', label: 'Economy', emoji: '💼' },
   { id: 'environment', label: 'Environment', emoji: '🌿' },
+  { id: 'economy', label: 'Economy', emoji: '💼' },
+  { id: 'healthcare', label: 'Healthcare', emoji: '🏥' },
   { id: 'technology', label: 'Technology', emoji: '💻' },
+  { id: 'housing', label: 'Housing', emoji: '🏠' },
+  { id: 'immigration', label: 'Immigration', emoji: '🌎' },
   { id: 'civil_rights', label: 'Civil Rights', emoji: '⚖️' },
+  { id: 'community', label: 'Community', emoji: '🤝' },
 ]
 
 export default function Home() {
