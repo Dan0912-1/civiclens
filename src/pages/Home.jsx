@@ -1,94 +1,177 @@
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './Home.module.css'
 
-const STATS = [
-  { number: '50', label: 'States covered' },
-  { number: '10K+', label: 'Bills tracked' },
-  { number: '0', label: 'Political bias' },
+const DEMO_BILLS = [
+  {
+    tag: 'Education', tagColor: '#2563eb',
+    title: 'Student Loan Refinancing Act',
+    summary: 'If this passes, your future federal student loans could drop to 4.5% interest — saving you thousands over a 10-year repayment.',
+    relevance: 9,
+  },
+  {
+    tag: 'Technology', tagColor: '#dc2626',
+    title: 'Kids Online Safety Act',
+    summary: 'This bill would require apps you use daily to add safety features and limit data collection for users under 17.',
+    relevance: 8,
+  },
+  {
+    tag: 'Economy', tagColor: '#9333ea',
+    title: 'Raise the Wage Act',
+    summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time.',
+    relevance: 9,
+  },
+]
+
+const TOPICS = [
+  { id: 'education', label: 'Education', emoji: '📚' },
+  { id: 'healthcare', label: 'Healthcare', emoji: '🏥' },
+  { id: 'economy', label: 'Economy', emoji: '💼' },
+  { id: 'environment', label: 'Environment', emoji: '🌿' },
+  { id: 'technology', label: 'Technology', emoji: '💻' },
+  { id: 'civil_rights', label: 'Civil Rights', emoji: '⚖️' },
 ]
 
 export default function Home() {
   const navigate = useNavigate()
+  const [billIndex, setBillIndex] = useState(0)
+  const [typedTitle, setTypedTitle] = useState('')
+  const [showSummary, setShowSummary] = useState(false)
+  const [fading, setFading] = useState(false)
+  const intervalRef = useRef(null)
+
+  const bill = DEMO_BILLS[billIndex]
+
+  // Typing effect for bill title
+  useEffect(() => {
+    setTypedTitle('')
+    setShowSummary(false)
+    setFading(false)
+    let i = 0
+    const title = DEMO_BILLS[billIndex].title
+    intervalRef.current = setInterval(() => {
+      i++
+      setTypedTitle(title.slice(0, i))
+      if (i >= title.length) {
+        clearInterval(intervalRef.current)
+        setTimeout(() => setShowSummary(true), 300)
+      }
+    }, 40)
+    return () => clearInterval(intervalRef.current)
+  }, [billIndex])
+
+  // Cycle through bills
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFading(true)
+      setTimeout(() => {
+        setBillIndex(prev => (prev + 1) % DEMO_BILLS.length)
+      }, 400)
+    }, 6000)
+    return () => clearTimeout(timer)
+  }, [billIndex])
 
   return (
     <main className={styles.home}>
 
       {/* Hero */}
-      <section className={styles.hero}>
-        <div className={styles.heroInner}>
-          <div className={styles.badge}>Real legislation. Plain language.</div>
+      <section className={styles.heroWrap}>
+        <div className={styles.hero}>
+        <div className={styles.heroText}>
           <h1 className={styles.headline}>
-            Laws are being made.<br />
-            <span className={styles.accent}>See how they affect you.</span>
+            See how laws affect<br />
+            <span className={styles.accent}>your life.</span>
           </h1>
           <p className={styles.subhead}>
-            CapitolKey pulls real bills moving through Congress right now and
-            translates them into plain English — personalized to your state,
-            grade, and what you care about.
+            Real bills from Congress and your state legislature — translated
+            into plain English, personalized to you.
           </p>
-          <div className={styles.heroActions}>
+          <button
+            className={styles.ctaPrimary}
+            onClick={() => navigate('/profile')}
+          >
+            Try it with your profile →
+          </button>
+        </div>
+
+        <div className={styles.heroDemo}>
+          <div className={styles.profileChips}>
+            <span className={styles.chip}>Maryland</span>
+            <span className={styles.chip}>10th Grade</span>
+            <span className={styles.chip}>Tech, Healthcare</span>
+          </div>
+          <div className={`${styles.demoCard} ${fading ? styles.demoCardFading : ''}`}>
+            <div className={styles.demoTag} style={{ background: `${bill.tagColor}20`, color: bill.tagColor }}>
+              {bill.tag}
+            </div>
+            <div className={styles.demoTitle}>
+              {typedTitle}<span className={styles.cursor}>|</span>
+            </div>
+            {showSummary && (
+              <div className={styles.demoSummary}>
+                {bill.summary}
+              </div>
+            )}
+            {showSummary && (
+              <div className={styles.demoRelevance}>
+                <span className={styles.relevanceDot} />
+                Relevance: {bill.relevance}/10
+              </div>
+            )}
+          </div>
+          <div className={styles.demoDots}>
+            {DEMO_BILLS.map((_, i) => (
+              <span key={i} className={`${styles.dot} ${i === billIndex ? styles.dotActive : ''}`} />
+            ))}
+          </div>
+        </div>
+        </div>
+      </section>
+
+      {/* Topic cards */}
+      <section className={styles.topics}>
+        <h2 className={styles.topicsHeading}>What do you care about?</h2>
+        <div className={styles.topicScroll}>
+          {TOPICS.map(t => (
             <button
-              className={styles.ctaPrimary}
+              key={t.id}
+              className={styles.topicCard}
               onClick={() => navigate('/profile')}
             >
-              See my legislation →
+              <span className={styles.topicEmoji}>{t.emoji}</span>
+              <span className={styles.topicLabel}>{t.label}</span>
             </button>
-            <button
-              className={styles.ctaSecondary}
-              onClick={() => navigate('/about')}
-            >
-              How it works
-            </button>
-          </div>
-        </div>
-
-        <div className={styles.heroVisual}>
-          <div className={styles.cardMock}>
-            <div className={styles.mockTag}>Education</div>
-            <div className={styles.mockTitle}>Student Loan Refinancing Act</div>
-            <div className={styles.mockBody}>
-              If this passes, your future federal student loans could have lower interest rates — saving borrowers thousands over a 10-year repayment period.
-            </div>
-            <div className={styles.mockRelevance}>
-              <span className={styles.mockDot} />
-              Highly relevant to you
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Stats bar */}
-      <section className={styles.statsBar}>
-        {STATS.map(s => (
-          <div key={s.label} className={styles.stat}>
-            <span className={styles.statNum}>{s.number}</span>
-            <span className={styles.statLabel}>{s.label}</span>
-          </div>
-        ))}
-      </section>
-
-      {/* How it works */}
-      <section className={styles.how}>
-        <h2 className={styles.sectionTitle}>Three steps to your civic picture</h2>
-        <div className={styles.steps}>
-          {[
-            { n: '01', title: 'Tell us about yourself', body: 'Your state, grade, job status, and what issues matter to you. No account required.' },
-            { n: '02', title: 'We find the bills', body: 'CapitolKey pulls real legislation moving through Congress right now — filtered to what\'s relevant.' },
-            { n: '03', title: 'See your impact', body: 'Every bill explained in plain English: what changes for you if it passes, what stays the same if it fails.' },
-          ].map(step => (
-            <div key={step.n} className={styles.step}>
-              <div className={styles.stepNum}>{step.n}</div>
-              <h3 className={styles.stepTitle}>{step.title}</h3>
-              <p className={styles.stepBody}>{step.body}</p>
-            </div>
           ))}
+        </div>
+      </section>
+
+      {/* How it works — condensed timeline */}
+      <section className={styles.timeline}>
+        <div className={styles.timelineSteps}>
+          <div className={styles.timelineStep}>
+            <div className={styles.timelineDot}>1</div>
+            <div className={styles.timelineLabel}>60-second profile</div>
+            <div className={styles.timelineSub}>State, grade, interests</div>
+          </div>
+          <div className={styles.timelineLine} />
+          <div className={styles.timelineStep}>
+            <div className={styles.timelineDot}>2</div>
+            <div className={styles.timelineLabel}>AI matches bills</div>
+            <div className={styles.timelineSub}>Federal + your state</div>
+          </div>
+          <div className={styles.timelineLine} />
+          <div className={styles.timelineStep}>
+            <div className={styles.timelineDot}>3</div>
+            <div className={styles.timelineLabel}>See your impact</div>
+            <div className={styles.timelineSub}>Plain English, personalized</div>
+          </div>
         </div>
       </section>
 
       {/* CTA */}
       <section className={styles.ctaSection}>
-        <h2>Ready to see what's moving?</h2>
-        <p>Takes 60 seconds. No account, no email, no spam.</p>
+        <h2>Your legislation is waiting.</h2>
+        <p>60 seconds. No account needed.</p>
         <button
           className={styles.ctaPrimary}
           onClick={() => navigate('/profile')}
