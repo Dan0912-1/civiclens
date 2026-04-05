@@ -123,7 +123,7 @@ export default function Profile() {
               <div className={styles.field}>
                 <label className={styles.label}>Your grade <span className={styles.req}>*</span></label>
                 <div className={styles.gradeGrid}>
-                  {['9', '10', '11', '12'].map(g => (
+                  {['7', '8', '9', '10', '11', '12'].map(g => (
                     <button
                       key={g}
                       className={`${styles.gradeBtn} ${profile.grade === g ? styles.gradeBtnActive : ''}`}
@@ -133,7 +133,7 @@ export default function Profile() {
                     </button>
                   ))}
                   <button
-                    className={`${styles.gradeBtn} ${styles.gradeBtnFull} ${profile.grade === '18+' ? styles.gradeBtnActive : ''}`}
+                    className={`${styles.gradeBtn} ${styles.gradeBtnHalf} ${profile.grade === '18+' ? styles.gradeBtnActive : ''}`}
                     onClick={() => setProfile(p => ({ ...p, grade: '18+' }))}
                   >
                     Post High School

@@ -155,8 +155,8 @@
   color: var(--navy);
 }
 
-.gradeBtnFull {
-  grid-column: 1 / -1;
+.gradeBtnHalf {
+  grid-column: span 2;
 }
 
 .gradeBtnActive {
