@@ -2,6 +2,7 @@
   min-height: calc(100vh - 64px);
   background: var(--cream);
   padding: var(--space-2xl) var(--space-lg);
+  overflow-x: hidden;
 }
 
 .container {
@@ -203,6 +204,8 @@
   background: var(--cream);
   border-radius: var(--radius-md);
   padding: var(--space-lg);
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .actionTitle {
