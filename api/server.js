@@ -50,9 +50,23 @@ app.use(express.json())
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
+// Uses user ID from JWT for authenticated users so that all students on the
+// same school WiFi (shared public IP) each get their own rate-limit bucket.
+function userOrIpKey(req) {
+  const token = req.headers.authorization?.replace('Bearer ', '')
+  if (token) {
+    try {
+      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
+      if (payload.sub) return `user-${payload.sub}`
+    } catch {}
+  }
+  return req.ip
+}
+
 const legislationLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute
-  max: 15,                  // 15 requests per minute per IP
+  max: 15,                  // 15 requests per minute per user (or per IP if anonymous)
+  keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests — please wait a moment and try again.' },
@@ -60,7 +74,8 @@ const legislationLimiter = rateLimit({
 
 const personalizeLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute
-  max: 30,                  // 30 personalizations per minute per IP
+  max: 30,                  // 30 personalizations per minute per user
+  keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many personalization requests — please slow down.' },
