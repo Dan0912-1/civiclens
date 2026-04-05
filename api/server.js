@@ -252,59 +252,6 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
-// ─── Impact metrics (public, cached 5min) ─────────────────────────────────
-app.get('/api/impact', async (req, res) => {
-  const cached = getCache('impact-metrics')
-  if (cached) return res.json(cached)
-
-  try {
-    const [users, personalizations, interactions] = await Promise.all([
-      supabase.from('user_profiles').select('id', { count: 'exact', head: true }),
-      supabase.from('personalization_cache').select('cache_key', { count: 'exact', head: true }),
-      supabase.from('bill_interactions').select('id', { count: 'exact', head: true }),
-    ])
-
-    // Count distinct bills — try RPC first, fall back to client-side count
-    let uniqueBillCount = 0
-    const rpc = await supabase.rpc('count_distinct_bills')
-    if (!rpc.error && rpc.data != null) {
-      uniqueBillCount = rpc.data
-    } else {
-      const { data: billIds } = await supabase
-        .from('personalization_cache')
-        .select('bill_id')
-      if (billIds) uniqueBillCount = new Set(billIds.map(r => r.bill_id)).size
-    }
-
-    // Topic breakdown from personalization cache
-    const { data: topicData } = await supabase
-      .from('personalization_cache')
-      .select('response')
-
-    const topicCounts = {}
-    if (topicData) {
-      for (const row of topicData) {
-        const tag = row.response?.analysis?.topic_tag
-        if (tag) topicCounts[tag] = (topicCounts[tag] || 0) + 1
-      }
-    }
-
-    const metrics = {
-      totalUsers: users.count || 0,
-      totalPersonalizations: personalizations.count || 0,
-      totalInteractions: interactions.count || 0,
-      uniqueBillsPersonalized: uniqueBillCount,
-      topicBreakdown: topicCounts,
-    }
-
-    setCache('impact-metrics', metrics, 5 * 60 * 1000)
-    res.json(metrics)
-  } catch (err) {
-    console.error('Impact metrics error:', err.message)
-    res.status(500).json({ error: 'Failed to fetch impact metrics' })
-  }
-})
-
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
 // Bump MIN_VERSION when you ship a breaking API change.
