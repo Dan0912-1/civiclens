@@ -8,18 +8,21 @@ const DEMO_BILLS = [
     title: 'Student Loan Refinancing Act',
     summary: 'If this passes, your future federal student loans could drop to 4.5% interest — saving you thousands over a 10-year repayment.',
     relevance: 9,
+    chips: ['U.S. Congress', '11th Grade', 'Education'],
   },
   {
-    tag: 'Technology', tagColor: '#dc2626',
-    title: 'Kids Online Safety Act',
-    summary: 'This bill would require apps you use daily to add safety features and limit data collection for users under 17.',
+    tag: 'Healthcare', tagColor: '#16a34a',
+    title: 'CT HB 6941 — School Mental Health Services',
+    summary: 'Would require every Connecticut public school to have a licensed counselor on-site — meaning your school gets direct access to mental health support.',
     relevance: 8,
+    chips: ['Connecticut', '9th Grade', 'Healthcare'],
   },
   {
     tag: 'Economy', tagColor: '#9333ea',
     title: 'Raise the Wage Act',
-    summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time.',
+    summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time in Maryland.',
     relevance: 9,
+    chips: ['Maryland', '10th Grade', 'Economy'],
   },
 ]
 
@@ -96,9 +99,9 @@ export default function Home() {
 
         <div className={styles.heroDemo}>
           <div className={styles.profileChips}>
-            <span className={styles.chip}>Maryland</span>
-            <span className={styles.chip}>10th Grade</span>
-            <span className={styles.chip}>Tech, Healthcare</span>
+            {bill.chips.map((c, i) => (
+              <span key={i} className={styles.chip}>{c}</span>
+            ))}
           </div>
           <div className={`${styles.demoCard} ${fading ? styles.demoCardFading : ''}`}>
             <div className={styles.demoTag} style={{ background: `${bill.tagColor}20`, color: bill.tagColor }}>
