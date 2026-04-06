@@ -50,10 +50,15 @@ export function AuthProvider({ children }) {
       setLoading(false)
     })
 
+    // Clean up OAuth hash fragments immediately on page load (before auth state fires)
+    if (window.location.hash.includes('access_token') || window.location.search.includes('access_token')) {
+      window.history.replaceState(null, '', window.location.pathname)
+    }
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
-      // Clean up OAuth hash fragments from URL
-      if (window.location.hash.includes('access_token')) {
+      // Clean up any remaining OAuth hash fragments from URL
+      if (window.location.hash.includes('access_token') || window.location.search.includes('access_token')) {
         window.history.replaceState(null, '', window.location.pathname)
       }
     })

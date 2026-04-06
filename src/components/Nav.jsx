@@ -59,15 +59,17 @@ export default function Nav() {
             {menuOpen && (
               <div className={styles.dropdown}>
                 <button className={styles.dropItem} onClick={() => handleNav('/')}>Home</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/search')}>Search bills</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/about')}>How it works</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My profile</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/search')}>Search Bills</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/about')}>How It Works</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My Profile</button>
                 {user && (
-                  <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved bills</button>
+                  <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved Bills</button>
                 )}
                 <div className={styles.dropDivider} />
+                <button className={styles.dropItem} onClick={() => handleNav('/contact')}>Contact Us</button>
+                <div className={styles.dropDivider} />
                 <button className={styles.dropItem} onClick={() => handleNav('/privacy')}>Privacy Policy</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/terms')}>Terms of Service</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/terms')}>Terms Of Service</button>
                 <div className={styles.dropDivider} />
                 {user ? (
                   <button

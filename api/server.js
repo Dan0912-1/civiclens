@@ -270,7 +270,7 @@ app.get('/api/version', (req, res) => {
 })
 
 // ─── Input validation helpers ───────────────────────────────────────────────
-const VALID_GRADES = ['7', '8', '9', '10', '11', '12', '18+']
+const VALID_GRADES = ['7', '8', '9', '10', '11', '12', '18+', '13-14', '15-16', '17-18', '19-21', '22-25', '26+']
 const VALID_INTERESTS = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
 
@@ -2089,6 +2089,44 @@ async function ensureBillTextCache() {
     console.log('   Bill text cache: ✗ check failed (in-memory fallback)')
   }
 }
+
+// ─── Feedback endpoint ───────────────────────────────────────────────────────
+app.post('/api/feedback', async (req, res) => {
+  const { name, email, type, message } = req.body
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message is required' })
+  }
+  const feedbackType = ['feedback', 'bug', 'feature', 'other'].includes(type) ? type : 'feedback'
+  try {
+    if (resend) {
+      await resend.emails.send({
+        from: 'CapitolKey Feedback <feedback@capitolkey.com>',
+        to: 'dejacius@gmail.com',
+        subject: `[CapitolKey ${feedbackType}] ${name || 'Anonymous'}`,
+        text: [
+          `Type: ${feedbackType}`,
+          `Name: ${name || 'Not provided'}`,
+          `Email: ${email || 'Not provided'}`,
+          '',
+          message.trim(),
+        ].join('\n'),
+      })
+    }
+    // Also store in Supabase if available
+    if (supabase) {
+      await supabase.from('feedback').insert({
+        name: name || null,
+        email: email || null,
+        type: feedbackType,
+        message: message.trim(),
+      }).catch(() => {}) // table may not exist yet
+    }
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('Feedback send error:', err)
+    res.json({ ok: true }) // still return success — we don't want to block user
+  }
+})
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', async () => {

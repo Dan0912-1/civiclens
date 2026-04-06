@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { loadProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
+import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
@@ -51,6 +51,18 @@ export default function Results() {
           setProfile(cloud)
           return
         }
+        // No cloud profile — check sessionStorage and sync it to Supabase
+        const stored = sessionStorage.getItem('civicProfile')
+        if (stored) {
+          const localProfile = JSON.parse(stored)
+          setProfile(localProfile)
+          // Save local profile to Supabase so it persists across sessions
+          saveProfile(user.id, localProfile)
+          return
+        }
+        // No profile anywhere — send to profile setup
+        navigate('/profile')
+        return
       }
       const stored = sessionStorage.getItem('civicProfile')
       if (!stored) {
@@ -267,7 +279,7 @@ export default function Results() {
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.profilePill}>
-            📍 {profile.state} · Grade {profile.grade}
+            📍 {profile.state} · Age {profile.grade}
             {profile.hasJob ? ' · Works' : ''}
           </div>
           <h1 className={styles.heading}>Your Legislation</h1>

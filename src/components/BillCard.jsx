@@ -122,7 +122,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
             {isLoading ? '···' : (analysis?.topic_tag || 'Other')}
           </span>
           <span className={styles.billNum}>
-            {bill.type} {bill.number} · {bill.congress}th Congress
+            {bill.type} {bill.number}{bill.isStateBill ? ` · ${bill.state}` : ` · ${bill.congress}th Congress`}
           </span>
         </div>
         <span className={styles.chamber}>{bill.originChamber || 'Congress'}</span>

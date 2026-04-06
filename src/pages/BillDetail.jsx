@@ -204,7 +204,7 @@ export default function BillDetail() {
               </span>
             )}
             <span className={styles.billId}>
-              {type.toUpperCase()} {number} · {congress}th Congress
+              {type.toUpperCase()} {number}{bill?.isStateBill ? ` · ${bill.state}` : ` · ${congress}th Congress`}
             </span>
             <span className={styles.chamber}>
               {bill?.originChamber || detail?.originChamber || 'Congress'}

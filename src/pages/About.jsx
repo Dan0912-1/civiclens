@@ -96,7 +96,7 @@ export default function About() {
           <span className={styles.legalDot}>·</span>
           <button onClick={() => navigate('/terms')}>Terms of Service</button>
           <span className={styles.legalDot}>·</span>
-          <a href="mailto:dejacius@gmail.com">Contact</a>
+          <button onClick={() => navigate('/contact')}>Contact</button>
         </div>
 
       </div>

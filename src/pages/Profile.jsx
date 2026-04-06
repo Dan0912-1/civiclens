@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { saveProfile } from '../lib/userProfile'
+import AuthModal from '../components/AuthModal.jsx'
 import styles from './Profile.module.css'
 
 const US_STATES = [
@@ -96,6 +97,7 @@ export default function Profile() {
     }
   })
   const [error, setError] = useState('')
+  const [showAuth, setShowAuth] = useState(false)
 
   function toggleInterest(id) {
     setProfile(prev => ({
@@ -147,6 +149,16 @@ export default function Profile() {
           ))}
         </div>
 
+        {/* Sign-in prompt for anonymous users */}
+        {!user && step === 1 && (
+          <div className={styles.signInPrompt}>
+            <p>Create an account to save your profile and bookmarks across sessions.</p>
+            <button className={styles.signInBtn} onClick={() => setShowAuth(true)}>
+              Sign in or create account
+            </button>
+          </div>
+        )}
+
         <div className={styles.card}>
 
           {/* Step 1 — Basics */}
@@ -168,23 +180,24 @@ export default function Profile() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Your grade <span className={styles.req}>*</span></label>
-                <div className={styles.gradeGrid}>
-                  {['7', '8', '9', '10', '11', '12'].map(g => (
+                <label className={styles.label}>Your age <span className={styles.req}>*</span></label>
+                <div className={styles.ageGrid}>
+                  {[
+                    { value: '13-14', label: '13–14' },
+                    { value: '15-16', label: '15–16' },
+                    { value: '17-18', label: '17–18' },
+                    { value: '19-21', label: '19–21' },
+                    { value: '22-25', label: '22–25' },
+                    { value: '26+',   label: '26+' },
+                  ].map(a => (
                     <button
-                      key={g}
-                      className={`${styles.gradeBtn} ${profile.grade === g ? styles.gradeBtnActive : ''}`}
-                      onClick={() => setProfile(p => ({ ...p, grade: g }))}
+                      key={a.value}
+                      className={`${styles.ageBtn} ${profile.grade === a.value ? styles.ageBtnActive : ''}`}
+                      onClick={() => setProfile(p => ({ ...p, grade: a.value }))}
                     >
-                      {g}th
+                      {a.label}
                     </button>
                   ))}
-                  <button
-                    className={`${styles.gradeBtn} ${styles.gradeBtnHalf} ${profile.grade === '18+' ? styles.gradeBtnActive : ''}`}
-                    onClick={() => setProfile(p => ({ ...p, grade: '18+' }))}
-                  >
-                    Post High School
-                  </button>
                 </div>
               </div>
             </div>
@@ -279,6 +292,8 @@ export default function Profile() {
 
         </div>
       </div>
+
+      <AuthModal isOpen={showAuth} onClose={() => setShowAuth(false)} />
     </main>
   )
 }

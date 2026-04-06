@@ -133,13 +133,13 @@
   border-color: var(--navy);
 }
 
-.gradeGrid {
+.ageGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-sm);
 }
 
-.gradeBtn {
+.ageBtn {
   padding: 0.7rem;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
@@ -148,18 +148,15 @@
   color: var(--text-secondary);
   background: var(--white);
   transition: all 0.2s ease;
+  text-align: center;
 }
 
-.gradeBtn:hover {
+.ageBtn:hover {
   border-color: var(--navy);
   color: var(--navy);
 }
 
-.gradeBtnHalf {
-  grid-column: span 2;
-}
-
-.gradeBtnActive {
+.ageBtnActive {
   background: var(--navy);
   border-color: var(--navy);
   color: var(--white);
@@ -327,7 +324,7 @@
 /* Sign in prompt */
 .signInPrompt {
   text-align: center;
-  margin-bottom: var(--space-xl);
+  margin-bottom: var(--space-lg);
   padding: var(--space-lg);
   background: var(--white);
   border: 1px solid var(--border-light);
@@ -340,24 +337,24 @@
   margin-bottom: var(--space-md);
 }
 
-.googleBtn {
+.signInBtn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-sm);
-  background: var(--white);
-  border: 1.5px solid var(--border);
+  background: var(--navy);
+  border: none;
   border-radius: var(--radius-md);
   padding: 0.6rem 1.25rem;
   font-size: 0.9rem;
-  font-weight: 500;
-  color: var(--text-primary);
+  font-weight: 600;
+  color: var(--white);
   transition: all 0.2s;
-  box-shadow: var(--shadow-sm);
+  cursor: pointer;
 }
 
-.googleBtn:hover {
-  border-color: var(--navy);
-  box-shadow: var(--shadow-md);
+.signInBtn:hover {
+  background: var(--navy-light);
+  transform: translateY(-1px);
 }
 
 .error {

@@ -8,21 +8,21 @@ const DEMO_BILLS = [
     title: 'Student Loan Refinancing Act',
     summary: 'If this passes, your future federal student loans could drop to 4.5% interest — saving you thousands over a 10-year repayment.',
     relevance: 9,
-    chips: ['U.S. Congress', '11th Grade', 'Education'],
+    chips: ['U.S. Congress', 'Age 17–18', 'Education'],
   },
   {
     tag: 'Healthcare', tagColor: '#16a34a',
     title: 'CT HB 6941 — School Mental Health Services',
     summary: 'Would require every Connecticut public school to have a licensed counselor on-site — meaning your school gets direct access to mental health support.',
     relevance: 8,
-    chips: ['Connecticut', '9th Grade', 'Healthcare'],
+    chips: ['Connecticut', 'Age 15–16', 'Healthcare'],
   },
   {
     tag: 'Economy', tagColor: '#9333ea',
     title: 'Raise the Wage Act',
     summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time in Maryland.',
     relevance: 9,
-    chips: ['Maryland', '10th Grade', 'Economy'],
+    chips: ['Maryland', 'Age 15–16', 'Economy'],
   },
 ]
 
@@ -157,7 +157,7 @@ export default function Home() {
           <div className={styles.timelineStep}>
             <div className={styles.timelineDot}>1</div>
             <div className={styles.timelineLabel}>60-second profile</div>
-            <div className={styles.timelineSub}>State, grade, interests</div>
+            <div className={styles.timelineSub}>State, age, interests</div>
           </div>
           <div className={styles.timelineLine} />
           <div className={styles.timelineStep}>
@@ -192,7 +192,7 @@ export default function Home() {
         <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
         <button onClick={() => navigate('/terms')}>Terms of Service</button>
         <button onClick={() => navigate('/about')}>About</button>
-        <a href="mailto:dejacius@gmail.com">Contact</a>
+        <button onClick={() => navigate('/contact')}>Contact</button>
       </footer>
 
     </main>
