@@ -2101,7 +2101,7 @@ app.post('/api/feedback', async (req, res) => {
     if (resend) {
       await resend.emails.send({
         from: 'CapitolKey Feedback <feedback@capitolkey.com>',
-        to: 'dejacius@gmail.com',
+        to: 'capitolkeyapp@gmail.com',
         subject: `[CapitolKey ${feedbackType}] ${name || 'Anonymous'}`,
         text: [
           `Type: ${feedbackType}`,

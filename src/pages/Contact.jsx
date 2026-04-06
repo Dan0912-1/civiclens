@@ -128,7 +128,7 @@ export default function Contact() {
         )}
 
         <div className={styles.altContact}>
-          <p>You can also reach us directly at <a href="mailto:dejacius@gmail.com">dejacius@gmail.com</a></p>
+          <p>You can also reach us directly at <a href="mailto:capitolkeyapp@gmail.com">capitolkeyapp@gmail.com</a></p>
         </div>
       </div>
     </main>
