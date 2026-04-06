@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './Home.module.css'
 
+const SEARCH_CHIPS = ['Student Loans', 'Climate', 'Healthcare', 'Immigration', 'Education', 'Housing']
+
 const DEMO_BILLS = [
   {
     tag: 'Education', tagColor: '#2563eb',
@@ -44,7 +46,17 @@ export default function Home() {
   const [typedTitle, setTypedTitle] = useState('')
   const [showSummary, setShowSummary] = useState(false)
   const [fading, setFading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const intervalRef = useRef(null)
+
+  function handleSearch(e) {
+    e.preventDefault()
+    if (searchQuery.trim()) {
+      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
+    } else {
+      navigate('/search')
+    }
+  }
 
   const bill = DEMO_BILLS[billIndex]
 
@@ -131,6 +143,33 @@ export default function Home() {
             ))}
           </div>
         </div>
+        </div>
+      </section>
+
+      {/* Search */}
+      <section className={styles.searchSection}>
+        <h2 className={styles.searchHeading}>Search for a bill</h2>
+        <p className={styles.searchSub}>Look up any federal or state legislation by keyword.</p>
+        <form className={styles.searchForm} onSubmit={handleSearch}>
+          <input
+            type="text"
+            className={styles.searchInput}
+            placeholder="e.g. student loans, minimum wage, climate..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          <button type="submit" className={styles.searchBtn}>Search</button>
+        </form>
+        <div className={styles.searchChips}>
+          {SEARCH_CHIPS.map(chip => (
+            <button
+              key={chip}
+              className={styles.searchChip}
+              onClick={() => navigate(`/search?q=${encodeURIComponent(chip)}`)}
+            >
+              {chip}
+            </button>
+          ))}
         </div>
       </section>
 

@@ -183,6 +183,89 @@
   border-radius: 4px;
 }
 
+/* ─── Search Section ─── */
+.searchSection {
+  padding: var(--space-2xl) var(--space-xl);
+  max-width: 700px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.searchHeading {
+  font-size: clamp(1.3rem, 2.5vw, 1.75rem);
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.searchSub {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: var(--space-lg);
+}
+
+.searchForm {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.searchInput {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  color: var(--text-primary);
+  background: var(--white);
+  transition: border-color 0.2s;
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--navy);
+}
+
+.searchBtn {
+  background: var(--navy);
+  color: var(--white);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.searchBtn:hover {
+  background: var(--navy-light);
+  transform: translateY(-1px);
+}
+
+.searchChips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+
+.searchChip {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--white);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.searchChip:hover {
+  border-color: var(--amber);
+  color: var(--navy);
+  background: rgba(232, 160, 32, 0.08);
+}
+
 /* ─── Topic Cards ─── */
 .topics {
   padding: var(--space-2xl) var(--space-xl);

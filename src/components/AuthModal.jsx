@@ -40,7 +40,14 @@ export default function AuthModal({ isOpen, onClose }) {
     setLoading(true)
     const { error } = await signInWithApple()
     setLoading(false)
-    if (error) setError(error.message)
+    if (error) {
+      // Provide clearer error messages for common Apple sign-in failures
+      if (error.message?.includes('provider is not enabled') || error.message?.includes('Unsupported provider')) {
+        setError('Apple sign-in is not configured yet. Please use email or Google to sign in.')
+      } else {
+        setError(error.message)
+      }
+    }
   }
 
   async function handleSubmit(e) {
