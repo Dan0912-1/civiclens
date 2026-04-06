@@ -118,7 +118,7 @@ export default function Privacy() {
         <div className={styles.section}>
           <h2>Children's privacy (COPPA compliance)</h2>
           <div className={styles.neutralBox}>
-            <div className={styles.neutralIcon}>&#128058;</div>
+            <div className={styles.neutralIcon}>&#9432;</div>
             <p>
               CapitolKey is intended for users aged 13 and older. We do not
               knowingly collect, use, or disclose personal information from

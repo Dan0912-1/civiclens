@@ -24,7 +24,7 @@ export default function Terms() {
         <div className={styles.section}>
           <h2>Eligibility</h2>
           <div className={styles.neutralBox}>
-            <div className={styles.neutralIcon}>&#128058;</div>
+            <div className={styles.neutralIcon}>&#9432;</div>
             <p>
               You must be at least <strong>13 years of age</strong> to use
               CapitolKey. By using the app, you represent and warrant that you
