@@ -163,6 +163,28 @@
   font-size: 0.85rem;
 }
 
+.forgotBtn {
+  align-self: flex-end;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  margin-top: calc(-1 * var(--space-sm));
+  transition: color 0.2s;
+}
+
+.forgotBtn:hover {
+  color: var(--navy);
+}
+
+.backToSignin {
+  display: block;
+  margin-top: var(--space-md);
+  color: var(--navy);
+  font-weight: 600;
+  text-decoration: underline;
+  font-size: 0.85rem;
+}
+
 .success {
   background: rgba(22, 163, 74, 0.08);
   border: 1px solid rgba(22, 163, 74, 0.2);

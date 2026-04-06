@@ -28,6 +28,7 @@ const AuthContext = createContext({
   signInWithApple: () => {},
   signInWithEmail: () => {},
   signUpWithEmail: () => {},
+  resetPassword: () => {},
   signOut: () => {},
 })
 
@@ -196,6 +197,14 @@ export function AuthProvider({ children }) {
     return result
   }
 
+  async function resetPassword(email) {
+    if (!supabase) return { error: { message: 'Auth not configured' } }
+    const redirectTo = isNative
+      ? 'com.danieljacius.capitolkey://auth-callback'
+      : window.location.origin
+    return supabase.auth.resetPasswordForEmail(email, { redirectTo })
+  }
+
   async function handleSignOut() {
     if (!supabase) return
     await supabase.auth.signOut()
@@ -209,6 +218,7 @@ export function AuthProvider({ children }) {
       signInWithApple,
       signInWithEmail,
       signUpWithEmail,
+      resetPassword,
       signOut: handleSignOut,
     }}>
       {children}

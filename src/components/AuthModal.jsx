@@ -1,15 +1,19 @@
 import { useState } from 'react'
+import { Capacitor } from '@capacitor/core'
 import { useAuth } from '../context/AuthContext'
 import styles from './AuthModal.module.css'
 
+const isIOS = Capacitor.getPlatform() === 'ios'
+
 export default function AuthModal({ isOpen, onClose }) {
-  const { signInWithGoogle, signInWithApple, signInWithEmail, signUpWithEmail } = useAuth()
-  const [mode, setMode] = useState('signin') // 'signin' | 'signup'
+  const { signInWithGoogle, signInWithApple, signInWithEmail, signUpWithEmail, resetPassword } = useAuth()
+  const [mode, setMode] = useState('signin') // 'signin' | 'signup' | 'forgot'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [signupSuccess, setSignupSuccess] = useState(false)
+  const [resetSent, setResetSent] = useState(false)
 
   if (!isOpen) return null
 
@@ -19,6 +23,7 @@ export default function AuthModal({ isOpen, onClose }) {
     setError('')
     setLoading(false)
     setSignupSuccess(false)
+    setResetSent(false)
     setMode('signin')
   }
 
@@ -83,24 +88,66 @@ export default function AuthModal({ isOpen, onClose }) {
         </button>
 
         <h2 className={styles.heading}>
-          {mode === 'signin' ? 'Sign in' : 'Create account'}
+          {mode === 'forgot' ? 'Reset password' : mode === 'signin' ? 'Sign in' : 'Create account'}
         </h2>
         <p className={styles.sub}>
-          Save your profile and bookmark bills between sessions.
+          {mode === 'forgot'
+            ? "Enter your email and we'll send a reset link."
+            : 'Save your profile and bookmark bills between sessions.'}
         </p>
 
         {signupSuccess ? (
           <div className={styles.success}>
             Check your email to confirm your account, then sign in.
           </div>
+        ) : resetSent ? (
+          <div className={styles.success}>
+            Password reset link sent! Check your email.
+            <button className={styles.backToSignin} onClick={() => { setResetSent(false); setMode('signin'); setError('') }}>
+              Back to sign in
+            </button>
+          </div>
+        ) : mode === 'forgot' ? (
+          <>
+            <form className={styles.form} onSubmit={async (e) => {
+              e.preventDefault()
+              setError('')
+              setLoading(true)
+              const { error } = await resetPassword(email)
+              setLoading(false)
+              if (error) {
+                setError(error.message)
+              } else {
+                setResetSent(true)
+              }
+            }}>
+              <input
+                type="email"
+                placeholder="Email"
+                className={styles.input}
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+              />
+              {error && <p className={styles.error}>{error}</p>}
+              <button className={styles.submitBtn} type="submit" disabled={loading}>
+                {loading ? '...' : 'Send reset link'}
+              </button>
+            </form>
+            <p className={styles.toggle}>
+              <button onClick={() => { setMode('signin'); setError('') }}>Back to sign in</button>
+            </p>
+          </>
         ) : (
           <>
-            <button className={styles.appleBtn} onClick={handleApple}>
-              <svg width="16" height="16" viewBox="0 0 814 1000" fill="none" aria-hidden="true">
-                <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57.8-155.5-127.4c-58.3-81.5-105.9-207.2-105.9-327.6 0-192.8 125.3-294.9 248.7-294.9 65.6 0 120.2 43.1 161.3 43.1 39.2 0 100.2-45.7 174.5-45.7 28.2 0 129.5 2.6 196.9 99.5zm-281.7-92.1c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.2 32.4-55.7 83.6-55.7 135.5 0 7.8.6 15.6 1.3 18.2 2.6.6 6.4 1.3 10.2 1.3 45.4 0 103.4-30.4 140.1-71.4z" fill="white"/>
-              </svg>
-              Continue with Apple
-            </button>
+            {isIOS && (
+              <button className={styles.appleBtn} onClick={handleApple}>
+                <svg width="16" height="16" viewBox="0 0 814 1000" fill="none" aria-hidden="true">
+                  <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57.8-155.5-127.4c-58.3-81.5-105.9-207.2-105.9-327.6 0-192.8 125.3-294.9 248.7-294.9 65.6 0 120.2 43.1 161.3 43.1 39.2 0 100.2-45.7 174.5-45.7 28.2 0 129.5 2.6 196.9 99.5zm-281.7-92.1c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.2 32.4-55.7 83.6-55.7 135.5 0 7.8.6 15.6 1.3 18.2 2.6.6 6.4 1.3 10.2 1.3 45.4 0 103.4-30.4 140.1-71.4z" fill="white"/>
+                </svg>
+                Continue with Apple
+              </button>
+            )}
 
             <button className={styles.googleBtn} onClick={handleGoogle}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
@@ -134,6 +181,11 @@ export default function AuthModal({ isOpen, onClose }) {
                 required
                 minLength={6}
               />
+              {mode === 'signin' && (
+                <button type="button" className={styles.forgotBtn} onClick={() => { setMode('forgot'); setError('') }}>
+                  Forgot password?
+                </button>
+              )}
               {error && <p className={styles.error}>{error}</p>}
               <button className={styles.submitBtn} type="submit" disabled={loading}>
                 {loading ? '...' : mode === 'signin' ? 'Sign in' : 'Create account'}
