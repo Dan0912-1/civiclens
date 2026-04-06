@@ -28,7 +28,7 @@ export default function Onboarding({ onComplete }) {
   function next() {
     if (isLast) {
       onComplete()
-      navigate('/profile')
+      navigate('/')
     } else {
       setSlide(s => s + 1)
     }
@@ -36,7 +36,7 @@ export default function Onboarding({ onComplete }) {
 
   function skip() {
     onComplete()
-    navigate('/profile')
+    navigate('/')
   }
 
   return (
