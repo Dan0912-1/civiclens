@@ -1,5 +1,9 @@
 .card {
-  background: var(--white);
+  background:
+    radial-gradient(ellipse 55% 70% at 0% 0%,   rgba(247, 212, 212, 0.55) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 70% at 100% 0%, rgba(212, 223, 245, 0.55) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 45% at 50% 110%, rgba(236, 220, 242, 0.60) 0%, transparent 60%),
+    var(--white);
   border-radius: var(--radius-xl);
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-sm);
@@ -227,7 +231,8 @@
   line-height: 1.35;
   margin-bottom: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
-  background: var(--cream);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(4px);
   border-left: 3px solid var(--amber);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   letter-spacing: -0.005em;
@@ -298,7 +303,9 @@
 
 /* Actions */
 .actions {
-  background: var(--cream);
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   margin-top: var(--space-md);
