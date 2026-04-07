@@ -5,8 +5,12 @@
 
 /* ─── Hero ─── */
 .heroWrap {
-  background: var(--navy);
-  color: var(--white);
+  background:
+    radial-gradient(ellipse 70% 55% at 15% 5%, #f7d4d4 0%, transparent 60%),
+    radial-gradient(ellipse 65% 50% at 85% 10%, #d4dff5 0%, transparent 60%),
+    radial-gradient(ellipse 60% 45% at 50% 100%, #ecdcf2 0%, transparent 60%),
+    var(--cream);
+  color: var(--navy);
 }
 
 .hero {
@@ -42,28 +46,28 @@
 
 .subhead {
   font-size: 1.05rem;
-  color: rgba(255,255,255,0.68);
+  color: var(--text-secondary);
   line-height: 1.7;
   max-width: 440px;
   margin-bottom: var(--space-xl);
-  font-weight: 300;
+  font-weight: 400;
 }
 
 .ctaPrimary {
-  background: var(--amber);
-  color: var(--navy);
+  background: var(--navy);
+  color: var(--cream);
   padding: 0.8rem 1.75rem;
   border-radius: var(--radius-md);
   font-weight: 600;
   font-size: 1rem;
   transition: all 0.2s ease;
-  box-shadow: var(--shadow-amber);
+  box-shadow: 0 4px 16px rgba(42,22,56,0.2);
 }
 
 .ctaPrimary:hover {
-  background: var(--amber-dark);
+  background: #3d2548;
   transform: translateY(-1px);
-  box-shadow: 0 6px 24px rgba(107,61,143,0.35);
+  box-shadow: 0 6px 24px rgba(42,22,56,0.3);
 }
 
 /* Chamber chip row (in hero, below CTA) */
@@ -95,19 +99,19 @@
 }
 
 .chamberHouse {
-  background: rgba(200, 50, 74, 0.18);
-  color: #ffb3bf;
-  border: 1px solid rgba(200, 50, 74, 0.35);
+  background: var(--house-bg);
+  color: var(--house-text);
+  border: 1px solid rgba(200, 50, 74, 0.3);
 }
 
 .chamberSenate {
-  background: rgba(74, 126, 209, 0.18);
-  color: #b3cdf2;
-  border: 1px solid rgba(74, 126, 209, 0.35);
+  background: var(--senate-bg);
+  color: var(--senate-text);
+  border: 1px solid rgba(30, 77, 140, 0.3);
 }
 
 .chamberCaption {
-  color: rgba(255,255,255,0.45);
+  color: var(--text-muted);
   font-size: 0.78rem;
   margin-left: 4px;
   font-weight: 500;
@@ -144,9 +148,9 @@
 }
 
 .chip {
-  background: rgba(107,61,143,0.18);
-  color: #d8c4ee;
-  border: 1px solid rgba(107,61,143,0.35);
+  background: rgba(107,61,143,0.1);
+  color: var(--amber);
+  border: 1px solid rgba(107,61,143,0.25);
   padding: 3px 12px;
   border-radius: 100px;
   font-size: 0.75rem;
@@ -155,11 +159,11 @@
 }
 
 .demoCard {
-  background: var(--navy-light);
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: var(--radius-lg);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
   padding: var(--space-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 10px 40px rgba(42,22,56,0.1);
   position: relative;
   overflow: hidden;
   min-height: 220px;
@@ -170,8 +174,8 @@
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 3px;
-  background: var(--amber);
+  height: 4px;
+  background: linear-gradient(90deg, #c8324a 0%, #6b3d8f 50%, #1e4d8c 100%);
 }
 
 .demoCardFading {
@@ -190,12 +194,13 @@
 
 .demoTitle {
   font-family: var(--font-display);
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: var(--white);
-  line-height: 1.3;
+  font-size: 1.35rem;
+  font-weight: 400;
+  color: var(--navy);
+  line-height: 1.25;
   margin-bottom: var(--space-md);
-  min-height: 1.6em;
+  min-height: 1.7em;
+  letter-spacing: -0.01em;
 }
 
 .cursor {
@@ -209,7 +214,7 @@
 
 .demoSummary {
   font-size: 0.9rem;
-  color: rgba(255,255,255,0.65);
+  color: var(--text-secondary);
   line-height: 1.6;
   margin-bottom: var(--space-lg);
   animation: fadeIn 0.5s ease;
@@ -220,8 +225,8 @@
   align-items: center;
   gap: var(--space-sm);
   font-size: 0.8rem;
-  color: #a8e090;
-  font-weight: 500;
+  color: #355c2a;
+  font-weight: 600;
   animation: fadeIn 0.5s ease;
 }
 
@@ -229,7 +234,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #a8e090;
+  background: #355c2a;
   animation: pulse 2s infinite;
 }
 
@@ -244,7 +249,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.2);
+  background: rgba(42,22,56,0.2);
   transition: all 0.3s ease;
 }
 
@@ -454,19 +459,24 @@
 
 /* ─── CTA Section ─── */
 .ctaSection {
-  background: var(--navy);
-  color: var(--white);
+  background:
+    radial-gradient(ellipse 60% 80% at 20% 50%, #f7d4d4 0%, transparent 55%),
+    radial-gradient(ellipse 60% 80% at 80% 50%, #d4dff5 0%, transparent 55%),
+    var(--cream);
+  color: var(--navy);
   text-align: center;
   padding: var(--space-3xl) var(--space-xl);
+  border-top: 1px solid var(--border);
 }
 
 .ctaSection h2 {
   font-size: clamp(1.5rem, 3vw, 2.25rem);
   margin-bottom: var(--space-sm);
+  color: var(--navy);
 }
 
 .ctaSection p {
-  color: rgba(255,255,255,0.65);
+  color: var(--text-secondary);
   margin-bottom: var(--space-xl);
   font-size: 1.05rem;
 }
