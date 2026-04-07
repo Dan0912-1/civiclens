@@ -22,7 +22,7 @@ const TAG_COLORS = {
 
 function RelevanceMeter({ score }) {
   const pct = Math.round((score / 10) * 100)
-  const color = score >= 7 ? '#16a34a' : score >= 4 ? '#e8a020' : '#9ca3af'
+  const color = score >= 7 ? '#355c2a' : score >= 4 ? '#6b3d8f' : '#8a7090'
   return (
     <div className={styles.relevance}>
       <div className={styles.relevanceBar}>
@@ -125,7 +125,9 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
             {bill.type} {bill.number}{bill.isStateBill ? ` · ${bill.state}` : ` · ${bill.congress}th Congress`}
           </span>
         </div>
-        <span className={styles.chamber}>{bill.originChamber || 'Congress'}</span>
+        <span className={`${styles.chamber} ${bill.originChamber === 'House' ? styles.chamberHouse : bill.originChamber === 'Senate' ? styles.chamberSenate : ''}`}>
+          {bill.originChamber || 'Congress'}
+        </span>
       </div>
 
       {/* Title — clickable to detail page */}

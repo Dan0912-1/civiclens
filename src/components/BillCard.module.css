@@ -1,6 +1,6 @@
 .card {
   background: var(--white);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-sm);
   padding: var(--space-lg);
@@ -59,14 +59,14 @@
   letter-spacing: 0.05em;
 }
 
-.tag_blue   { background: rgba(37,99,235,0.1);  color: #1d4ed8; }
-.tag_green  { background: rgba(22,163,74,0.1);  color: #15803d; }
-.tag_purple { background: rgba(147,51,234,0.1); color: #7e22ce; }
-.tag_teal   { background: rgba(8,145,178,0.1);  color: #0e7490; }
-.tag_red    { background: rgba(220,38,38,0.1);  color: #b91c1c; }
-.tag_orange { background: rgba(234,88,12,0.1);  color: #c2410c; }
-.tag_violet { background: rgba(124,58,237,0.1); color: #6d28d9; }
-.tag_gray   { background: rgba(107,114,128,0.1);color: #4b5563; }
+.tag_blue   { background: #ecdcf2; color: #5d3a82; }  /* education — plum */
+.tag_green  { background: #d9e8d2; color: #355c2a; }  /* healthcare — sage */
+.tag_purple { background: #fbe5d4; color: #9a4f12; }  /* economy — terracotta */
+.tag_teal   { background: #d4e6f1; color: #2a5d8c; }  /* environment — sky */
+.tag_red    { background: #fbe5e8; color: #a8202e; }  /* technology — house red */
+.tag_orange { background: #fbe5d4; color: #9a4f12; }  /* housing — terracotta */
+.tag_violet { background: #ecdcf2; color: #5d3a82; }  /* civil rights — plum */
+.tag_gray   { background: #f0e8d8; color: #5a4360; }  /* other */
 
 .billNum {
   font-size: 0.75rem;
@@ -75,23 +75,36 @@
 }
 
 .chamber {
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  font-weight: 500;
   white-space: nowrap;
   background: var(--cream-dark);
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 100px;
+}
+
+.chamberHouse {
+  background: var(--house-bg);
+  color: var(--house-text);
+}
+
+.chamberSenate {
+  background: var(--senate-bg);
+  color: var(--senate-text);
 }
 
 /* Title */
 .title {
   font-family: var(--font-display);
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-size: 1.35rem;
+  font-weight: 400;
   color: var(--navy);
-  line-height: 1.35;
+  line-height: 1.25;
   margin-bottom: var(--space-sm);
+  letter-spacing: -0.01em;
 }
 
 .titleLink {
@@ -208,15 +221,16 @@
 /* Headline */
 .headline {
   font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 700;
+  font-size: 1.15rem;
+  font-weight: 400;
   color: var(--navy);
-  line-height: 1.4;
+  line-height: 1.35;
   margin-bottom: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
   background: var(--cream);
   border-left: 3px solid var(--amber);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  letter-spacing: -0.005em;
 }
 
 /* Relevance meter */

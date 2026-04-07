@@ -21,21 +21,22 @@ export default class ErrorBoundary extends Component {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#f8f4ed',
+          background: '#fbf7f9',
           padding: '2rem',
         }}>
           <div style={{ textAlign: 'center', maxWidth: 360 }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem', opacity: 0.5 }}>&#9888;</div>
             <h2 style={{
-              fontFamily: "'Playfair Display', Georgia, serif",
-              fontSize: '1.5rem',
-              color: '#0d1b2a',
+              fontFamily: "'Instrument Serif', Georgia, serif",
+              fontSize: '1.75rem',
+              fontWeight: 400,
+              color: '#2a1638',
               marginBottom: '0.5rem',
             }}>
               Something went wrong
             </h2>
             <p style={{
-              color: '#718096',
+              color: '#8a7090',
               fontSize: '0.95rem',
               lineHeight: 1.6,
               marginBottom: '1.5rem',
@@ -48,8 +49,8 @@ export default class ErrorBoundary extends Component {
                 window.location.href = '/'
               }}
               style={{
-                background: '#e8a020',
-                color: '#0d1b2a',
+                background: '#6b3d8f',
+                color: '#ffffff',
                 fontWeight: 700,
                 fontSize: '0.95rem',
                 padding: '0.7rem 2rem',
