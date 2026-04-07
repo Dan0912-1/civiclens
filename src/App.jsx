@@ -19,6 +19,7 @@ const Privacy = lazy(() => import('./pages/Privacy.jsx'))
 const Terms = lazy(() => import('./pages/Terms.jsx'))
 const Search = lazy(() => import('./pages/Search.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
+const Settings = lazy(() => import('./pages/Settings.jsx'))
 
 function PageLoader() {
   return (
@@ -207,9 +208,11 @@ export default function App() {
           <Route path="/bill/:congress/:type/:number" element={<BillDetail />} />
           <Route path="/about"     element={<About />} />
           <Route path="/contact"   element={<Contact />} />
+          <Route path="/support"   element={<Contact />} />
           <Route path="/bookmarks" element={<Bookmarks />} />
           <Route path="/privacy"   element={<Privacy />} />
           <Route path="/terms"     element={<Terms />} />
+          <Route path="/settings"  element={<Settings />} />
         </Routes>
       </Suspense>
     </>

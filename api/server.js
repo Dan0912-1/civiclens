@@ -1176,6 +1176,46 @@ app.delete('/api/push/register', async (req, res) => {
   }
 })
 
+// ─── Account deletion (App Store Guideline 5.1.1(v) requirement) ─────────────
+// Permanently deletes the user's auth record. All FK-linked rows
+// (user_profiles, bookmarks, bill_interactions, push_tokens, notification
+// subscriptions, etc.) cascade-delete via `on delete cascade`.
+app.delete('/api/account', authLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+
+    if (!supabase) {
+      return res.status(503).json({ error: 'Account service unavailable' })
+    }
+
+    // Best-effort: explicitly clean tables that may not have cascade FKs
+    // (cache rows, feedback, etc.) — ignore errors so deletion never blocks.
+    const userId = user.id
+    await Promise.allSettled([
+      supabase.from('bookmarks').delete().eq('user_id', userId),
+      supabase.from('bill_interactions').delete().eq('user_id', userId),
+      supabase.from('push_tokens').delete().eq('user_id', userId),
+      supabase.from('user_profiles').delete().eq('id', userId),
+    ])
+
+    // Final step: delete the auth user. Service-role key is required.
+    const { error } = await supabase.auth.admin.deleteUser(userId)
+    if (error) {
+      console.error('[account-delete] auth.admin.deleteUser failed:', error.message)
+      return res.status(500).json({ error: 'Failed to delete account' })
+    }
+
+    console.log(`[account-delete] user ${userId} permanently deleted`)
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') {
+      return res.status(401).json({ error: err.message })
+    }
+    console.error('[account-delete] error:', err.message)
+    res.status(500).json({ error: 'Failed to delete account' })
+  }
+})
+
 // ─── Test push notification (dev only) ───────────────────────────────────────
 
 app.post('/api/push/test', async (req, res) => {

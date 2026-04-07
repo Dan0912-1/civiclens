@@ -65,6 +65,9 @@ export default function Nav() {
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved Bills</button>
                 )}
+                {user && (
+                  <button className={styles.dropItem} onClick={() => handleNav('/settings')}>Settings</button>
+                )}
                 <div className={styles.dropDivider} />
                 <button className={styles.dropItem} onClick={() => handleNav('/contact')}>Contact Us</button>
                 <div className={styles.dropDivider} />
