@@ -232,12 +232,12 @@ export default function BillDetail() {
                   className={styles.relevanceFill}
                   style={{
                     width: `${Math.round((analysis.relevance / 10) * 100)}%`,
-                    background: analysis.relevance >= 7 ? '#16a34a' : analysis.relevance >= 4 ? '#e8a020' : '#9ca3af'
+                    background: analysis.relevance >= 7 ? '#355c2a' : analysis.relevance >= 4 ? '#6b3d8f' : '#8a7090'
                   }}
                 />
               </div>
               <span className={styles.relevanceLabel} style={{
-                color: analysis.relevance >= 7 ? '#16a34a' : analysis.relevance >= 4 ? '#e8a020' : '#9ca3af'
+                color: analysis.relevance >= 7 ? '#355c2a' : analysis.relevance >= 4 ? '#6b3d8f' : '#8a7090'
               }}>
                 {analysis.relevance >= 7 ? 'Highly relevant' : analysis.relevance >= 4 ? 'Somewhat relevant' : 'Low relevance'}
                 {' '}({analysis.relevance}/10)

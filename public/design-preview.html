@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CapitolKey — Civic Color Variants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=General+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { font-family: Inter, system-ui, sans-serif; background: #f4f4f5; color: #18181b; }
+  body { padding: 24px; }
+
+  .picker {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px;
+    position: sticky; top: 0; background: #f4f4f5; padding: 16px 0; z-index: 10;
+    border-bottom: 1px solid #e4e4e7;
+  }
+  .picker h1 {
+    font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: #71717a; align-self: center; margin-right: 16px;
+  }
+  .picker button {
+    padding: 10px 18px; border: 1px solid #d4d4d8; background: #fff; border-radius: 999px;
+    font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: #27272a;
+    transition: all 0.15s;
+  }
+  .picker button:hover { border-color: #18181b; }
+  .picker button.active { background: #18181b; color: #fff; border-color: #18181b; }
+
+  .stage { display: none; }
+  .stage.active { display: block; animation: fade 0.3s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .meta {
+    background: #fff; border: 1px solid #e4e4e7; border-radius: 12px; padding: 20px 24px;
+    margin-bottom: 24px; display: grid; grid-template-columns: 2fr 1.1fr 1.2fr; gap: 24px;
+  }
+  .meta h2 { font-size: 20px; font-weight: 800; margin-bottom: 6px; color: #18181b; }
+  .meta p { font-size: 14px; color: #52525b; line-height: 1.5; }
+  .meta .label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #a1a1aa; margin-bottom: 4px; }
+  .meta .val { font-size: 13px; color: #27272a; font-weight: 500; }
+  .swatches { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .swatches span { width: 24px; height: 24px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.08); }
+
+  /* ============ SHARED MOCK STRUCTURE ============ */
+  .mock {
+    border-radius: 24px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+    border: 1px solid #f0e8d8;
+  }
+  .mock-nav { display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; }
+  .mock-nav .brand { font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 26px; }
+  .mock-nav .links {
+    display: flex; gap: 22px; font-size: 14px; font-weight: 500;
+    font-family: 'General Sans', Inter, sans-serif;
+  }
+  .mock-hero { padding: 56px 32px 48px; text-align: center; }
+  .mock-hero h1 {
+    font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 56px;
+    line-height: 1.05; margin-bottom: 18px;
+    max-width: 720px; margin-left: auto; margin-right: auto; letter-spacing: -0.01em;
+  }
+  .mock-hero h1 em { font-style: italic; }
+  .mock-hero p {
+    font-family: 'General Sans', Inter, sans-serif;
+    font-size: 17px; max-width: 540px; margin: 0 auto 28px; line-height: 1.55;
+  }
+  .mock-hero .cta {
+    display: inline-block; padding: 16px 32px; border-radius: 999px;
+    font-family: 'General Sans', Inter, sans-serif;
+    font-weight: 600; font-size: 15px; cursor: pointer;
+  }
+
+  /* House/Senate chamber chip — shows the red/blue civic accents */
+  .chamber-row {
+    display: flex; gap: 10px; justify-content: center; margin-top: 22px;
+    font-family: 'General Sans', Inter, sans-serif; font-size: 13px;
+  }
+  .chamber-chip {
+    padding: 6px 14px; border-radius: 999px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chamber-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  .topic-strip { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+  .topic-strip span {
+    padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    font-family: 'General Sans', Inter, sans-serif;
+  }
+
+  .feed { padding: 32px; display: grid; gap: 16px; }
+  .feed-title {
+    font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 30px;
+    margin-bottom: 4px; letter-spacing: -0.01em;
+  }
+
+  .bill-card {
+    border-radius: 20px; padding: 22px 24px; position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .bill-card:hover { transform: translateY(-3px); }
+  .bill-card .row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px; font-size: 12px; gap: 10px;
+  }
+  .bill-card .tag {
+    padding: 5px 12px; border-radius: 999px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    font-family: 'General Sans', Inter, sans-serif;
+  }
+  .bill-card .num { font-weight: 500; font-size: 12px; font-family: 'General Sans', Inter, sans-serif; }
+  .bill-card .chamber-pill {
+    padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    font-family: 'General Sans', Inter, sans-serif;
+  }
+  .bill-card h3 {
+    font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 22px;
+    line-height: 1.25; margin-bottom: 10px; letter-spacing: -0.01em;
+  }
+  .bill-card .summary {
+    font-family: 'General Sans', Inter, sans-serif;
+    font-size: 14px; line-height: 1.55; margin-bottom: 14px;
+  }
+  .bill-card .footer {
+    display: flex; justify-content: space-between; align-items: center;
+    padding-top: 14px; font-size: 13px; font-weight: 600;
+    font-family: 'General Sans', Inter, sans-serif;
+  }
+  .bill-card .relevance { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+  .bill-card .bar { width: 60px; height: 4px; border-radius: 2px; overflow: hidden; }
+  .bill-card .bar > div { height: 100%; }
+
+  /* =========================================================
+     OPTION 1 — BIPARTISAN (purple = red + blue mixed)
+     Lead color is plum/purple, with crimson and navy as secondary
+     The most explicitly nonpartisan move
+     ========================================================= */
+  .stage-1 { background: #f6f1f8; }
+  .stage-1 .mock { background: #fbf7f9; border-color: #ead8e2; }
+  .stage-1 .mock-nav { background: #fbf7f9; color: #2a1638; }
+  .stage-1 .mock-nav .brand::after { content: '.'; color: #6b3d8f; }
+  .stage-1 .mock-nav .links { color: #5a4360; }
+  .stage-1 .mock-hero {
+    background:
+      radial-gradient(ellipse 70% 55% at 15% 5%, #f7d4d4 0%, transparent 60%),
+      radial-gradient(ellipse 65% 50% at 85% 10%, #d4dff5 0%, transparent 60%),
+      radial-gradient(ellipse 60% 45% at 50% 100%, #ecdcf2 0%, transparent 60%),
+      #fbf7f9;
+  }
+  .stage-1 .mock-hero h1 { color: #2a1638; }
+  .stage-1 .mock-hero h1 em {
+    color: #6b3d8f;
+    background: linear-gradient(90deg, #c8324a 0%, #6b3d8f 50%, #1e4d8c 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .stage-1 .mock-hero p { color: #5a4360; }
+  .stage-1 .mock-hero .cta { background: #2a1638; color: #fbf7f9; }
+  .stage-1 .chamber-row .chamber-chip:nth-child(1) { background: #fbe5e8; color: #a8202e; }
+  .stage-1 .chamber-row .chamber-chip:nth-child(1) .dot { background: #c8324a; }
+  .stage-1 .chamber-row .chamber-chip:nth-child(2) { background: #e2eaf7; color: #1e4d8c; }
+  .stage-1 .chamber-row .chamber-chip:nth-child(2) .dot { background: #1e4d8c; }
+  .stage-1 .topic-strip span:nth-child(1) { background: #ecdcf2; color: #5d3a82; }
+  .stage-1 .topic-strip span:nth-child(2) { background: #d9e8d2; color: #355c2a; }
+  .stage-1 .topic-strip span:nth-child(3) { background: #fbe5d4; color: #9a4f12; }
+  .stage-1 .topic-strip span:nth-child(4) { background: #d4e6f1; color: #2a5d8c; }
+  .stage-1 .feed { background: #fbf7f9; }
+  .stage-1 .feed-title { color: #2a1638; }
+  .stage-1 .bill-card { background: #fffdfb; border: 1px solid #ead8e2; }
+  .stage-1 .bill-card:hover { box-shadow: 0 12px 32px rgba(42,22,56,0.1); }
+  .stage-1 .bill-card h3 { color: #2a1638; }
+  .stage-1 .bill-card .summary { color: #5a4360; }
+  .stage-1 .bill-card .num { color: #8a7090; }
+  .stage-1 .bill-card.c1 { border-left: 4px solid #6b3d8f; }
+  .stage-1 .bill-card.c1 .tag { background: #ecdcf2; color: #5d3a82; }
+  .stage-1 .bill-card.c1 .chamber-pill { background: #fbe5e8; color: #a8202e; }
+  .stage-1 .bill-card.c2 { border-left: 4px solid #6b3d8f; }
+  .stage-1 .bill-card.c2 .tag { background: #d9e8d2; color: #355c2a; }
+  .stage-1 .bill-card.c2 .chamber-pill { background: #e2eaf7; color: #1e4d8c; }
+  .stage-1 .bill-card.c3 { border-left: 4px solid #6b3d8f; }
+  .stage-1 .bill-card.c3 .tag { background: #fbe5d4; color: #9a4f12; }
+  .stage-1 .bill-card.c3 .chamber-pill { background: #fbe5e8; color: #a8202e; }
+  .stage-1 .bill-card .footer { border-top: 1px dashed #ead8e2; color: #6b3d8f; }
+  .stage-1 .bill-card .bar { background: #ead8e2; }
+  .stage-1 .bill-card.c1 .bar > div { background: #6b3d8f; width: 90%; }
+  .stage-1 .bill-card.c2 .bar > div { background: #6b3d8f; width: 70%; }
+  .stage-1 .bill-card.c3 .bar > div { background: #6b3d8f; width: 80%; }
+  .stage-1 .bill-card .relevance { color: #6b3d8f; }
+
+  /* =========================================================
+     OPTION 2 — STARS & STRIPES (balanced red + navy on cream)
+     Both party colors used in equal weight + Capitol gold
+     Most explicitly patriotic — flag-coded
+     ========================================================= */
+  .stage-2 { background: #f5efe6; }
+  .stage-2 .mock { background: #fbf6ec; border-color: #e8d8b8; }
+  .stage-2 .mock-nav { background: #fbf6ec; color: #1a2e4a; }
+  .stage-2 .mock-nav .brand { color: #1a2e4a; }
+  .stage-2 .mock-nav .brand::after { content: '★'; color: #c8324a; font-size: 14px; margin-left: 4px; }
+  .stage-2 .mock-nav .links { color: #1a2e4a; }
+  .stage-2 .mock-hero {
+    background:
+      linear-gradient(180deg, #fbf6ec 0%, #fbf6ec 100%),
+      radial-gradient(ellipse at top, #f7e6e6 0%, transparent 60%);
+    background-blend-mode: normal;
+    position: relative;
+  }
+  .stage-2 .mock-hero::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 6px;
+    background: linear-gradient(90deg, #c8324a 0%, #c8324a 33%, #fbf6ec 33%, #fbf6ec 66%, #1a4f8c 66%, #1a4f8c 100%);
+  }
+  .stage-2 .mock-hero h1 { color: #1a2e4a; }
+  .stage-2 .mock-hero h1 em { color: #c8324a; }
+  .stage-2 .mock-hero p { color: #4a5568; }
+  .stage-2 .mock-hero .cta { background: #1a2e4a; color: #fbf6ec; }
+  .stage-2 .chamber-row .chamber-chip:nth-child(1) { background: #f7e0e3; color: #9c1f2e; }
+  .stage-2 .chamber-row .chamber-chip:nth-child(1) .dot { background: #c8324a; }
+  .stage-2 .chamber-row .chamber-chip:nth-child(2) { background: #dde6f1; color: #1a4f8c; }
+  .stage-2 .chamber-row .chamber-chip:nth-child(2) .dot { background: #1a4f8c; }
+  .stage-2 .topic-strip span:nth-child(1) { background: #1a4f8c; color: #fff; }
+  .stage-2 .topic-strip span:nth-child(2) { background: #d4a72c; color: #1a2e4a; }
+  .stage-2 .topic-strip span:nth-child(3) { background: #c8324a; color: #fff; }
+  .stage-2 .topic-strip span:nth-child(4) { background: #5b8754; color: #fff; }
+  .stage-2 .feed { background: #fbf6ec; }
+  .stage-2 .feed-title { color: #1a2e4a; }
+  .stage-2 .bill-card { background: #fffdf6; border: 1px solid #e8d8b8; }
+  .stage-2 .bill-card:hover { box-shadow: 0 12px 32px rgba(26,46,74,0.12); }
+  .stage-2 .bill-card h3 { color: #1a2e4a; }
+  .stage-2 .bill-card .summary { color: #4a5568; }
+  .stage-2 .bill-card .num { color: #8a7a5a; }
+  .stage-2 .bill-card.c1 { border-left: 4px solid #1a4f8c; }
+  .stage-2 .bill-card.c1 .tag { background: #1a4f8c; color: #fff; }
+  .stage-2 .bill-card.c1 .chamber-pill { background: #f7e0e3; color: #9c1f2e; }
+  .stage-2 .bill-card.c2 { border-left: 4px solid #c8324a; }
+  .stage-2 .bill-card.c2 .tag { background: #c8324a; color: #fff; }
+  .stage-2 .bill-card.c2 .chamber-pill { background: #dde6f1; color: #1a4f8c; }
+  .stage-2 .bill-card.c3 { border-left: 4px solid #d4a72c; }
+  .stage-2 .bill-card.c3 .tag { background: #d4a72c; color: #1a2e4a; }
+  .stage-2 .bill-card.c3 .chamber-pill { background: #f7e0e3; color: #9c1f2e; }
+  .stage-2 .bill-card .footer { border-top: 1px dashed #e8d8b8; color: #1a4f8c; }
+  .stage-2 .bill-card .bar { background: #e8d8b8; }
+  .stage-2 .bill-card.c1 .bar > div { background: #1a4f8c; width: 90%; }
+  .stage-2 .bill-card.c2 .bar > div { background: #c8324a; width: 70%; }
+  .stage-2 .bill-card.c3 .bar > div { background: #d4a72c; width: 80%; }
+  .stage-2 .bill-card.c1 .relevance { color: #1a4f8c; }
+  .stage-2 .bill-card.c2 .relevance { color: #c8324a; }
+  .stage-2 .bill-card.c3 .relevance { color: #b88a1c; }
+
+  /* =========================================================
+     OPTION 3 — CHAMBERS (red/blue used FUNCTIONALLY)
+     Cream base, plum primary. Red and navy aren't decorative —
+     they LITERALLY mean House (red) and Senate (blue)
+     Topic colors stay soft & neutral
+     ========================================================= */
+  .stage-3 { background: #fdf7ee; }
+  .stage-3 .mock { background: #fffaf0; border-color: #ead8b8; }
+  .stage-3 .mock-nav { background: #fffaf0; color: #2d2438; }
+  .stage-3 .mock-nav .brand::after { content: '.'; color: #6b3d8f; }
+  .stage-3 .mock-nav .links { color: #5b4f6e; }
+  .stage-3 .mock-hero {
+    background:
+      radial-gradient(ellipse 60% 50% at 18% 8%, #f7e0e3 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 82% 8%, #dde8f5 0%, transparent 60%),
+      radial-gradient(ellipse 70% 50% at 50% 100%, #fbeed3 0%, transparent 60%),
+      #fffaf0;
+  }
+  .stage-3 .mock-hero h1 { color: #2d2438; }
+  .stage-3 .mock-hero h1 em { color: #6b3d8f; }
+  .stage-3 .mock-hero p { color: #5b4f6e; }
+  .stage-3 .mock-hero .cta { background: #2d2438; color: #fffaf0; }
+  .stage-3 .chamber-row .chamber-chip:nth-child(1) { background: #f7e0e3; color: #9c1f2e; border: 1px solid #f0c8cd; }
+  .stage-3 .chamber-row .chamber-chip:nth-child(1) .dot { background: #c8324a; }
+  .stage-3 .chamber-row .chamber-chip:nth-child(2) { background: #dde8f5; color: #1a4f8c; border: 1px solid #c8d8ed; }
+  .stage-3 .chamber-row .chamber-chip:nth-child(2) .dot { background: #1a4f8c; }
+  .stage-3 .topic-strip span:nth-child(1) { background: #ecdcf2; color: #5d3a82; }
+  .stage-3 .topic-strip span:nth-child(2) { background: #d9e8d2; color: #355c2a; }
+  .stage-3 .topic-strip span:nth-child(3) { background: #fbe5d4; color: #9a4f12; }
+  .stage-3 .topic-strip span:nth-child(4) { background: #fbedc4; color: #7a5510; }
+  .stage-3 .feed { background: #fffaf0; }
+  .stage-3 .feed-title { color: #2d2438; }
+  .stage-3 .bill-card { background: #fffefa; border: 1px solid #ead8b8; }
+  .stage-3 .bill-card:hover { box-shadow: 0 12px 32px rgba(45,36,56,0.1); }
+  .stage-3 .bill-card h3 { color: #2d2438; }
+  .stage-3 .bill-card .summary { color: #5b4f6e; }
+  .stage-3 .bill-card .num { color: #8a7d6b; }
+  /* The colored stripe is the CHAMBER, not the topic */
+  .stage-3 .bill-card.c1 { border-left: 5px solid #c8324a; }     /* House = red */
+  .stage-3 .bill-card.c1 .tag { background: #ecdcf2; color: #5d3a82; }
+  .stage-3 .bill-card.c1 .chamber-pill { background: #f7e0e3; color: #9c1f2e; }
+  .stage-3 .bill-card.c2 { border-left: 5px solid #1a4f8c; }     /* Senate = blue */
+  .stage-3 .bill-card.c2 .tag { background: #d9e8d2; color: #355c2a; }
+  .stage-3 .bill-card.c2 .chamber-pill { background: #dde8f5; color: #1a4f8c; }
+  .stage-3 .bill-card.c3 { border-left: 5px solid #c8324a; }     /* House = red */
+  .stage-3 .bill-card.c3 .tag { background: #fbe5d4; color: #9a4f12; }
+  .stage-3 .bill-card.c3 .chamber-pill { background: #f7e0e3; color: #9c1f2e; }
+  .stage-3 .bill-card .footer { border-top: 1px dashed #ead8b8; color: #6b3d8f; }
+  .stage-3 .bill-card .bar { background: #ead8b8; }
+  .stage-3 .bill-card.c1 .bar > div { background: #6b3d8f; width: 90%; }
+  .stage-3 .bill-card.c2 .bar > div { background: #6b3d8f; width: 70%; }
+  .stage-3 .bill-card.c3 .bar > div { background: #6b3d8f; width: 80%; }
+  .stage-3 .bill-card .relevance { color: #6b3d8f; }
+
+  /* =========================================================
+     OPTION 4 — CONSTITUTION (parchment + ink + seal)
+     Aged parchment cream, ink navy headlines, seal red, Capitol gold
+     Historical, weighty, "founding documents" energy
+     ========================================================= */
+  .stage-4 { background: #f0e6d2; }
+  .stage-4 .mock { background: #f9efd6; border-color: #d8c298; }
+  .stage-4 .mock-nav { background: #f9efd6; color: #1a2e4a; border-bottom: 1px solid #d8c298; }
+  .stage-4 .mock-nav .brand { color: #1a2e4a; font-style: italic; }
+  .stage-4 .mock-nav .brand::after { content: '.'; color: #8c1c2e; }
+  .stage-4 .mock-nav .links { color: #4a3a28; }
+  .stage-4 .mock-hero {
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, #fff5d8 0%, transparent 70%),
+      radial-gradient(ellipse 50% 40% at 15% 90%, #f0d8b0 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 85% 90%, #f0d8b0 0%, transparent 60%),
+      #f9efd6;
+  }
+  .stage-4 .mock-hero h1 { color: #1a2e4a; }
+  .stage-4 .mock-hero h1 em { color: #8c1c2e; }
+  .stage-4 .mock-hero p { color: #4a3a28; }
+  .stage-4 .mock-hero .cta { background: #8c1c2e; color: #f9efd6; }
+  .stage-4 .chamber-row .chamber-chip:nth-child(1) { background: rgba(140,28,46,0.12); color: #8c1c2e; border: 1px solid #d8a8ae; }
+  .stage-4 .chamber-row .chamber-chip:nth-child(1) .dot { background: #8c1c2e; }
+  .stage-4 .chamber-row .chamber-chip:nth-child(2) { background: rgba(26,46,74,0.1); color: #1a2e4a; border: 1px solid #b8c4d4; }
+  .stage-4 .chamber-row .chamber-chip:nth-child(2) .dot { background: #1a2e4a; }
+  .stage-4 .topic-strip span:nth-child(1) { background: #1a2e4a; color: #f9efd6; }
+  .stage-4 .topic-strip span:nth-child(2) { background: #b8841c; color: #1a2e4a; }
+  .stage-4 .topic-strip span:nth-child(3) { background: #8c1c2e; color: #f9efd6; }
+  .stage-4 .topic-strip span:nth-child(4) { background: #4a6541; color: #f9efd6; }
+  .stage-4 .feed { background: #f9efd6; }
+  .stage-4 .feed-title { color: #1a2e4a; font-style: italic; }
+  .stage-4 .bill-card { background: #fdf7e3; border: 1px solid #d8c298; }
+  .stage-4 .bill-card:hover { box-shadow: 0 12px 32px rgba(26,46,74,0.15); }
+  .stage-4 .bill-card h3 { color: #1a2e4a; }
+  .stage-4 .bill-card .summary { color: #4a3a28; }
+  .stage-4 .bill-card .num { color: #8a7548; font-family: 'Instrument Serif', serif; font-style: italic; font-size: 13px; }
+  .stage-4 .bill-card.c1 { border-left: 4px solid #1a2e4a; }
+  .stage-4 .bill-card.c1 .tag { background: #1a2e4a; color: #f9efd6; }
+  .stage-4 .bill-card.c1 .chamber-pill { background: rgba(140,28,46,0.12); color: #8c1c2e; }
+  .stage-4 .bill-card.c2 { border-left: 4px solid #b8841c; }
+  .stage-4 .bill-card.c2 .tag { background: #b8841c; color: #1a2e4a; }
+  .stage-4 .bill-card.c2 .chamber-pill { background: rgba(26,46,74,0.1); color: #1a2e4a; }
+  .stage-4 .bill-card.c3 { border-left: 4px solid #8c1c2e; }
+  .stage-4 .bill-card.c3 .tag { background: #8c1c2e; color: #f9efd6; }
+  .stage-4 .bill-card.c3 .chamber-pill { background: rgba(140,28,46,0.12); color: #8c1c2e; }
+  .stage-4 .bill-card .footer { border-top: 1px dashed #d8c298; color: #8c1c2e; }
+  .stage-4 .bill-card .bar { background: #d8c298; }
+  .stage-4 .bill-card.c1 .bar > div { background: #1a2e4a; width: 90%; }
+  .stage-4 .bill-card.c2 .bar > div { background: #b8841c; width: 70%; }
+  .stage-4 .bill-card.c3 .bar > div { background: #8c1c2e; width: 80%; }
+  .stage-4 .bill-card.c1 .relevance { color: #1a2e4a; }
+  .stage-4 .bill-card.c2 .relevance { color: #b8841c; }
+  .stage-4 .bill-card.c3 .relevance { color: #8c1c2e; }
+</style>
+</head>
+<body>
+
+<div class="picker">
+  <h1>CapitolKey · Civic Color Variants</h1>
+  <button class="active" data-i="1">1 · Bipartisan</button>
+  <button data-i="2">2 · Stars &amp; Stripes</button>
+  <button data-i="3">3 · Chambers</button>
+  <button data-i="4">4 · Constitution</button>
+</div>
+
+<!-- ============================ 1 — BIPARTISAN ============================ -->
+<section class="stage stage-1 active" data-i="1">
+  <div class="meta">
+    <div>
+      <h2>1 · Bipartisan</h2>
+      <p>Plum/purple is literally red + blue mixed — the most overtly nonpartisan move possible. The hero headline runs a red-purple-navy gradient. Crimson and navy show up as House/Senate chamber chips on each card, but the dominant brand color is the bipartisan blend.</p>
+    </div>
+    <div>
+      <div class="label">Meaning</div>
+      <div class="val">Purple = nonpartisan</div>
+      <div class="label" style="margin-top:10px">Red/blue used as</div>
+      <div class="val">Chamber indicators</div>
+    </div>
+    <div>
+      <div class="label">Palette</div>
+      <div class="swatches">
+        <span style="background:#2a1638"></span>
+        <span style="background:#6b3d8f"></span>
+        <span style="background:#c8324a"></span>
+        <span style="background:#1e4d8c"></span>
+        <span style="background:#5d3a82"></span>
+        <span style="background:#fbf7f9"></span>
+      </div>
+    </div>
+  </div>
+  <div class="mock"></div>
+</section>
+
+<!-- ============================ 2 — STARS & STRIPES ============================ -->
+<section class="stage stage-2" data-i="2">
+  <div class="meta">
+    <div>
+      <h2>2 · Stars &amp; Stripes</h2>
+      <p>The flag, but tasteful. Cream parchment base, navy ink headlines, equal-weight crimson and Capitol gold accents, and a subtle red-cream-navy stripe across the top of the hero. Most patriotic, but balanced — both party colors carry equal visual weight.</p>
+    </div>
+    <div>
+      <div class="label">Meaning</div>
+      <div class="val">American civic / flag-coded</div>
+      <div class="label" style="margin-top:10px">Risk</div>
+      <div class="val">Could read as patriotic kitsch</div>
+    </div>
+    <div>
+      <div class="label">Palette</div>
+      <div class="swatches">
+        <span style="background:#1a2e4a"></span>
+        <span style="background:#1a4f8c"></span>
+        <span style="background:#c8324a"></span>
+        <span style="background:#d4a72c"></span>
+        <span style="background:#5b8754"></span>
+        <span style="background:#fbf6ec"></span>
+      </div>
+    </div>
+  </div>
+  <div class="mock"></div>
+</section>
+
+<!-- ============================ 3 — CHAMBERS ============================ -->
+<section class="stage stage-3" data-i="3">
+  <div class="meta">
+    <div>
+      <h2>3 · Chambers</h2>
+      <p>Red and blue aren't decoration — they have a <em>job</em>. Crimson means House, navy means Senate, and they show up as the left stripe and chamber pill on every bill card. Topic colors stay soft pastels so the chamber stripe is always the loudest signal. Functional + meaningful.</p>
+    </div>
+    <div>
+      <div class="label">Meaning</div>
+      <div class="val">Red = House, Blue = Senate</div>
+      <div class="label" style="margin-top:10px">Strength</div>
+      <div class="val">Color teaches the user something</div>
+    </div>
+    <div>
+      <div class="label">Palette</div>
+      <div class="swatches">
+        <span style="background:#2d2438"></span>
+        <span style="background:#6b3d8f"></span>
+        <span style="background:#c8324a"></span>
+        <span style="background:#1a4f8c"></span>
+        <span style="background:#d4a72c"></span>
+        <span style="background:#fffaf0"></span>
+      </div>
+    </div>
+  </div>
+  <div class="mock"></div>
+</section>
+
+<!-- ============================ 4 — CONSTITUTION ============================ -->
+<section class="stage stage-4" data-i="4">
+  <div class="meta">
+    <div>
+      <h2>4 · Constitution</h2>
+      <p>Aged parchment yellow, ink navy headlines, seal red CTA, Capitol gold accents. Reads as "founding documents" — historical and weighty rather than playful. Heaviest of the four. Italic Instrument Serif throughout gives it a hand-engraved feel.</p>
+    </div>
+    <div>
+      <div class="label">Meaning</div>
+      <div class="val">Founding documents / civic history</div>
+      <div class="label" style="margin-top:10px">Mood</div>
+      <div class="val">Weighty, slow, authoritative</div>
+    </div>
+    <div>
+      <div class="label">Palette</div>
+      <div class="swatches">
+        <span style="background:#1a2e4a"></span>
+        <span style="background:#8c1c2e"></span>
+        <span style="background:#b8841c"></span>
+        <span style="background:#4a6541"></span>
+        <span style="background:#d8c298"></span>
+        <span style="background:#f9efd6"></span>
+      </div>
+    </div>
+  </div>
+  <div class="mock"></div>
+</section>
+
+<script>
+  const MOCK_HTML = `
+    <nav class="mock-nav">
+      <div class="brand">CapitolKey</div>
+      <div class="links"><span>Feed</span><span>Bookmarks</span><span>About</span><span>Sign in</span></div>
+    </nav>
+    <div class="mock-hero">
+      <h1>Legislation that <em>actually</em> matters to you.</h1>
+      <p>Real bills from Congress, translated for high schoolers. Personalized to your state, your interests, and your future.</p>
+      <div class="cta">See your feed →</div>
+      <div class="chamber-row">
+        <span class="chamber-chip"><span class="dot"></span>House</span>
+        <span class="chamber-chip"><span class="dot"></span>Senate</span>
+      </div>
+      <div class="topic-strip">
+        <span>Education</span><span>Climate</span><span>Civil Rights</span><span>Economy</span>
+      </div>
+    </div>
+    <div class="feed">
+      <div class="feed-title">Top bills for you this week</div>
+      <article class="bill-card c1">
+        <div class="row">
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="tag">Education</span>
+            <span class="num">H.R. 4823 · 119th Congress</span>
+          </div>
+          <span class="chamber-pill">House</span>
+        </div>
+        <h3>Student Loan Interest Cap and Repayment Reform Act</h3>
+        <p class="summary">Caps federal student loan interest rates at 4% and creates a new income-driven repayment plan with forgiveness after 15 years for public service workers.</p>
+        <div class="footer">
+          <div class="relevance">
+            <div class="bar"><div></div></div>
+            <span>Highly relevant · 9/10</span>
+          </div>
+          <span>See full impact →</span>
+        </div>
+      </article>
+      <article class="bill-card c2">
+        <div class="row">
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="tag">Climate</span>
+            <span class="num">S. 1290 · 119th Congress</span>
+          </div>
+          <span class="chamber-pill">Senate</span>
+        </div>
+        <h3>Clean Energy Workforce Investment Act</h3>
+        <p class="summary">Funds apprenticeship programs in solar, wind, and grid modernization for workers under 25. Creates a federal tuition credit for clean energy degrees.</p>
+        <div class="footer">
+          <div class="relevance">
+            <div class="bar"><div></div></div>
+            <span>Somewhat relevant · 7/10</span>
+          </div>
+          <span>See full impact →</span>
+        </div>
+      </article>
+      <article class="bill-card c3">
+        <div class="row">
+          <div style="display:flex;gap:10px;align-items:center">
+            <span class="tag">Civil Rights</span>
+            <span class="num">H.R. 2104 · 119th Congress</span>
+          </div>
+          <span class="chamber-pill">House</span>
+        </div>
+        <h3>Youth Voter Access and Registration Act</h3>
+        <p class="summary">Allows automatic voter registration at age 16 in federal elections, with ballots activated on the voter's 18th birthday. Adds civics curriculum funding.</p>
+        <div class="footer">
+          <div class="relevance">
+            <div class="bar"><div></div></div>
+            <span>Highly relevant · 8/10</span>
+          </div>
+          <span>See full impact →</span>
+        </div>
+      </article>
+    </div>
+  `;
+  document.querySelectorAll('.mock').forEach(el => el.innerHTML = MOCK_HTML);
+
+  document.querySelectorAll('.picker button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = btn.dataset.i;
+      document.querySelectorAll('.picker button').forEach(b => b.classList.toggle('active', b.dataset.i === i));
+      document.querySelectorAll('.stage').forEach(s => s.classList.toggle('active', s.dataset.i === i));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+</script>
+</body>
+</html>

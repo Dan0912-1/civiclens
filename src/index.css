@@ -1,5 +1,5 @@
 /* CapitolKey — Global Styles */
-/* Design: Editorial civic authority — navy/slate + amber, Playfair + DM Sans */
+/* Design: Bipartisan — plum primary (red+blue mixed) on warm cream paper, Instrument Serif + Inter */
 
 *, *::before, *::after {
   box-sizing: border-box;
@@ -8,34 +8,42 @@
 }
 
 :root {
-  /* Colors */
-  --navy:       #0d1b2a;
-  --navy-light: #1a2e44;
-  --slate:      #2c3e50;
-  --amber:      #e8a020;
-  --amber-dark: #c47f0a;
-  --cream:      #f8f4ed;
-  --cream-dark: #ede8df;
+  /* Colors — semantic names retained, values reassigned to Bipartisan palette */
+  --navy:       #2a1638;  /* deep plum ink (was navy) */
+  --navy-light: #3d2548;
+  --slate:      #5a4360;  /* plum-grey */
+  --amber:      #6b3d8f;  /* plum primary brand accent (was amber) */
+  --amber-dark: #5d3582;
+  --cream:      #fbf7f9;  /* soft pink-cream paper */
+  --cream-dark: #f3e8ee;
   --white:      #ffffff;
-  --text-primary:   #0d1b2a;
-  --text-secondary: #4a5568;
-  --text-muted:     #718096;
-  --border:     #d4cfc7;
-  --border-light: #e8e3db;
+  --text-primary:   #2a1638;
+  --text-secondary: #5a4360;
+  --text-muted:     #8a7090;
+  --border:     #ead8e2;
+  --border-light: #f3e3eb;
 
-  /* Topic tag colors */
-  --tag-education:   #2563eb;
-  --tag-healthcare:  #16a34a;
-  --tag-economy:     #9333ea;
-  --tag-environment: #0891b2;
-  --tag-technology:  #dc2626;
-  --tag-housing:     #ea580c;
-  --tag-civil_rights: #7c3aed;
-  --tag-other:       #6b7280;
+  /* Civic chamber colors — red = House, blue = Senate (used as functional accents) */
+  --house:       #c8324a;
+  --house-bg:    #fbe5e8;
+  --house-text:  #a8202e;
+  --senate:      #1e4d8c;
+  --senate-bg:   #e2eaf7;
+  --senate-text: #1e4d8c;
+
+  /* Topic tag colors — soft pastel pills */
+  --tag-education:   #5d3a82;  /* plum */
+  --tag-healthcare:  #355c2a;  /* sage */
+  --tag-economy:     #9a4f12;  /* terracotta */
+  --tag-environment: #2a5d8c;  /* sky */
+  --tag-technology:  #a8202e;  /* house red */
+  --tag-housing:     #9a4f12;  /* terracotta */
+  --tag-civil_rights: #5d3a82; /* plum */
+  --tag-other:       #5a4360;
 
   /* Typography */
-  --font-display: 'Playfair Display', Georgia, serif;
-  --font-body:    'DM Sans', system-ui, sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-body:    'Inter', system-ui, sans-serif;
 
   /* Spacing */
   --space-xs:  0.25rem;
@@ -53,17 +61,22 @@
   --radius-xl: 20px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(13,27,42,0.08), 0 1px 2px rgba(13,27,42,0.04);
-  --shadow-md: 0 4px 16px rgba(13,27,42,0.1), 0 2px 6px rgba(13,27,42,0.06);
-  --shadow-lg: 0 12px 40px rgba(13,27,42,0.14), 0 4px 16px rgba(13,27,42,0.08);
-  --shadow-amber: 0 4px 20px rgba(232,160,32,0.25);
+  --shadow-sm: 0 1px 3px rgba(42,22,56,0.08), 0 1px 2px rgba(42,22,56,0.04);
+  --shadow-md: 0 4px 16px rgba(42,22,56,0.10), 0 2px 6px rgba(42,22,56,0.06);
+  --shadow-lg: 0 12px 40px rgba(42,22,56,0.14), 0 4px 16px rgba(42,22,56,0.08);
+  --shadow-amber: 0 4px 20px rgba(107,61,143,0.25);
 }
 
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--navy);
+  background-color: var(--cream);
+}
+
+h1, h2, h3, h4 {
+  font-weight: 400;  /* Instrument Serif looks best at regular weight */
+  letter-spacing: -0.01em;
 }
 
 body {

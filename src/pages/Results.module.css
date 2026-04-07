@@ -103,7 +103,7 @@
   margin-bottom: -2px;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-family: var(--font-heading, 'Playfair Display', serif);
+  font-family: var(--font-display, 'Instrument Serif', serif);
 }
 
 .tab:hover {
