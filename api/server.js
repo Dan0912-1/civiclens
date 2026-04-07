@@ -747,51 +747,65 @@ BILL:
 ${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
-  try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      signal: AbortSignal.timeout(30000),
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 900,
-        temperature: 0.6,
-        system: systemPrompt,
-        messages: [
-          { role: 'user', content: userPrompt }
-        ]
-      })
-    })
-
-    const data = await resp.json()
-
-    if (!data.content?.[0]?.text) {
-      return res.status(500).json({ error: 'No response from Claude', detail: data })
-    }
-
+  const MAX_RETRIES = 4
+  const billLabel = `${bill.type}${bill.number}-${bill.congress}`
+  let lastError = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 900,
+          temperature: 0.6,
+          system: systemPrompt,
+          messages: [
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      })
+
+      // Retry on rate limit or server error
+      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
+        const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+        lastError = `HTTP ${resp.status}`
+        console.log(`[personalize] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      const data = await resp.json()
+
+      if (!data.content?.[0]?.text) {
+        throw new Error(data.error?.message || 'No response from Claude')
+      }
+
       let text = data.content[0].text.trim()
       text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
       const parsed = JSON.parse(text)
       parsed.sources = sources
       const result = { analysis: parsed }
-      const billId = `${bill.type}${bill.number}-${bill.congress}`
-      await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+      await setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, result)
       setCache(cacheKey, result)
-      res.json(result)
-    } catch (parseErr) {
-      console.error(`[personalize] JSON parse error for ${bill.type}${bill.number}:`, parseErr.message)
-      res.status(502).json({ error: 'Personalization returned invalid format', retryable: true })
+      return res.json(result)
+    } catch (err) {
+      lastError = err.message
+      if (attempt < MAX_RETRIES) {
+        const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+        console.log(`[personalize] ${err.name || 'Error'} for ${billLabel} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      console.error(`[personalize] Failed for ${billLabel} after ${MAX_RETRIES} retries:`, err.message)
     }
-
-  } catch (err) {
-    console.error('Claude error:', err)
-    res.status(500).json({ error: 'Personalization failed', detail: err.message })
   }
+  res.status(502).json({ error: 'Personalization failed', detail: lastError, retryable: true })
 })
 
 // ─── Batch personalization endpoint ─────────────────────────────────────────
@@ -947,7 +961,8 @@ BILL:
 ${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 
-    const MAX_RETRIES = 2
+    const MAX_RETRIES = 4
+    let lastError = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -971,8 +986,9 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
 
         // Retry on rate limit or server error
         if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
-          const delay = (attempt + 1) * 2000 // 2s, 4s
-          console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1} in ${delay}ms`)
+          const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+          lastError = `HTTP ${resp.status}`
+          console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
           await new Promise(r => setTimeout(r, delay))
           continue
         }
@@ -993,15 +1009,19 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
 
         return { billId, result }
       } catch (err) {
-        if (attempt < MAX_RETRIES && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
-          console.log(`[batch] Timeout for ${billId}, retry ${attempt + 1}`)
+        lastError = err.message
+        // Retry on any transient error (timeouts, network, JSON parse, malformed response)
+        if (attempt < MAX_RETRIES) {
+          const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+          console.log(`[batch] ${err.name || 'Error'} for ${billId} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+          await new Promise(r => setTimeout(r, delay))
           continue
         }
-        console.error(`[batch] Claude error for ${billId}:`, err.message)
+        console.error(`[batch] Claude error for ${billId} after ${MAX_RETRIES} retries:`, err.message)
         return { billId, error: err.message }
       }
     }
-    return { billId, error: 'Max retries exceeded' }
+    return { billId, error: lastError || 'Max retries exceeded' }
   }
 
   // Process with concurrency limit of 3
