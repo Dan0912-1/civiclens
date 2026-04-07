@@ -33,6 +33,11 @@
 
 .accent {
   color: var(--amber);
+  background: linear-gradient(90deg, #e85a73 0%, #c78ae8 50%, #7aa8e8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-style: italic;
 }
 
 .subhead {
@@ -59,6 +64,71 @@
   background: var(--amber-dark);
   transform: translateY(-1px);
   box-shadow: 0 6px 24px rgba(107,61,143,0.35);
+}
+
+/* Chamber chip row (in hero, below CTA) */
+.chamberRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.chamberChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 100px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.chamberDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.chamberHouse {
+  background: rgba(200, 50, 74, 0.18);
+  color: #ffb3bf;
+  border: 1px solid rgba(200, 50, 74, 0.35);
+}
+
+.chamberSenate {
+  background: rgba(74, 126, 209, 0.18);
+  color: #b3cdf2;
+  border: 1px solid rgba(74, 126, 209, 0.35);
+}
+
+.chamberCaption {
+  color: rgba(255,255,255,0.45);
+  font-size: 0.78rem;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+/* Demo card header (tag + chamber) */
+.demoCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.demoChamberPill {
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* ─── Hero Demo ─── */
@@ -110,11 +180,12 @@
 
 .demoTag {
   display: inline-block;
-  padding: 2px 10px;
+  padding: 3px 12px;
   border-radius: 100px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-bottom: var(--space-md);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .demoTitle {
@@ -292,8 +363,9 @@
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-lg) var(--space-sm);
-  background: var(--white);
+  background: var(--topic-bg, var(--white));
   border: 1px solid var(--border-light);
+  border-top: 4px solid var(--topic-color, var(--amber));
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   transition: all 0.2s ease;
@@ -302,8 +374,7 @@
 
 .topicCard:hover {
   box-shadow: var(--shadow-md);
-  border-color: var(--amber);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
 }
 
 .topicEmoji {
@@ -312,8 +383,8 @@
 
 .topicLabel {
   font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--navy);
+  font-weight: 700;
+  color: var(--topic-color, var(--navy));
   text-align: center;
 }
 
@@ -344,7 +415,7 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: var(--navy);
+  background: var(--amber);
   color: var(--white);
   display: flex;
   align-items: center;
@@ -354,6 +425,10 @@
   margin-bottom: var(--space-sm);
   flex-shrink: 0;
 }
+
+.timelineStep:nth-child(1) .timelineDot { background: #c8324a; }  /* House red */
+.timelineStep:nth-child(3) .timelineDot { background: #6b3d8f; }  /* plum */
+.timelineStep:nth-child(5) .timelineDot { background: #1e4d8c; }  /* Senate blue */
 
 .timelineLine {
   flex: 1;

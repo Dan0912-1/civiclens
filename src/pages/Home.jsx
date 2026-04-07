@@ -6,21 +6,24 @@ const SEARCH_CHIPS = ['Student Loans', 'Climate', 'Healthcare', 'Immigration', '
 
 const DEMO_BILLS = [
   {
-    tag: 'Education', tagColor: '#2563eb',
+    tag: 'Education', tagColor: '#5d3a82', tagBg: '#ecdcf2',
+    chamber: 'House',
     title: 'Student Loan Refinancing Act',
     summary: 'If this passes, your future federal student loans could drop to 4.5% interest — saving you thousands over a 10-year repayment.',
     relevance: 9,
     chips: ['U.S. Congress', 'Age 17–18', 'Education'],
   },
   {
-    tag: 'Healthcare', tagColor: '#16a34a',
+    tag: 'Healthcare', tagColor: '#355c2a', tagBg: '#d9e8d2',
+    chamber: 'Senate',
     title: 'CT HB 6941 — School Mental Health Services',
     summary: 'Would require every Connecticut public school to have a licensed counselor on-site — meaning your school gets direct access to mental health support.',
     relevance: 8,
     chips: ['Connecticut', 'Age 15–16', 'Healthcare'],
   },
   {
-    tag: 'Economy', tagColor: '#9333ea',
+    tag: 'Economy', tagColor: '#9a4f12', tagBg: '#fbe5d4',
+    chamber: 'House',
     title: 'Raise the Wage Act',
     summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time in Maryland.',
     relevance: 9,
@@ -29,15 +32,15 @@ const DEMO_BILLS = [
 ]
 
 const TOPICS = [
-  { id: 'education', label: 'Education', emoji: '📚' },
-  { id: 'environment', label: 'Environment', emoji: '🌿' },
-  { id: 'economy', label: 'Economy', emoji: '💼' },
-  { id: 'healthcare', label: 'Healthcare', emoji: '🏥' },
-  { id: 'technology', label: 'Technology', emoji: '💻' },
-  { id: 'housing', label: 'Housing', emoji: '🏠' },
-  { id: 'immigration', label: 'Immigration', emoji: '🌎' },
-  { id: 'civil_rights', label: 'Civil Rights', emoji: '⚖️' },
-  { id: 'community', label: 'Community', emoji: '🤝' },
+  { id: 'education',   label: 'Education',    emoji: '📚', color: '#5d3a82', bg: '#ecdcf2' },
+  { id: 'environment', label: 'Environment',  emoji: '🌿', color: '#2a5d8c', bg: '#d4e6f1' },
+  { id: 'economy',     label: 'Economy',      emoji: '💼', color: '#9a4f12', bg: '#fbe5d4' },
+  { id: 'healthcare',  label: 'Healthcare',   emoji: '🏥', color: '#355c2a', bg: '#d9e8d2' },
+  { id: 'technology',  label: 'Technology',   emoji: '💻', color: '#a8202e', bg: '#fbe5e8' },
+  { id: 'housing',     label: 'Housing',      emoji: '🏠', color: '#9a4f12', bg: '#fbe5d4' },
+  { id: 'immigration', label: 'Immigration',  emoji: '🌎', color: '#1e4d8c', bg: '#e2eaf7' },
+  { id: 'civil_rights',label: 'Civil Rights', emoji: '⚖️', color: '#5d3a82', bg: '#ecdcf2' },
+  { id: 'community',   label: 'Community',    emoji: '🤝', color: '#355c2a', bg: '#d9e8d2' },
 ]
 
 export default function Home() {
@@ -110,6 +113,15 @@ export default function Home() {
           >
             Try it with your profile →
           </button>
+          <div className={styles.chamberRow}>
+            <span className={`${styles.chamberChip} ${styles.chamberHouse}`}>
+              <span className={styles.chamberDot} /> House
+            </span>
+            <span className={`${styles.chamberChip} ${styles.chamberSenate}`}>
+              <span className={styles.chamberDot} /> Senate
+            </span>
+            <span className={styles.chamberCaption}>Both chambers, always.</span>
+          </div>
         </div>
 
         <div className={styles.heroDemo}>
@@ -119,8 +131,13 @@ export default function Home() {
             ))}
           </div>
           <div className={`${styles.demoCard} ${fading ? styles.demoCardFading : ''}`}>
-            <div className={styles.demoTag} style={{ background: `${bill.tagColor}20`, color: bill.tagColor }}>
-              {bill.tag}
+            <div className={styles.demoCardHeader}>
+              <div className={styles.demoTag} style={{ background: bill.tagBg, color: bill.tagColor }}>
+                {bill.tag}
+              </div>
+              <span className={`${styles.demoChamberPill} ${bill.chamber === 'House' ? styles.chamberHouse : styles.chamberSenate}`}>
+                {bill.chamber}
+              </span>
             </div>
             <div className={styles.demoTitle}>
               {typedTitle}<span className={styles.cursor}>|</span>
@@ -182,6 +199,10 @@ export default function Home() {
               key={t.id}
               className={styles.topicCard}
               onClick={() => navigate('/profile')}
+              style={{
+                '--topic-color': t.color,
+                '--topic-bg':    t.bg,
+              }}
             >
               <span className={styles.topicEmoji}>{t.emoji}</span>
               <span className={styles.topicLabel}>{t.label}</span>
