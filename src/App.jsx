@@ -87,8 +87,8 @@ export default function App() {
       .then(({ Capacitor }) => {
         if (!Capacitor.isNativePlatform()) return
         return import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
-          StatusBar.setStyle({ style: Style.Dark })
-          StatusBar.setBackgroundColor({ color: '#2a1638' }).catch(() => {})
+          StatusBar.setStyle({ style: Style.Light })
+          StatusBar.setBackgroundColor({ color: '#fbf7f9' }).catch(() => {})
         })
       })
       .catch(() => {})
