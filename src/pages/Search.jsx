@@ -183,29 +183,37 @@ export default function Search() {
     const billId = makeBillId(bill)
     setPersonalizingBills(prev => new Set(prev).add(billId))
 
-    try {
-      const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bills: [bill], profile })
-      })
-      if (resp.ok) {
+    // Single attempt; returns true if analysis came back successfully
+    const attempt = async () => {
+      try {
+        const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bills: [bill], profile })
+        })
+        if (!resp.ok) return false
         const data = await resp.json()
-        if (data.results) {
-          for (const [id, result] of Object.entries(data.results)) {
-            if (result?.analysis) {
-              setAnalyses(prev => ({ ...prev, [id]: result.analysis }))
-            }
-          }
+        const result = data?.results?.[billId]
+        if (result?.analysis) {
+          setAnalyses(prev => ({ ...prev, [billId]: result.analysis }))
+          return true
         }
-        if (data.errors) {
-          for (const id of Object.keys(data.errors)) {
-            setFailedBills(prev => new Set(prev).add(id))
-          }
-        }
+        return false
+      } catch {
+        return false
       }
-    } catch {
-      setFailedBills(prev => new Set(prev).add(billId))
+    }
+
+    try {
+      let success = await attempt()
+      if (!success) {
+        // Client-side retry once after a brief delay (server already retries 4x)
+        await new Promise(r => setTimeout(r, 1500))
+        success = await attempt()
+      }
+      if (!success) {
+        setFailedBills(prev => new Set(prev).add(billId))
+      }
     } finally {
       setPersonalizingBills(prev => {
         const next = new Set(prev)

@@ -109,56 +109,95 @@ export default function Results() {
     fetchBills()
   }, [profile])
 
-  // Personalize a batch of bills in a single API call (all Groq calls run in parallel server-side)
+  // Personalize a batch of bills in a single API call (all Claude calls run in parallel server-side).
+  // Auto-retries any failed bills once to recover from transient errors before surfacing failure to the user.
   async function personalizeBillsBatch(billsToPersonalize) {
     if (!billsToPersonalize.length) return
-    try {
-      const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bills: billsToPersonalize, profile })
-      })
-      const data = await resp.json().catch(() => ({}))
-      if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
-      if (data.results) {
-        setAnalyses(prev => {
-          const next = { ...prev }
+
+    // One attempt against the batch endpoint. Returns { ok: Set<billId>, failed: Bill[] }.
+    const attempt = async (bills) => {
+      const ok = new Set()
+      const failed = []
+      try {
+        const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bills, profile })
+        })
+        const data = await resp.json().catch(() => ({}))
+        if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
+
+        if (data.results) {
+          setAnalyses(prev => {
+            const next = { ...prev }
+            for (const [billId, result] of Object.entries(data.results)) {
+              if (result?.analysis) {
+                next[billId] = result.analysis
+                ok.add(billId)
+              }
+            }
+            return next
+          })
+          // Make sure ok set reflects results even if state batching delayed
           for (const [billId, result] of Object.entries(data.results)) {
-            if (result?.analysis) next[billId] = result.analysis
+            if (result?.analysis) ok.add(billId)
           }
-          return next
-        })
-        const settledIds = Object.keys(data.results)
-        setSettledBills(prev => {
-          const next = new Set(prev)
-          settledIds.forEach(id => next.add(id))
-          return next
-        })
+        }
+
+        // Anything reported as error OR missing from results = failed
+        for (const b of bills) {
+          const id = makeBillId(b)
+          if (!ok.has(id)) failed.push(b)
+        }
+      } catch (err) {
+        console.error('Batch personalization request failed:', err)
+        // Whole request failed — every bill in this attempt is failed
+        for (const b of bills) failed.push(b)
       }
-      if (data.errors) {
-        setFailedBills(prev => {
-          const next = new Set(prev)
-          Object.keys(data.errors).forEach(id => next.add(id))
-          return next
-        })
-        setSettledBills(prev => {
-          const next = new Set(prev)
-          Object.keys(data.errors).forEach(id => next.add(id))
-          return next
-        })
-      }
-    } catch (err) {
-      console.error('Batch personalization failed:', err)
-      setFailedBills(prev => {
-        const next = new Set(prev)
-        billsToPersonalize.forEach(b => next.add(makeBillId(b)))
-        return next
-      })
+      return { ok, failed }
+    }
+
+    // First attempt
+    let { ok: okFirst, failed } = await attempt(billsToPersonalize)
+
+    // Mark successes as settled immediately so the UI can render them
+    if (okFirst.size) {
       setSettledBills(prev => {
         const next = new Set(prev)
-        billsToPersonalize.forEach(b => next.add(makeBillId(b)))
+        okFirst.forEach(id => next.add(id))
         return next
       })
+    }
+
+    // Client-side retry pass for any bills that failed (server already retries 4x;
+    // this catches network blips, cold-starts, and partial failures)
+    if (failed.length) {
+      console.log(`[personalize] retrying ${failed.length} failed bill(s) client-side`)
+      await new Promise(r => setTimeout(r, 1500))
+      const second = await attempt(failed)
+
+      if (second.ok.size) {
+        setSettledBills(prev => {
+          const next = new Set(prev)
+          second.ok.forEach(id => next.add(id))
+          return next
+        })
+      }
+
+      // Anything still failing after retry → mark as failed + settled
+      if (second.failed.length) {
+        const stillFailedIds = second.failed.map(makeBillId)
+        setFailedBills(prev => {
+          const next = new Set(prev)
+          stillFailedIds.forEach(id => next.add(id))
+          return next
+        })
+        setSettledBills(prev => {
+          const next = new Set(prev)
+          stillFailedIds.forEach(id => next.add(id))
+          return next
+        })
+      }
     }
   }
 
