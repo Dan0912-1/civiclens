@@ -2090,6 +2090,235 @@ async function ensureBillTextCache() {
   }
 }
 
+// ─── Featured bills (homepage "Moving this week") ───────────────────────────
+// A background job refreshes this every hour with the top 3 most impactful
+// federal bills moving through Congress. The homepage reads from here directly,
+// so anonymous visitors see live content without hitting LegiScan per page load.
+
+const FEATURED_REFRESH_MS = 1000 * 60 * 60 // 1 hour
+// Intentionally uses Congress.gov API instead of LegiScan so the homepage
+// refresh doesn't compete for the main feed's LegiScan quota.
+const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY
+const CONGRESS_API_BASE = 'https://api.congress.gov/v3'
+
+// Title-keyword filter to keep only youth-relevant bills in the top-3 pool.
+// Applied client-side because Congress.gov doesn't support topic filtering at query time.
+const YOUTH_KEYWORDS = [
+  { re: /student\s+loan|tuition|pell\s+grant|higher\s+education/i, topic: 'Education' },
+  { re: /school|k-12|education|youth/i, topic: 'Education' },
+  { re: /mental\s+health|medicaid|medicare|health\s+care|healthcare|insurance/i, topic: 'Healthcare' },
+  { re: /minimum\s+wage|worker|workforce|employment|apprenticeship/i, topic: 'Economy' },
+  { re: /climate|clean\s+energy|solar|renewable|carbon|emissions/i, topic: 'Environment' },
+  { re: /affordable\s+housing|rent|homeless/i, topic: 'Housing' },
+  { re: /voting|civil\s+rights|discrimination/i, topic: 'Civil Rights' },
+  { re: /immigration|visa|DACA|dreamer/i, topic: 'Immigration' },
+]
+
+// In-memory fallback used when Supabase is unavailable or cold-starting
+let featuredBillsMemoryCache = { bills: [], rankedAt: null }
+
+// ─── Congress.gov API helper ────────────────────────────────────────────────
+async function congressRequest(path, params = {}) {
+  if (!CONGRESS_API_KEY) throw new Error('CONGRESS_API_KEY not configured')
+  const url = new URL(`${CONGRESS_API_BASE}${path}`)
+  url.searchParams.set('api_key', CONGRESS_API_KEY)
+  url.searchParams.set('format', 'json')
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v))
+  }
+  const resp = await fetch(url.toString())
+  if (!resp.ok) throw new Error(`Congress.gov ${path}: ${resp.status}`)
+  return resp.json()
+}
+
+// Transform a Congress.gov bill → frontend bill object (same shape as LegiScan transformer)
+function transformCongressBill(raw) {
+  const type = (raw.type || '').toLowerCase()
+  const chamber = type.startsWith('s') ? 'Senate' : 'House'
+  return {
+    congress: raw.congress || 119,
+    type,
+    number: raw.number || 0,
+    title: raw.title || '',
+    originChamber: raw.originChamber || chamber,
+    latestAction: raw.latestAction?.text || 'No recent action',
+    latestActionDate: raw.latestAction?.actionDate || '',
+    url: raw.url || '',
+    updateDate: raw.updateDate || raw.latestAction?.actionDate || '',
+    source: 'congress.gov',
+  }
+}
+
+// Map LegiScan "last_action" text → homepage status badge
+function deriveStatusLabel(bill) {
+  const action = (bill.latestAction || '').toLowerCase()
+  if (/passed\s+(the\s+)?house/.test(action)) return { label: 'Passed House', kind: 'passed' }
+  if (/passed\s+(the\s+)?senate/.test(action)) return { label: 'Passed Senate', kind: 'passed' }
+  if (/signed|became\s+law|enrolled/.test(action)) return { label: 'Signed into law', kind: 'passed' }
+  if (/floor\s+(vote|consideration|calendar)/.test(action)) return { label: 'Floor vote scheduled', kind: 'active' }
+  if (/reported|markup|committee|subcommittee/.test(action)) return { label: 'In Committee', kind: 'committee' }
+  if (/introduced|read\s+(first|twice)/.test(action)) return { label: 'Introduced', kind: 'committee' }
+  return { label: 'In Congress', kind: 'committee' }
+}
+
+// Rough 1-10 "Civic Impact" score for anonymous visitors.
+// Used when no user profile exists to compute personalized relevance.
+// Weights: recency (40%) + stage/activity (40%) + youth-topic match (20%)
+function computeCivicImpactScore(bill, topicTag) {
+  // Recency — bills acted on in the last 7 days score highest
+  const daysSinceUpdate = Math.max(0, (Date.now() - new Date(bill.updateDate || 0).getTime()) / 86400000)
+  const recencyScore = Math.max(0, 1 - daysSinceUpdate / 60) // 0 at 60+ days old
+
+  // Stage — advanced bills matter more than newly-introduced ones
+  const action = (bill.latestAction || '').toLowerCase()
+  let stageScore = 0.3
+  if (/introduced/.test(action)) stageScore = 0.3
+  if (/committee|reported|markup/.test(action)) stageScore = 0.55
+  if (/floor\s+(vote|consideration)/.test(action)) stageScore = 0.85
+  if (/passed\s+(the\s+)?(house|senate)/.test(action)) stageScore = 0.95
+  if (/signed|became\s+law/.test(action)) stageScore = 1.0
+
+  // Youth topic — bills tagged for youth-relevant topics get a boost
+  const youthTopics = ['Education', 'Healthcare', 'Economy', 'Environment', 'Housing', 'Civil Rights']
+  const topicScore = youthTopics.includes(topicTag) ? 1.0 : 0.5
+
+  const total = (recencyScore * 0.4) + (stageScore * 0.4) + (topicScore * 0.2)
+  // Scale to 1–10 integer, floor at 4 so no bill shows a depressing "2/10"
+  return Math.max(4, Math.round(total * 10))
+}
+
+// Match a bill title against youth-keyword patterns → topic tag (or null to skip)
+function classifyBillTopic(title = '') {
+  for (const { re, topic } of YOUTH_KEYWORDS) {
+    if (re.test(title)) return topic
+  }
+  return null
+}
+
+async function refreshFeaturedBills() {
+  if (!CONGRESS_API_KEY) {
+    console.log('[featured] Skipped — CONGRESS_API_KEY missing')
+    return
+  }
+  try {
+    // Congress.gov: most-recently-updated federal bills across both chambers.
+    // Default sort is updateDate desc. Limit 250 is the API max per request.
+    const data = await congressRequest('/bill', { limit: 250, sort: 'updateDate+desc' })
+    const raw = data.bills || []
+    if (!raw.length) {
+      console.log('[featured] Congress.gov returned 0 bills — keeping previous cache')
+      return
+    }
+
+    // Transform and filter to youth-relevant titles only
+    const classified = []
+    for (const b of raw) {
+      const bill = transformCongressBill(b)
+      const topicTag = classifyBillTopic(bill.title)
+      if (!topicTag) continue // skip unrelated bills
+      classified.push({ bill, topicTag })
+    }
+
+    if (!classified.length) {
+      console.log('[featured] No youth-relevant bills in the recent feed — keeping previous cache')
+      return
+    }
+
+    // Dedupe by (type, number, congress)
+    const seen = new Set()
+    const unique = classified.filter(({ bill }) => {
+      const id = `${bill.congress}-${bill.type}-${bill.number}`
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+
+    // Score every bill, diversify by topic, take the top 3
+    const scored = unique.map(({ bill, topicTag }) => ({
+      bill,
+      topicTag,
+      civicScore: computeCivicImpactScore(bill, topicTag),
+    }))
+    scored.sort((a, b) => b.civicScore - a.civicScore)
+
+    // Topic diversity: prefer not to show 3 bills of the same topic
+    const top3 = []
+    const topicsUsed = new Set()
+    for (const item of scored) {
+      if (topicsUsed.has(item.topicTag) && top3.length < 3) continue
+      top3.push(item)
+      topicsUsed.add(item.topicTag)
+      if (top3.length === 3) break
+    }
+    // Backfill if fewer than 3 after diversity filter
+    if (top3.length < 3) {
+      for (const item of scored) {
+        if (!top3.includes(item)) top3.push(item)
+        if (top3.length === 3) break
+      }
+    }
+
+    // Build final rows
+    const rows = top3.map((item, i) => {
+      const { label, kind } = deriveStatusLabel(item.bill)
+      return {
+        slot: i + 1,
+        bill_data: item.bill,
+        status_label: label,
+        status_kind: kind,
+        topic_tag: item.topicTag,
+        impact_line: null, // Claude-generated impact lines are added on-demand by the frontend
+        civic_score: item.civicScore,
+        ranked_at: new Date().toISOString(),
+      }
+    })
+
+    // Update in-memory cache first (always succeeds, used as fallback)
+    featuredBillsMemoryCache = { bills: rows, rankedAt: rows[0].ranked_at }
+
+    // Persist to Supabase if available
+    if (supabase) {
+      try {
+        // Upsert by slot (3 rows, overwritten each cycle)
+        await supabase
+          .from('featured_bills')
+          .upsert(rows, { onConflict: 'slot' })
+        console.log(`[featured] ✓ Refreshed ${rows.length} bills to Supabase`)
+      } catch (err) {
+        console.error('[featured] Supabase upsert failed:', err.message)
+      }
+    } else {
+      console.log(`[featured] ✓ Refreshed ${rows.length} bills (in-memory only)`)
+    }
+  } catch (err) {
+    console.error('[featured] Refresh failed:', err.message)
+  }
+}
+
+app.get('/api/featured', async (req, res) => {
+  try {
+    // Prefer Supabase (durable across restarts), fall back to memory cache
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('featured_bills')
+        .select('*')
+        .order('slot', { ascending: true })
+      if (!error && data && data.length) {
+        return res.json({ bills: data, rankedAt: data[0].ranked_at })
+      }
+    }
+    if (featuredBillsMemoryCache.bills.length) {
+      return res.json(featuredBillsMemoryCache)
+    }
+    // Nothing cached yet — trigger a fresh fetch (non-blocking for next call)
+    refreshFeaturedBills().catch(() => {})
+    res.json({ bills: [], rankedAt: null })
+  } catch (err) {
+    console.error('[featured] GET error:', err.message)
+    res.status(500).json({ error: 'Failed to load featured bills' })
+  }
+})
+
 // ─── Feedback endpoint ───────────────────────────────────────────────────────
 app.post('/api/feedback', async (req, res) => {
   const { name, email, type, message } = req.body
@@ -2137,4 +2366,19 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
   await ensureBillTextCache()
+
+  // ─── Hourly refresh of homepage "Moving this week" bills ────────────────
+  // Runs once on startup, then every hour. Uses Congress.gov API (not LegiScan)
+  // to keep the homepage refresh isolated from the main feed's LegiScan quota.
+  console.log(`   Congress.gov: ${CONGRESS_API_KEY ? '✓ configured' : '✗ disabled (featured bills)'}`)
+  if (CONGRESS_API_KEY) {
+    refreshFeaturedBills()
+      .then(() => console.log('[featured] Initial refresh complete'))
+      .catch(err => console.error('[featured] Initial refresh failed:', err.message))
+    setInterval(() => {
+      refreshFeaturedBills().catch(err =>
+        console.error('[featured] Scheduled refresh failed:', err.message)
+      )
+    }, FEATURED_REFRESH_MS)
+  }
 })

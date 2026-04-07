@@ -53,10 +53,16 @@
   font-weight: 400;
 }
 
+.ctaRow {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .ctaPrimary {
   background: var(--navy);
   color: var(--cream);
-  padding: 0.8rem 1.75rem;
+  padding: 0.85rem 1.75rem;
   border-radius: var(--radius-md);
   font-weight: 600;
   font-size: 1rem;
@@ -68,6 +74,46 @@
   background: #3d2548;
   transform: translateY(-1px);
   box-shadow: 0 6px 24px rgba(42,22,56,0.3);
+}
+
+.ctaSecondary {
+  background: transparent;
+  color: var(--navy);
+  padding: 0.85rem 1.75rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 1rem;
+  border: 1.5px solid var(--navy);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.ctaSecondary:hover {
+  background: rgba(42,22,56,0.06);
+  transform: translateY(-1px);
+}
+
+/* ─── Trust strip (below hero CTAs) ─── */
+.trustStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  margin-top: var(--space-md);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.trustCheck {
+  color: #355c2a;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+.trustSep {
+  color: var(--border);
 }
 
 /* Chamber chip row (in hero, below CTA) */
@@ -519,6 +565,16 @@
     padding: var(--space-2xl) var(--space-lg);
     min-height: auto;
     gap: var(--space-xl);
+  }
+
+  .ctaRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ctaPrimary,
+  .ctaSecondary {
+    width: 100%;
+    text-align: center;
   }
 
   .topicScroll {

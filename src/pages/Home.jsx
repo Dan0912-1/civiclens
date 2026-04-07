@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
+import FeaturedBills from '../components/FeaturedBills'
 import styles from './Home.module.css'
 
 const SEARCH_CHIPS = ['Student Loans', 'Climate', 'Healthcare', 'Immigration', 'Education', 'Housing']
@@ -107,12 +108,29 @@ export default function Home() {
             Real bills from Congress and your state legislature — translated
             into plain English, personalized to you.
           </p>
-          <button
-            className={styles.ctaPrimary}
-            onClick={() => navigate('/profile')}
-          >
-            Try it with your profile →
-          </button>
+          <div className={styles.ctaRow}>
+            <button
+              className={styles.ctaPrimary}
+              onClick={() => navigate('/profile')}
+            >
+              Try it with your profile →
+            </button>
+            <button
+              className={styles.ctaSecondary}
+              onClick={() => navigate('/results')}
+            >
+              Browse bills now
+            </button>
+          </div>
+          <div className={styles.trustStrip}>
+            <span><span className={styles.trustCheck}>✓</span>Nonpartisan</span>
+            <span className={styles.trustSep}>·</span>
+            <span><span className={styles.trustCheck}>✓</span>No ads</span>
+            <span className={styles.trustSep}>·</span>
+            <span><span className={styles.trustCheck}>✓</span>No tracking</span>
+            <span className={styles.trustSep}>·</span>
+            <span><span className={styles.trustCheck}>✓</span>Free forever</span>
+          </div>
           <div className={styles.chamberRow}>
             <span className={`${styles.chamberChip} ${styles.chamberHouse}`}>
               <span className={styles.chamberDot} /> House
@@ -162,6 +180,9 @@ export default function Home() {
         </div>
         </div>
       </section>
+
+      {/* Moving this week — live bills from Congress.gov, refreshed hourly */}
+      <FeaturedBills />
 
       {/* Search */}
       <section className={styles.searchSection}>
