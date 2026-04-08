@@ -1,7 +1,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(42, 22, 56, 0.6);
+  background: rgba(10, 25, 41, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -11,11 +11,13 @@
 
 .modal {
   background: var(--white);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  box-shadow: 0 2px 0 rgba(10,25,41,0.2);
   padding: var(--space-2xl);
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   position: relative;
   margin: var(--space-lg);
 }
@@ -36,14 +38,17 @@
 
 .heading {
   font-family: var(--font-display);
-  font-size: 1.5rem;
+  font-size: 1.625rem;
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-xs);
 }
 
 .sub {
-  color: var(--text-muted);
-  font-size: 0.9rem;
+  font-family: var(--font-serif);
+  color: var(--text-secondary);
+  font-size: 0.95rem;
   margin-bottom: var(--space-xl);
 }
 
@@ -54,14 +59,18 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 0.65rem;
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
-  font-weight: 600;
+  padding: 12px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: #fff;
   background: #000;
+  border: 1px solid #000;
   margin-bottom: var(--space-sm);
-  transition: background 0.2s ease;
+  transition: background 0.15s ease;
 }
 
 .appleBtn:hover {
@@ -74,19 +83,21 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 0.65rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
-  font-weight: 600;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-primary);
   background: var(--white);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .googleBtn:hover {
   border-color: var(--navy);
-  box-shadow: var(--shadow-sm);
 }
 
 .divider {
@@ -113,35 +124,43 @@
 }
 
 .input {
-  padding: 0.65rem var(--space-md);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
   transition: border-color 0.2s;
 }
 
 .input:focus {
   outline: none;
   border-color: var(--navy);
+  box-shadow: 0 0 0 1px var(--navy);
 }
 
 .error {
-  color: #dc2626;
-  font-size: 0.85rem;
+  color: var(--status-failed);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
 }
 
 .submitBtn {
-  background: var(--amber);
-  color: var(--navy);
-  padding: 0.65rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 0.9rem;
-  transition: all 0.2s ease;
+  background: var(--navy);
+  color: var(--white);
+  padding: 12px;
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
 }
 
 .submitBtn:hover {
-  background: var(--amber-dark);
+  background: #15263a;
 }
 
 .submitBtn:disabled {

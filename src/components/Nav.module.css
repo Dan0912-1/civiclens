@@ -87,13 +87,13 @@
 /* ── Dropdown menu ── */
 .dropdown {
   position: absolute;
-  top: calc(100% + 8px);
+  top: 100%;
   left: 0;
-  background: var(--white);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
-  min-width: 210px;
+  background: var(--navy);
+  border: 1px solid var(--amber);
+  border-radius: 1px;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.2);
+  min-width: 240px;
   padding: var(--space-sm) 0;
   animation: fadeIn 0.15s ease;
   z-index: 200;
@@ -103,25 +103,30 @@
   display: block;
   width: 100%;
   text-align: left;
-  padding: 0.65rem var(--space-lg);
-  font-size: 0.95rem;
-  color: var(--text-primary);
+  padding: 10px var(--space-lg);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   font-weight: 500;
-  transition: background 0.15s;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+  transition: background 0.15s, color 0.15s;
   background: none;
   border: none;
   cursor: pointer;
-  font-family: var(--font-body);
 }
 
-.dropItem:hover { background: var(--cream); }
+.dropItem:hover {
+  background: rgba(164,126,59,0.1);
+  color: var(--amber);
+}
 
-.dropItemDanger { color: #dc2626; }
+.dropItemDanger { color: #D97757; }
 
 .dropDivider {
   height: 1px;
-  background: var(--border-light);
-  margin: var(--space-xs) 0;
+  background: rgba(255,255,255,0.1);
+  margin: var(--space-xs) var(--space-lg);
 }
 
 /* Auth buttons pushed to far right */

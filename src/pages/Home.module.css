@@ -62,7 +62,7 @@
 .headline {
   font-family: var(--font-display);
   font-size: clamp(2.2rem, 4vw, 3.25rem);
-  line-height: 1.08;
+  line-height: 1.25;
   margin-bottom: var(--space-lg);
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -72,8 +72,10 @@
 .accent {
   color: var(--navy);
   font-style: normal;
-  border-bottom: 2px solid var(--amber);
-  padding-bottom: 2px;
+  text-decoration: underline;
+  text-decoration-color: var(--amber);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
 }
 
 .subhead {

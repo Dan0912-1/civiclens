@@ -45,13 +45,17 @@
 }
 
 .heading {
+  font-family: var(--font-display);
   font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-sm);
 }
 
 .subhead {
-  color: var(--text-muted);
+  font-family: var(--font-serif);
+  color: var(--text-secondary);
   font-size: 1rem;
 }
 
@@ -78,18 +82,21 @@
 }
 
 .ctaBtn {
-  background: var(--amber);
-  color: var(--navy);
-  padding: 0.6rem 1.5rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 0.9rem;
-  transition: all 0.2s ease;
+  background: var(--navy);
+  color: var(--white);
+  padding: 12px 24px;
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
 }
 
 .ctaBtn:hover {
-  background: var(--amber-dark);
-  transform: translateY(-1px);
+  background: #15263a;
 }
 
 .loadingGrid {
@@ -103,38 +110,44 @@
   align-items: center;
   justify-content: space-between;
   background: var(--white);
-  border: 1px solid var(--cream-dark);
-  border-radius: var(--radius-md);
-  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--amber);
+  border-radius: 1px;
+  padding: 14px 20px;
   margin-bottom: var(--space-xl);
   animation: fadeUp 0.4s ease forwards;
 }
 
 .notifLabel {
+  font-family: var(--font-body);
   color: var(--navy);
-  font-size: 0.9rem;
-  font-weight: 500;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .notifDesc {
+  font-family: var(--font-serif);
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   margin-top: 2px;
 }
 
 .toggle {
   position: relative;
   width: 44px;
-  height: 24px;
-  border-radius: 12px;
-  background: #d1d5db;
+  height: 22px;
+  border-radius: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
   cursor: pointer;
   transition: background 0.2s ease;
   flex-shrink: 0;
 }
 
 .toggle[data-on="true"] {
-  background: #059669;
+  background: var(--status-active);
+  border-color: var(--status-active);
 }
 
 .toggleKnob {

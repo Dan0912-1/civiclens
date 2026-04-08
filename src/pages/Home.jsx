@@ -102,12 +102,12 @@ export default function Home() {
         <div className={styles.heroText}>
           <span className={styles.eyebrow}>The Legislative Record</span>
           <h1 className={styles.headline}>
-            The Definitive Record of<br />
-            <span className={styles.accent}>American Legislation</span>.
+            Know the Laws<br />
+            <span className={styles.accent}>Shaping Your Future</span>.
           </h1>
           <p className={styles.subhead}>
-            Authoritative analysis of active bills across Congress and state
-            legislatures. Sourced directly from primary government records.
+            Track every active bill in Congress and your state legislature.
+            Plain-language analysis, sourced from primary government records.
             Nonpartisan. Independently operated.
           </p>
           <div className={styles.ctaRow}>
