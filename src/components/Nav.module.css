@@ -217,3 +217,31 @@
   font-size: 0.78rem;
   font-weight: 700;
 }
+
+/* Responsive: prevent button overlap with logo on narrow viewports */
+@media (max-width: 640px) {
+  .inner {
+    padding: 0 12px;
+  }
+  .row {
+    gap: 6px;
+  }
+  .logoText {
+    display: none;
+  }
+  .logo {
+    padding-left: 8px;
+  }
+  .signIn,
+  .cta {
+    padding: 7px 10px;
+    font-size: 0.64rem;
+    letter-spacing: 0.08em;
+  }
+}
+
+@media (max-width: 380px) {
+  .signIn {
+    display: none;
+  }
+}
