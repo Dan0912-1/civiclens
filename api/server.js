@@ -1046,14 +1046,26 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
     return { billId, error: lastError || 'Max retries exceeded' }
   }
 
-  // Process with concurrency limit of 3
-  const CONCURRENCY = 8
-  const settled = []
-  for (let i = 0; i < billsWithText.length; i += CONCURRENCY) {
-    const chunk = billsWithText.slice(i, i + CONCURRENCY)
-    const chunkResults = await Promise.allSettled(chunk.map(b => personalizeOneBill(b)))
-    settled.push(...chunkResults)
+  // Fire all bills with a rolling concurrency limit. Unlike chunked waves,
+  // this starts a new bill the instant any slot frees up, so one slow bill
+  // doesn't block everything behind it.
+  const CONCURRENCY = 10
+  const settled = new Array(billsWithText.length)
+  let cursor = 0
+  async function worker() {
+    while (true) {
+      const i = cursor++
+      if (i >= billsWithText.length) return
+      try {
+        settled[i] = { status: 'fulfilled', value: await personalizeOneBill(billsWithText[i]) }
+      } catch (reason) {
+        settled[i] = { status: 'rejected', reason }
+      }
+    }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, billsWithText.length) }, worker)
+  )
   for (const s of settled) {
     if (s.status === 'fulfilled' && s.value) {
       if (s.value.error) {
