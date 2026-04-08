@@ -476,7 +476,7 @@
 
 /* ─── Topic Cards ─── */
 .topics {
-  padding: var(--space-2xl) var(--space-xl);
+  padding: var(--space-2xl) var(--space-md);
   max-width: 1100px;
   margin: 0 auto;
 }
@@ -488,10 +488,23 @@
   margin-bottom: var(--space-xl);
 }
 
+/* 2 cols on phones (fits 375px iPhone), 3 cols ≥600px, 4 cols ≥960px */
 .topicScroll {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-md);
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-sm);
+}
+
+@media (min-width: 600px) {
+  .topics { padding: var(--space-2xl) var(--space-xl); }
+  .topicScroll {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+  }
+}
+
+@media (min-width: 960px) {
+  .topicScroll { grid-template-columns: repeat(4, 1fr); }
 }
 
 .topicCard {
@@ -499,22 +512,40 @@
   flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-lg);
+  gap: var(--space-sm);
+  padding: var(--space-md);
   background: var(--white);
   border: 1px solid var(--border);
   border-top: 2px solid var(--navy);
   border-radius: 1px;
   box-shadow: none;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition:
+    background   var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    transform    var(--dur-base) var(--ease-out);
   cursor: pointer;
-  min-height: 110px;
+  min-height: 74px;
   text-align: left;
+  word-break: break-word;
+}
+
+@media (min-width: 600px) {
+  .topicCard {
+    padding: var(--space-lg);
+    min-height: 110px;
+    gap: var(--space-md);
+  }
 }
 
 .topicCard:hover {
   background: var(--cream-dark);
   border-top-color: var(--amber);
+  transform: translateY(-1px);
+}
+
+.topicCard:active {
+  transform: translateY(0);
+  transition-duration: var(--dur-fast);
 }
 
 .topicEmoji {
@@ -523,22 +554,37 @@
 
 .topicLabel {
   font-family: var(--font-body);
-  font-size: 0.82rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-primary);
   text-align: left;
+  line-height: 1.25;
+}
+
+@media (min-width: 600px) {
+  .topicLabel {
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
+  }
 }
 
 .topicCard::after {
   content: 'VIEW →';
   font-family: var(--font-mono);
-  font-size: 0.62rem;
-  letter-spacing: 0.12em;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
   color: var(--amber);
   font-weight: 600;
   align-self: flex-end;
+}
+
+@media (min-width: 600px) {
+  .topicCard::after {
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+  }
 }
 
 /* ─── Timeline ─── */
@@ -700,10 +746,6 @@
   .ctaSecondary {
     width: 100%;
     text-align: center;
-  }
-
-  .topicScroll {
-    grid-template-columns: repeat(3, 1fr);
   }
 
   .timelineStep {
