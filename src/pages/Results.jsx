@@ -235,8 +235,29 @@ export default function Results() {
       const data = await resp.json()
       if (data.bills) {
         setBills(data.bills)
-        // Personalize all bills in one batch request
-        personalizeBillsBatch(data.bills)
+
+        // Two-wave personalization: render the first 3 federal + first 3 state
+        // bills as quickly as possible, then personalize the next 3 per
+        // category in a second request. Anything beyond that trickles in as
+        // a third wave. The server returns federal bills first (indexes 0-5)
+        // followed by state bills (indexes 6-11), so slicing by index gives
+        // us the top N per category without re-filtering.
+        const federal = data.bills.filter(b => !b.isStateBill)
+        const stateBills = data.bills.filter(b => b.isStateBill)
+
+        const wave1 = [...federal.slice(0, 3), ...stateBills.slice(0, 3)]
+        const wave2 = [...federal.slice(3, 6), ...stateBills.slice(3, 6)]
+        const wave3 = [...federal.slice(6),    ...stateBills.slice(6)]
+
+        // Fire wave 1 immediately. Once it resolves the first 6 cards settle
+        // and the user sees content; then wave 2 (and any tail) runs
+        // sequentially so the server's concurrency pool isn't split between
+        // waves and the first batch isn't slowed down by the second.
+        ;(async () => {
+          if (wave1.length) await personalizeBillsBatch(wave1)
+          if (wave2.length) await personalizeBillsBatch(wave2)
+          if (wave3.length) await personalizeBillsBatch(wave3)
+        })()
       } else {
         setBillError('Could not load bills. Please try again.')
       }
