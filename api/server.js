@@ -757,6 +757,31 @@ function buildProfileHashInput(profile) {
   return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
 }
 
+// v5 cache key fallback — when a profile's new-shape fields can be unambiguously
+// rewritten as the OLD shape (employment ∈ {none, part_time}, familySituation
+// has 0 or 1 entries), we compute the v5 hash and check that cache too. This
+// preserves all responses cached under v5 instead of forcing every user to
+// pay a cold Claude call after the cache key was bumped.
+//
+// Returns null when the profile cannot map to a v5 shape (full_time job, or
+// multi-select family situation) — in that case there is no v5 entry to find.
+function buildLegacyV5HashInput(profile) {
+  const norm = normalizeProfile(profile)
+  if (norm.employment === 'full_time') return null
+  if (norm.familySituation.length > 1) return null
+  const legacyHasJob = norm.employment === 'part_time'
+  const legacyFamily = norm.familySituation[0] || ''
+  const sortedInterests = (norm.interests || []).slice().sort()
+  return `${norm.grade}-${norm.state || ''}-${legacyHasJob}-${legacyFamily}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
+}
+
+function buildLegacyV5Key(profile, bill) {
+  const input = buildLegacyV5HashInput(profile)
+  if (!input) return null
+  const hash = crypto.createHash('md5').update(input).digest('hex').slice(0, 12)
+  return `v5-personalize-${bill.type}${bill.number}-${bill.congress}-${hash}`
+}
+
 function buildUserPrompt(profile, bill, billContent) {
   const norm = normalizeProfile(profile)
   const employmentLabel =
@@ -802,15 +827,21 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
 
   const norm = normalizeProfile(profile)
   const sortedInterests = (norm.interests || []).slice().sort()
-  // v6 cache key — bumped when employment field expanded to {none|part_time|full_time}
-  // and familySituation became multi-select. Old v5 cache entries regenerate.
+  // v6 cache key — bumped when employment field expanded and familySituation
+  // became multi-select. We dual-read v5 as a fallback so responses cached
+  // before the bump still hit (no cold Claude call).
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
   const cacheKey = `v6-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
+  const legacyV5Key = buildLegacyV5Key(profile, bill)
 
-  // Check Supabase persistent cache first, fall back to in-memory
-  const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
+  // Check Supabase persistent cache (v6, then v5), fall back to in-memory
+  const cached =
+    (await getSupabaseCache(cacheKey))
+    || getCache(cacheKey)
+    || (legacyV5Key && (await getSupabaseCache(legacyV5Key)))
+    || (legacyV5Key && getCache(legacyV5Key))
   if (cached) return res.json(cached)
 
   // Fetch full bill content for accurate personalization
@@ -894,37 +925,55 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   const sortedInterests = (normalizeProfile(profile).interests || []).slice().sort()
   // v6 cache key — bumped when employment field expanded and familySituation
-  // became multi-select. Old v5 entries auto-regenerate.
+  // became multi-select. We dual-read v5 as a fallback so previously cached
+  // responses still hit and we don't pay a cold Claude call on every bill
+  // for every existing user.
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
+  const legacyV5HashInput = buildLegacyV5HashInput(profile)
+  const legacyV5Hash = legacyV5HashInput
+    ? crypto.createHash('md5').update(legacyV5HashInput).digest('hex').slice(0, 12)
+    : null
   const results = {}
   const errors = {}
   const billsToPersonalize = [] // { bill, cacheKey, billType }
 
-  // 1. Batch-check personalization cache (Supabase)
+  // 1. Batch-check personalization cache (Supabase) — query v6 keys plus
+  // any v5 fallback keys in a single round-trip.
   const cacheKeys = bills.map(b =>
     `v6-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
   )
+  const legacyKeys = legacyV5Hash
+    ? bills.map(b => `v5-personalize-${b.type}${b.number}-${b.congress}-${legacyV5Hash}`)
+    : []
+  const billIndexByLegacyKey = new Map()
+  legacyKeys.forEach((k, i) => billIndexByLegacyKey.set(k, i))
 
   let cachedResults = new Map()
   if (supabase) {
     try {
+      const queryKeys = legacyKeys.length ? [...cacheKeys, ...legacyKeys] : cacheKeys
       const { data } = await supabase
         .from('personalization_cache')
         .select('cache_key, response')
-        .in('cache_key', cacheKeys)
+        .in('cache_key', queryKeys)
       if (data) cachedResults = new Map(data.map(d => [d.cache_key, d.response]))
     } catch {}
   }
 
-  // Also check in-memory cache
+  // Also check in-memory cache (v6 first, then v5 fallback)
   for (let i = 0; i < bills.length; i++) {
     const bill = bills[i]
     const cacheKey = cacheKeys[i]
+    const legacyKey = legacyKeys[i] || null
     const billId = makeBillId(bill)
 
-    const cached = cachedResults.get(cacheKey) || getCache(cacheKey)
+    const cached =
+      cachedResults.get(cacheKey)
+      || getCache(cacheKey)
+      || (legacyKey && cachedResults.get(legacyKey))
+      || (legacyKey && getCache(legacyKey))
     if (cached) {
       results[billId] = cached
     } else {
