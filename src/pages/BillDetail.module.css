@@ -38,43 +38,54 @@
 
 .tag {
   display: inline-block;
-  padding: 2px 10px;
-  border-radius: 100px;
-  font-size: 0.72rem;
-  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  background: transparent;
+  border: 1px solid currentColor;
+}
+
+.tag_blue   { color: var(--tag-education); }
+.tag_green  { color: var(--tag-healthcare); }
+.tag_purple { color: var(--tag-economy); }
+.tag_teal   { color: var(--tag-environment); }
+.tag_red    { color: var(--tag-technology); }
+.tag_orange { color: var(--tag-housing); }
+.tag_violet { color: var(--tag-civil_rights); }
+.tag_gray   { color: var(--tag-other); }
+
+.billId {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
   letter-spacing: 0.05em;
 }
 
-.tag_blue   { background: #ecdcf2; color: #5d3a82; }  /* education — plum */
-.tag_green  { background: #d9e8d2; color: #355c2a; }  /* healthcare — sage */
-.tag_purple { background: #fbe5d4; color: #9a4f12; }  /* economy — terracotta */
-.tag_teal   { background: #d4e6f1; color: #2a5d8c; }  /* environment — sky */
-.tag_red    { background: #fbe5e8; color: #a8202e; }  /* technology — house red */
-.tag_orange { background: #fbe5d4; color: #9a4f12; }  /* housing — terracotta */
-.tag_violet { background: #ecdcf2; color: #5d3a82; }  /* civil rights — plum */
-.tag_gray   { background: #f0e8d8; color: #5a4360; }  /* other */
-
-.billId {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
 .chamber {
-  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
   color: var(--text-muted);
-  font-weight: 500;
-  background: var(--cream-dark);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: transparent;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 1px;
+  border: 1px solid var(--border);
 }
 
 .title {
   font-family: var(--font-display);
-  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-size: clamp(1.6rem, 3vw, 2.25rem);
+  font-weight: 700;
   color: var(--navy);
-  line-height: 1.3;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-md);
 }
 
@@ -90,32 +101,28 @@
 
 /* Analysis section */
 .analysisSection {
-  background:
-    radial-gradient(ellipse 55% 70% at 0% 0%,   rgba(247, 212, 212, 0.55) 0%, transparent 55%),
-    radial-gradient(ellipse 55% 70% at 100% 0%, rgba(212, 223, 245, 0.55) 0%, transparent 55%),
-    radial-gradient(ellipse 70% 45% at 50% 110%, rgba(236, 220, 242, 0.60) 0%, transparent 60%),
-    var(--white);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--shadow-sm);
+  background: var(--white);
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  box-shadow: none;
   padding: var(--space-xl);
   margin-bottom: var(--space-xl);
   animation: fadeUp 0.5s 0.1s ease both;
 }
 
 .headline {
-  font-family: var(--font-display);
-  font-size: 1.35rem;
-  font-weight: 400;
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 600;
   color: var(--navy);
-  line-height: 1.3;
+  line-height: 1.45;
   margin-bottom: var(--space-lg);
-  padding: var(--space-md) var(--space-lg);
-  background: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(4px);
-  border-left: 4px solid var(--amber);
-  border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  letter-spacing: -0.01em;
+  padding: var(--space-sm) 0 var(--space-sm) var(--space-md);
+  background: transparent;
+  border-left: 2px solid var(--amber);
+  border-radius: 0;
+  letter-spacing: -0.005em;
 }
 
 .relevanceRow {
@@ -127,28 +134,32 @@
 
 .relevanceBar {
   flex: 1;
-  height: 6px;
-  background: var(--cream-dark);
-  border-radius: 100px;
+  height: 2px;
+  background: var(--border);
+  border-radius: 0;
   overflow: hidden;
 }
 
 .relevanceFill {
   height: 100%;
-  border-radius: 100px;
+  border-radius: 0;
   transition: width 0.8s ease;
 }
 
 .relevanceLabel {
-  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .summary {
-  font-size: 1rem;
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
   color: var(--text-secondary);
-  line-height: 1.7;
+  line-height: 1.65;
   margin-bottom: var(--space-xl);
 }
 
@@ -166,21 +177,25 @@
 
 .scenario {
   background: var(--cream);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--amber);
+  border-radius: 1px;
   padding: var(--space-lg);
 }
 
 .scenarioLabel {
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  color: var(--amber);
   margin-bottom: var(--space-sm);
 }
 
 .scenario p {
-  font-size: 0.9rem;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
   color: var(--text-secondary);
   line-height: 1.6;
 }
@@ -192,13 +207,13 @@
 }
 
 .actionsHeading {
-  font-size: 0.85rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.12em;
   color: var(--navy);
   margin-bottom: var(--space-lg);
-  font-family: var(--font-body);
 }
 
 .actionsGrid {
@@ -208,30 +223,36 @@
 
 .actionCard {
   background: var(--cream);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-radius: 1px;
   padding: var(--space-lg);
   overflow-wrap: break-word;
   word-break: break-word;
 }
 
 .actionTitle {
-  font-weight: 600;
+  font-family: var(--font-body);
+  font-weight: 700;
   font-size: 0.95rem;
   color: var(--navy);
   margin-bottom: var(--space-xs);
 }
 
 .actionHow {
-  font-size: 0.88rem;
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
   color: var(--text-secondary);
   line-height: 1.55;
   margin-bottom: var(--space-xs);
 }
 
 .actionTime {
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   color: var(--text-muted);
   font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .sourceAttribution {
@@ -253,23 +274,26 @@
   font-size: 0.9rem;
   padding: var(--space-xl);
   background: var(--white);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
+  border-radius: 1px;
+  border: 1px solid var(--border);
   margin-bottom: var(--space-xl);
 }
 
 .retryBtn {
-  background: var(--amber);
-  color: var(--navy);
-  border: none;
-  padding: 0.4rem 1rem;
-  border-radius: var(--radius-md);
-  font-size: 0.85rem;
-  font-weight: 600;
+  background: var(--navy);
+  color: var(--white);
+  border: 1px solid var(--navy);
+  padding: 8px 16px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   cursor: pointer;
 }
 .retryBtn:hover {
-  opacity: 0.85;
+  background: #15263a;
 }
 
 .spinner {
@@ -311,7 +335,7 @@
 .skeletonTag {
   width: 80px;
   height: 22px;
-  border-radius: 100px;
+  border-radius: 1px;
   background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
@@ -330,8 +354,8 @@
 
 .skeletonAnalysis {
   background: var(--white);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
+  border-radius: 1px;
+  border: 1px solid var(--border);
   padding: var(--space-xl);
   margin-bottom: var(--space-xl);
 }
@@ -348,8 +372,8 @@
 
 .skeletonBar {
   width: 100%;
-  height: 6px;
-  border-radius: 100px;
+  height: 2px;
+  border-radius: 0;
   background: linear-gradient(90deg, var(--cream-dark) 25%, var(--white) 50%, var(--cream-dark) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
@@ -368,8 +392,8 @@
 
 .skeletonMeta {
   background: var(--white);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
+  border-radius: 1px;
+  border: 1px solid var(--border);
   padding: var(--space-xl);
   margin-bottom: var(--space-xl);
 }
@@ -377,22 +401,23 @@
 /* Bill metadata */
 .metaSection {
   background: var(--white);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--shadow-sm);
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  box-shadow: none;
   padding: var(--space-xl);
   margin-bottom: var(--space-xl);
   animation: fadeUp 0.5s 0.2s ease both;
 }
 
 .metaHeading {
-  font-size: 0.85rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.12em;
   color: var(--navy);
   margin-bottom: var(--space-lg);
-  font-family: var(--font-body);
 }
 
 .metaGrid {
@@ -414,15 +439,17 @@
 }
 
 .metaLabel {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
 }
 
 .metaValue {
-  font-size: 0.92rem;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
   color: var(--text-primary);
 }
 
@@ -436,20 +463,21 @@
   display: inline-block;
   background: var(--navy);
   color: var(--white);
-  padding: 0.75rem 1.75rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 0.95rem;
+  padding: 14px 28px;
+  border-radius: 1px;
   font-family: var(--font-body);
-  transition: all 0.2s ease;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
   text-decoration: none;
-  border: none;
+  border: 1px solid var(--navy);
   cursor: pointer;
 }
 
 .congressLink:hover {
-  background: var(--navy-light);
-  transform: translateY(-1px);
+  background: #15263a;
 }
 
 .error {

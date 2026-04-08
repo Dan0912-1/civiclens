@@ -17,36 +17,38 @@
 .movingTitle {
   font-family: var(--font-display);
   font-size: clamp(1.6rem, 3vw, 2.25rem);
-  font-weight: 400;
+  font-weight: 700;
   color: var(--navy);
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   line-height: 1.1;
 }
 
 .movingTitle em {
-  font-style: italic;
-  background: linear-gradient(90deg, #e85a73 0%, #c78ae8 50%, #7aa8e8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  font-style: normal;
+  color: var(--navy);
+  border-bottom: 2px solid var(--amber);
+  padding-bottom: 1px;
+  background: none;
+  -webkit-text-fill-color: currentColor;
 }
 
 .movingMeta {
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
 .pulse {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #355c2a;
+  background: var(--status-active);
   animation: pulse 2s infinite;
 }
 
@@ -65,10 +67,10 @@
 .billCard {
   background: var(--white);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 1px;
   padding: var(--space-lg);
-  box-shadow: 0 4px 20px rgba(42, 22, 56, 0.06);
-  transition: all 0.25s ease;
+  box-shadow: none;
+  transition: border-color 0.2s ease, background 0.2s ease;
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -84,14 +86,13 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, #c8324a 0%, #6b3d8f 50%, #1e4d8c 100%);
+  height: 2px;
+  background: var(--navy);
 }
 
 .billCard:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 14px 36px rgba(42, 22, 56, 0.12);
-  border-color: rgba(107, 61, 143, 0.25);
+  border-color: var(--navy);
+  background: var(--cream);
 }
 
 .billCard:focus-visible {
@@ -111,30 +112,27 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  padding: 4px 11px;
-  border-radius: 100px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 1px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.1em;
+  background: transparent;
+  border: 1px solid currentColor;
 }
 
 .status_active {
-  background: #fbe5e8;
-  color: #a8202e;
-  border: 1px solid rgba(200, 50, 74, 0.3);
+  color: var(--status-failed);
 }
 
 .status_committee {
-  background: #fbe5d4;
-  color: #9a4f12;
-  border: 1px solid rgba(154, 79, 18, 0.3);
+  color: var(--status-pending);
 }
 
 .status_passed {
-  background: #d9e8d2;
-  color: #355c2a;
-  border: 1px solid rgba(53, 92, 42, 0.3);
+  color: var(--status-active);
 }
 
 .statusDot {
@@ -145,54 +143,60 @@
 }
 
 .topicPill {
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  padding: 3px 10px;
-  border-radius: 100px;
+  padding: 3px 8px;
+  border-radius: 1px;
+  background: transparent !important;
+  border: 1px solid currentColor;
 }
 
 .billId {
-  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   color: var(--text-muted);
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font-weight: 500;
+  letter-spacing: 0.05em;
 }
 
 .billTitle {
   font-family: var(--font-display);
-  font-size: 1.3rem;
-  font-weight: 400;
+  font-size: 1.2rem;
+  font-weight: 700;
   color: var(--navy);
   line-height: 1.2;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
   margin: 0;
 }
 
 .impactLine {
-  font-size: 0.88rem;
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
   color: var(--text-secondary);
   line-height: 1.55;
   padding-left: 12px;
-  border-left: 2.5px solid var(--amber);
+  border-left: 2px solid var(--amber);
 }
 
 .impactLine strong {
   color: var(--navy);
-  font-weight: 600;
-  background: linear-gradient(transparent 65%, rgba(107, 61, 143, 0.18) 65%);
-  padding: 0 2px;
+  font-weight: 700;
+  background: none;
+  padding: 0;
 }
 
 .ifPasses {
   display: block;
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--amber);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .actionDate {
@@ -219,11 +223,12 @@
 }
 
 .relevanceLabel {
-  font-size: 0.65rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.1em;
 }
 
 .relevanceBarWrap {
@@ -234,28 +239,32 @@
 
 .relevanceBar {
   flex: 1;
-  height: 5px;
-  background: var(--border-light);
-  border-radius: 100px;
+  height: 2px;
+  background: var(--border);
+  border-radius: 0;
   overflow: hidden;
 }
 
 .relevanceFill {
   height: 100%;
-  border-radius: 100px;
-  background: linear-gradient(90deg, #c8324a 0%, #6b3d8f 50%, #1e4d8c 100%);
+  border-radius: 0;
+  background: var(--amber);
   transition: width 0.6s ease;
 }
 
 .relevanceScore {
-  font-size: 0.78rem;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--navy);
 }
 
 .readMore {
-  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--amber);
   white-space: nowrap;
 }
@@ -265,13 +274,16 @@
 }
 
 .profileHint {
-  background: rgba(107, 61, 143, 0.08);
+  background: transparent;
   color: var(--amber);
-  border: 1px dashed rgba(107, 61, 143, 0.3);
-  border-radius: var(--radius-md);
-  padding: 8px 12px;
-  font-size: 0.75rem;
+  border: 1px dashed var(--amber);
+  border-radius: 1px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   cursor: pointer;
   margin-top: 4px;
   transition: all 0.15s ease;
@@ -279,8 +291,9 @@
 }
 
 .profileHint:hover {
-  background: rgba(107, 61, 143, 0.15);
-  border-color: rgba(107, 61, 143, 0.5);
+  background: var(--cream-dark);
+  border-color: var(--amber-dark);
+  color: var(--amber-dark);
 }
 
 /* ─── Skeleton loading state ─── */
@@ -291,7 +304,7 @@
 
 .skeleton:hover {
   transform: none;
-  box-shadow: 0 4px 20px rgba(42, 22, 56, 0.06);
+  box-shadow: none;
 }
 
 .skelLine {

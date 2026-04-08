@@ -17,14 +17,18 @@
 }
 
 .hero h1 {
+  font-family: var(--font-display);
   font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-sm);
 }
 
 .hero p {
+  font-family: var(--font-serif);
   font-size: 1.1rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .section {
@@ -33,16 +37,21 @@
 }
 
 .section h2 {
-  font-size: 1.4rem;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.015em;
+  text-transform: none;
   margin-bottom: var(--space-md);
 }
 
 .section p {
+  font-family: var(--font-serif);
   color: var(--text-secondary);
   line-height: 1.75;
   margin-bottom: var(--space-md);
-  font-size: 1rem;
+  font-size: 1.05rem;
 }
 
 .section p:last-child {
@@ -52,14 +61,14 @@
 /* Neutrality box */
 .neutralBox {
   background: var(--white);
-  border: 1px solid var(--border-light);
-  border-left: 4px solid var(--amber);
-  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--amber);
+  border-radius: 1px;
   padding: var(--space-xl);
   display: flex;
   gap: var(--space-lg);
   align-items: flex-start;
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .neutralIcon {
@@ -83,22 +92,25 @@
 
 .techCard {
   background: var(--white);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  border-radius: 1px;
   padding: var(--space-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 
 .techBadge {
   display: inline-block;
-  background: var(--navy);
-  color: var(--white);
-  font-size: 0.7rem;
-  font-weight: 700;
+  background: transparent;
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 1px;
   margin-bottom: var(--space-sm);
 }
 
@@ -121,13 +133,14 @@
 .cta {
   background: var(--navy);
   color: var(--white);
-  border-radius: var(--radius-xl);
+  border-radius: 1px;
   padding: var(--space-2xl);
   text-align: center;
   margin-top: var(--space-xl);
 }
 
 .cta h2 {
+  color: var(--white);
   margin-bottom: var(--space-lg);
   font-size: 1.75rem;
 }
@@ -135,16 +148,19 @@
 .ctaBtn {
   background: var(--amber);
   color: var(--navy);
-  padding: 0.75rem 2rem;
-  border-radius: var(--radius-md);
+  padding: 14px 28px;
+  border: 1px solid var(--amber);
+  border-radius: 1px;
+  font-family: var(--font-body);
   font-weight: 700;
-  font-size: 1rem;
-  transition: all 0.2s ease;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
 }
 
 .ctaBtn:hover {
   background: var(--amber-dark);
-  transform: translateY(-1px);
 }
 
 /* Legal links */

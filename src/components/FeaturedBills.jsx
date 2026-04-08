@@ -22,14 +22,14 @@ import styles from './FeaturedBills.module.css'
  */
 
 const TOPIC_STYLES = {
-  Education:    { bg: '#ecdcf2', fg: '#5d3a82' },
-  Healthcare:   { bg: '#d9e8d2', fg: '#355c2a' },
-  Environment:  { bg: '#d4e6f1', fg: '#2a5d8c' },
-  Economy:      { bg: '#fbe5d4', fg: '#9a4f12' },
-  Housing:      { bg: '#fbe5d4', fg: '#9a4f12' },
-  'Civil Rights': { bg: '#ecdcf2', fg: '#5d3a82' },
-  Immigration:  { bg: '#e2eaf7', fg: '#1e4d8c' },
-  Other:        { bg: '#f3e3eb', fg: '#6b3d8f' },
+  Education:    { bg: 'transparent', fg: '#1A3557' },
+  Healthcare:   { bg: 'transparent', fg: '#1F4D3A' },
+  Environment:  { bg: 'transparent', fg: '#1F4D3A' },
+  Economy:      { bg: 'transparent', fg: '#6B4A1A' },
+  Housing:      { bg: 'transparent', fg: '#6B4A1A' },
+  'Civil Rights': { bg: 'transparent', fg: '#1A3557' },
+  Immigration:  { bg: 'transparent', fg: '#1A3557' },
+  Other:        { bg: 'transparent', fg: '#3A4654' },
 }
 
 function StatusBadge({ label, kind }) {

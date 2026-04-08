@@ -21,8 +21,11 @@
 }
 
 .container h1 {
+  font-family: var(--font-display);
   font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-xl);
 }
 
@@ -35,11 +38,12 @@
 }
 
 .section h2 {
-  font-size: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.12em;
   margin-bottom: var(--space-md);
 }
 
@@ -48,20 +52,24 @@
   justify-content: space-between;
   align-items: center;
   background: var(--white);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: 14px 20px;
 }
 
 .label {
+  font-family: var(--font-mono);
   color: var(--text-muted);
-  font-size: 0.9rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .value {
+  font-family: var(--font-serif);
   color: var(--navy);
-  font-weight: 500;
-  font-size: 0.9rem;
+  font-weight: 600;
+  font-size: 0.95rem;
 }
 
 .linkBtn {
@@ -83,11 +91,12 @@
 }
 
 .dangerZone h2 {
-  font-size: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   font-weight: 600;
-  color: #dc2626;
+  color: var(--status-failed);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.12em;
   margin-bottom: var(--space-sm);
 }
 
@@ -99,25 +108,29 @@
 }
 
 .deleteBtn {
-  background: #fff;
-  color: #dc2626;
-  border: 1px solid #fca5a5;
-  border-radius: var(--radius-md);
-  padding: 0.6rem 1.25rem;
-  font-weight: 600;
-  font-size: 0.9rem;
+  background: var(--white);
+  color: var(--status-failed);
+  border: 1px solid var(--status-failed);
+  border-radius: 1px;
+  padding: 10px 18px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   transition: all 0.15s;
 }
 
 .deleteBtn:hover {
-  background: #fef2f2;
-  border-color: #dc2626;
+  background: var(--status-failed);
+  color: var(--white);
 }
 
 .confirmBox {
-  background: #fef2f2;
-  border: 1px solid #fca5a5;
-  border-radius: var(--radius-md);
+  background: #F5ECEC;
+  border: 1px solid var(--status-failed);
+  border-left: 2px solid var(--status-failed);
+  border-radius: 1px;
   padding: var(--space-lg);
 }
 
@@ -140,17 +153,21 @@
 }
 
 .confirmDeleteBtn {
-  background: #dc2626;
+  background: var(--status-failed);
   color: #fff;
-  border-radius: var(--radius-md);
-  padding: 0.6rem 1.25rem;
-  font-weight: 600;
-  font-size: 0.9rem;
+  border: 1px solid var(--status-failed);
+  border-radius: 1px;
+  padding: 10px 18px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   transition: background 0.15s;
 }
 
 .confirmDeleteBtn:hover {
-  background: #b91c1c;
+  background: #4F1515;
 }
 
 .confirmDeleteBtn:disabled {
@@ -162,10 +179,13 @@
   background: var(--white);
   color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 0.6rem 1.25rem;
-  font-weight: 500;
-  font-size: 0.9rem;
+  border-radius: 1px;
+  padding: 10px 18px;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   transition: all 0.15s;
 }
 

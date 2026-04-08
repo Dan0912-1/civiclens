@@ -5,15 +5,17 @@
 }
 
 .container {
-  max-width: 600px;
+  max-width: 640px;
   margin: 0 auto;
 }
 
 /* Progress */
 .progress {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
+  align-items: flex-start;
   margin-bottom: var(--space-2xl);
+  gap: var(--space-md);
 }
 
 .progressStep {
@@ -22,22 +24,23 @@
   align-items: center;
   gap: var(--space-sm);
   flex: 1;
-  max-width: 140px;
+  max-width: 160px;
 }
 
 .dot {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: 1px;
   background: var(--white);
-  border: 2px solid var(--border);
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 .dotActive {
@@ -53,19 +56,22 @@
 }
 
 .progressLabel {
-  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
   color: var(--text-muted);
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
+  text-align: center;
 }
 
 /* Card */
 .card {
   background: var(--white);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-light);
-  box-shadow: var(--shadow-md);
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  box-shadow: none;
   padding: var(--space-2xl);
   animation: fadeUp 0.4s ease forwards;
 }
@@ -75,15 +81,19 @@
 }
 
 .stepHeading {
-  font-size: 1.6rem;
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-weight: 700;
   color: var(--navy);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-xs);
 }
 
 .stepSub {
-  color: var(--text-muted);
+  font-family: var(--font-serif);
+  color: var(--text-secondary);
   margin-bottom: var(--space-xl);
-  font-size: 0.95rem;
+  font-size: 0.98rem;
 }
 
 /* Fields */
@@ -93,32 +103,34 @@
 
 .label {
   display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
   margin-bottom: var(--space-sm);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.1em;
 }
 
 .req {
-  color: var(--amber-dark);
+  color: var(--amber);
 }
 
 .optional {
   font-weight: 400;
   color: var(--text-muted);
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
 }
 
 .select {
   width: 100%;
-  padding: 0.7rem 1rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 1rem;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
   background: var(--white);
   color: var(--text-primary);
   transition: border-color 0.2s;
@@ -132,6 +144,7 @@
 .select:focus {
   outline: none;
   border-color: var(--navy);
+  box-shadow: 0 0 0 1px var(--navy);
 }
 
 .ageGrid {
@@ -141,14 +154,16 @@
 }
 
 .ageBtn {
-  padding: 0.7rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.95rem;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   font-weight: 500;
+  letter-spacing: 0.04em;
   color: var(--text-secondary);
   background: var(--white);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   text-align: center;
 }
 
@@ -171,14 +186,17 @@
 
 .toggleBtn {
   flex: 1;
-  padding: 0.7rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.95rem;
-  font-weight: 500;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-secondary);
   background: var(--white);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .toggleActive {
@@ -195,15 +213,16 @@
 }
 
 .familyBtn {
-  padding: 0.65rem 1rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.9rem;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
   font-weight: 400;
   color: var(--text-secondary);
   background: var(--white);
   text-align: left;
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
 }
 
 .familyBtn:hover {
@@ -231,43 +250,52 @@
 .interestBtn {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: flex-end;
   gap: var(--space-xs);
-  padding: var(--space-md) var(--space-sm);
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-lg);
-  font-size: 0.85rem;
-  font-weight: 500;
+  padding: var(--space-lg) var(--space-md);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-secondary);
   background: var(--white);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
+  min-height: 90px;
+  text-align: left;
 }
 
 .interestBtn:hover {
   border-color: var(--navy);
+  border-top-color: var(--amber);
   color: var(--navy);
-  background: var(--cream);
 }
 
 .interestActive,
 .interestActive:hover {
   background: var(--navy);
   border-color: var(--navy);
+  border-top-color: var(--amber);
   color: var(--white);
 }
 
 .interestEmoji {
-  font-size: 1.5rem;
+  display: none;
 }
 
 /* Textarea */
 .textarea {
   width: 100%;
-  padding: 0.7rem 1rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.95rem;
-  line-height: 1.5;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-serif);
+  font-size: 0.98rem;
+  line-height: 1.55;
   color: var(--text-primary);
   background: var(--white);
   resize: vertical;
@@ -277,6 +305,7 @@
 .textarea:focus {
   outline: none;
   border-color: var(--navy);
+  box-shadow: 0 0 0 1px var(--navy);
 }
 
 /* Nav row */
@@ -286,15 +315,18 @@
   gap: var(--space-md);
   align-items: center;
   padding-top: var(--space-lg);
-  border-top: 1px solid var(--border-light);
+  border-top: 1px solid var(--border);
 }
 
 .backBtn {
   color: var(--text-muted);
-  font-size: 0.95rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
   font-weight: 500;
-  padding: 0.6rem 1rem;
-  border-radius: var(--radius-md);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 12px 16px;
+  border-radius: 1px;
   transition: color 0.2s;
 }
 
@@ -305,16 +337,19 @@
 .nextBtn {
   background: var(--navy);
   color: var(--white);
-  padding: 0.75rem 1.75rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 1rem;
-  transition: all 0.2s ease;
+  padding: 12px 24px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--navy);
+  transition: background 0.15s ease;
 }
 
 .nextBtn:hover {
-  background: var(--navy-light);
-  transform: translateY(-1px);
+  background: #15263a;
 }
 
 .nextBtnDisabled {
@@ -328,13 +363,15 @@
   margin-bottom: var(--space-lg);
   padding: var(--space-lg);
   background: var(--white);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--amber);
+  border-radius: 1px;
 }
 
 .signInPrompt p {
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
+  color: var(--text-secondary);
   margin-bottom: var(--space-md);
 }
 
@@ -343,23 +380,27 @@
   align-items: center;
   gap: var(--space-sm);
   background: var(--navy);
-  border: none;
-  border-radius: var(--radius-md);
-  padding: 0.6rem 1.25rem;
-  font-size: 0.9rem;
-  font-weight: 600;
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  padding: 10px 18px;
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--white);
-  transition: all 0.2s;
+  transition: background 0.15s;
   cursor: pointer;
 }
 
 .signInBtn:hover {
-  background: var(--navy-light);
-  transform: translateY(-1px);
+  background: #15263a;
 }
 
 .error {
-  color: #dc2626;
-  font-size: 0.875rem;
+  color: #D97757;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
   margin-bottom: var(--space-md);
 }
