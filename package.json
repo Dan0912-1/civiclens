@@ -33,6 +33,7 @@
     "google-auth-library": "^10.6.2",
     "helmet": "^8.1.0",
     "node-cron": "^4.2.1",
+    "pdf-parse": "^2.4.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.22.0",
