@@ -11,9 +11,9 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
-// pdf-parse has an init-time debug path that reads a sample PDF when imported
-// from its package index. Import the inner module directly to avoid that.
-import pdfParse from 'pdf-parse/lib/pdf-parse.js'
+// pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
+// v1 debug-on-import quirk is gone in v2, so we can import normally.
+import { PDFParse } from 'pdf-parse'
 
 // Extract the first balanced JSON object from a Claude response. Handles
 // ```json fences, leading prose, and — critically — trailing commentary that
@@ -1783,7 +1783,9 @@ async function extractTextFromLegiScanDoc(textData) {
   }
   if (mime.includes('pdf')) {
     try {
-      const parsed = await pdfParse(decoded)
+      const parser = new PDFParse({ data: new Uint8Array(decoded) })
+      const parsed = await parser.getText()
+      await parser.destroy().catch(() => {})
       return (parsed.text || '').replace(/\s+/g, ' ').trim()
     } catch (err) {
       console.error(`[billtext] PDF parse failed:`, err.message)
@@ -1796,7 +1798,9 @@ async function extractTextFromLegiScanDoc(textData) {
   // Unknown mime — try PDF first (many bills are PDF with an odd mime),
   // then fall through to treating it as text.
   try {
-    const parsed = await pdfParse(decoded)
+    const parser = new PDFParse({ data: new Uint8Array(decoded) })
+    const parsed = await parser.getText()
+    await parser.destroy().catch(() => {})
     if (parsed.text?.trim()) return parsed.text.replace(/\s+/g, ' ').trim()
   } catch {}
   return decoded.toString('utf-8').replace(/\s+/g, ' ').trim()
