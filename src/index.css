@@ -73,13 +73,24 @@
   --shadow-md: 0 1px 0 rgba(10,25,41,0.06), 0 0 0 1px rgba(10,25,41,0.04);
   --shadow-lg: 0 2px 0 rgba(10,25,41,0.08), 0 0 0 1px rgba(10,25,41,0.06);
   --shadow-amber: 0 0 0 1px rgba(164,126,59,0.30);
+
+  /* Easing — premium "iOS-style" curves */
+  --ease-out:        cubic-bezier(0.22, 1, 0.36, 1);   /* gentle decel */
+  --ease-emphasized: cubic-bezier(0.32, 0.72, 0, 1);   /* spring-y, content-aware */
+  --ease-standard:   cubic-bezier(0.4, 0.0, 0.2, 1);   /* material standard */
+  --dur-fast:   180ms;
+  --dur-base:   320ms;
+  --dur-slow:   520ms;
+  --dur-xslow:  720ms;
 }
 
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--cream);
+  /* Navy backdrop: shows behind safe-area insets at top + bottom on iOS so the
+     overscroll bounce reveals navy instead of white. Body stays cream below. */
+  background-color: var(--navy);
   /* Lock horizontal axis: prevent any sideways drag/overscroll on iOS */
   width: 100%;
   max-width: 100vw;
@@ -147,7 +158,7 @@ input, select, textarea {
 
 /* Animations */
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(16px); }
+  from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -167,9 +178,17 @@ input, select, textarea {
 }
 
 .animate-fade-up {
-  animation: fadeUp 0.5s ease forwards;
+  animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.4s ease forwards;
+  animation: fadeIn var(--dur-base) var(--ease-out) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
