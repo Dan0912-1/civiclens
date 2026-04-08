@@ -11,6 +11,9 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
+// pdf-parse has an init-time debug path that reads a sample PDF when imported
+// from its package index. Import the inner module directly to avoid that.
+import pdfParse from 'pdf-parse/lib/pdf-parse.js'
 
 // Extract the first balanced JSON object from a Claude response. Handles
 // ```json fences, leading prose, and — critically — trailing commentary that
@@ -904,7 +907,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     if (memCached) return { ...b, billData: memCached }
 
     const dbCached = textCache.get(key)
-    if (dbCached && (dbCached.bill_text || dbCached.crs_summary)) {
+    if (dbCached && (dbCached.bill_text || dbCached.crs_summary) && !isStaleBillTextCache(dbCached)) {
       const billData = {
         text: dbCached.bill_text || null,
         wordCount: dbCached.word_count || 0,
@@ -1672,6 +1675,23 @@ console.log('   Feed pre-warm cron: ✓ scheduled (weekdays 6:00 AM ET / 11:00 U
 
 const BILL_TEXT_WORD_LIMIT = 4000
 
+// Heuristic: cached entries from the old PDF-fallback bug stored just the
+// bill.description (typically <60 words) as bill_text. We treat any cached
+// entry below this threshold (and without a CRS summary) as stale so the new
+// extractor re-runs on next request. Real bill texts are always hundreds to
+// thousands of words; real bill descriptions/titles are ~20-40 words.
+const BILL_TEXT_STALE_WORD_THRESHOLD = 60
+
+function isStaleBillTextCache(cached) {
+  if (!cached) return false
+  if (cached.version === 'description only') return true
+  const wc = cached.word_count || 0
+  const hasCrs = !!cached.crs_summary
+  if (hasCrs) return false
+  if (wc > 0 && wc < BILL_TEXT_STALE_WORD_THRESHOLD) return true
+  return false
+}
+
 function stripHtml(html) {
   return html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -1732,41 +1752,105 @@ async function getBillTextsFromSupabase(cacheKeys) {
   } catch { return new Map() }
 }
 
-// Fetch bill text from LegiScan using getBill (to get doc_id) then getBillText
+// Strip RTF control codes to plain text. Handles the subset of RTF that state
+// legislatures actually emit (Word-exported bills). Not a full parser, but
+// good enough to feed Claude the section text instead of binary garbage.
+function stripRtf(rtf) {
+  return rtf
+    .replace(/\\'[0-9a-fA-F]{2}/g, ' ')          // hex-escaped chars
+    .replace(/\\[a-zA-Z]+-?\d* ?/g, ' ')         // RTF control words
+    .replace(/[{}]/g, ' ')                        // groups
+    .replace(/\\\*/g, ' ')                        // ignorable groups marker
+    .replace(/\\\r?\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Extract plain text from a single LegiScan getBillText response based on its
+// mime type. Returns empty string if the format is unparseable.
+async function extractTextFromLegiScanDoc(textData) {
+  const doc = textData.text?.doc
+  const mime = (textData.text?.mime || '').toLowerCase()
+  if (!doc) return ''
+
+  const decoded = Buffer.from(doc, 'base64')
+
+  if (mime.includes('html') || mime.includes('htm')) {
+    return stripHtml(decoded.toString('utf-8'))
+  }
+  if (mime.includes('text') && !mime.includes('rtf')) {
+    return decoded.toString('utf-8').replace(/\s+/g, ' ').trim()
+  }
+  if (mime.includes('pdf')) {
+    try {
+      const parsed = await pdfParse(decoded)
+      return (parsed.text || '').replace(/\s+/g, ' ').trim()
+    } catch (err) {
+      console.error(`[billtext] PDF parse failed:`, err.message)
+      return ''
+    }
+  }
+  if (mime.includes('rtf') || mime.includes('richtext')) {
+    return stripRtf(decoded.toString('utf-8'))
+  }
+  // Unknown mime — try PDF first (many bills are PDF with an odd mime),
+  // then fall through to treating it as text.
+  try {
+    const parsed = await pdfParse(decoded)
+    if (parsed.text?.trim()) return parsed.text.replace(/\s+/g, ' ').trim()
+  } catch {}
+  return decoded.toString('utf-8').replace(/\s+/g, ' ').trim()
+}
+
+// Fetch bill text from LegiScan using getBill (to get doc_id) then getBillText.
+// Iterates texts[] latest-first, preferring HTML versions when available, and
+// PDF-parses when only PDFs are on offer. Previously this would silently fall
+// back to bill.description (often just the act title) for any non-HTML mime,
+// which caused state bills like CT raised bills to get personalized from the
+// title alone — missing entire sections of the bill text.
 async function fetchBillTextFromLegiScan(legiscanBillId) {
   try {
-    // First get the bill to find available text documents
     const billData = await legiscanRequest('getBill', { id: legiscanBillId })
-    const texts = billData.bill?.texts || []
+    const texts = (billData.bill?.texts || []).filter(t => t.doc_id)
     if (!texts.length) return null
 
-    // Get the latest text version
-    const latest = texts[texts.length - 1]
-    if (!latest.doc_id) return null
+    // Sort newest → oldest so we prefer the latest version of the bill.
+    const ordered = [...texts].reverse()
 
-    const textData = await legiscanRequest('getBillText', { id: latest.doc_id })
-    const doc = textData.text?.doc
-    const mime = textData.text?.mime || ''
+    // Pass 1: prefer HTML (cleanest extraction). Pass 2: any format.
+    const htmlish = ordered.filter(t => /html?/i.test(t.mime_type || t.mime || ''))
+    const rest = ordered.filter(t => !htmlish.includes(t))
+    const tryOrder = [...htmlish, ...rest]
 
-    if (!doc) return null
-
-    // doc is base64-encoded — decode it
-    const decoded = Buffer.from(doc, 'base64')
-    let plainText = ''
-
-    if (mime.includes('html') || mime.includes('htm')) {
-      plainText = stripHtml(decoded.toString('utf-8'))
-    } else if (mime.includes('text')) {
-      plainText = decoded.toString('utf-8').replace(/\s+/g, ' ').trim()
-    } else {
-      // PDF or RTF — use the bill description as fallback
-      plainText = billData.bill?.description || ''
+    for (const candidate of tryOrder) {
+      try {
+        const textData = await legiscanRequest('getBillText', { id: candidate.doc_id })
+        const plainText = await extractTextFromLegiScanDoc(textData)
+        if (plainText && plainText.split(/\s+/).length >= 20) {
+          const wordCount = plainText.split(/\s+/).length
+          return {
+            text: plainText,
+            wordCount,
+            version: candidate.type || 'Latest version',
+          }
+        }
+      } catch (err) {
+        console.error(`[billtext] getBillText failed for doc ${candidate.doc_id}:`, err.message)
+      }
     }
 
-    if (!plainText) return null
-
-    const wordCount = plainText.split(/\s+/).length
-    return { text: plainText, wordCount, version: latest.type || 'Latest version' }
+    // Last-resort fallback: bill description. Flagged so the cache layer can
+    // recognize it as degraded and retry on next request.
+    const desc = billData.bill?.description || ''
+    if (desc) {
+      return {
+        text: desc,
+        wordCount: desc.split(/\s+/).length,
+        version: 'description only',
+        degraded: true,
+      }
+    }
+    return null
   } catch (err) {
     console.error(`[billtext] LegiScan failed for bill ${legiscanBillId}:`, err.message)
     return null
@@ -1784,7 +1868,7 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
 
   // L2: Supabase persistent
   const dbCached = await getBillTextFromSupabase(cacheKey)
-  if (dbCached && (dbCached.bill_text || dbCached.crs_summary)) {
+  if (dbCached && (dbCached.bill_text || dbCached.crs_summary) && !isStaleBillTextCache(dbCached)) {
     const result = {
       text: dbCached.bill_text || null,
       wordCount: dbCached.word_count || 0,
