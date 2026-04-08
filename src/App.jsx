@@ -147,7 +147,8 @@ export default function App() {
         const resp = await fetch(`${getApiBase()}/api/version`)
         if (!resp.ok) return
         const { minVersion } = await resp.json()
-        const installed = '1.0.0' // keep in sync with package.json
+        // Injected by Vite at build time from package.json — see vite.config.js
+        const installed = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0'
         if (compareVersions(installed, minVersion) < 0) {
           // User is running an outdated version — block usage
           document.getElementById('force-update')?.remove()

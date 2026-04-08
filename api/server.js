@@ -62,7 +62,9 @@ const ALLOWED_ORIGINS = new Set([
   'https://localhost',                  // Android Capacitor app
   'http://localhost:5173',              // Vite dev server
   'http://localhost:4173',              // Vite preview
-  'https://civiclens-six.vercel.app', // Vercel deployment
+  'https://capitolkey.vercel.app',      // Production (post-rename)
+  'https://civiclens-six.vercel.app',   // Legacy Vercel URL — kept to honor
+                                        //   old shared links and cached SW
   ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
 ])
 
@@ -125,6 +127,18 @@ const authLimiter = rateLimit({
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
+
+// Warn loudly at startup if core API keys are missing. We DON'T hard-exit
+// because the server can still serve cached bills + degraded functionality,
+// but silent undefined keys were causing mystifying 401s from LegiScan/Claude
+// instead of an obvious root cause in the Railway logs.
+const missingKeys = []
+if (!LEGISCAN_KEY)  missingKeys.push('LEGISCAN_API_KEY')
+if (!ANTHROPIC_KEY) missingKeys.push('ANTHROPIC_API_KEY')
+if (missingKeys.length) {
+  console.error(`[startup] WARNING: missing env vars — ${missingKeys.join(', ')}. ` +
+    `Dependent endpoints will return errors until these are set.`)
+}
 // FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
 const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
   ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : null

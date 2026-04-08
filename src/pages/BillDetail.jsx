@@ -50,6 +50,21 @@ export default function BillDetail() {
   const [error, setError] = useState('')
   const [personalizationError, setPersonalizationError] = useState(false)
 
+  // Reset per-bill state whenever the route params change so navigating from
+  // Bill A → Bill B doesn't show stale A data for a frame.
+  useEffect(() => {
+    trackedRef.current = false
+    setAnalysis(passedAnalysis)
+    setBill(passedBill)
+    setDetail(null)
+    setError('')
+    setPersonalizationError(false)
+    // intentionally excluding passedBill/passedAnalysis — they're read as
+    // initial snapshots, not reactive dependencies. Re-running on route
+    // param change is what we want.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [congress, type, number])
+
   // Track view_detail interaction once we have analysis (for topic_tag)
   useEffect(() => {
     if (trackedRef.current || !analysis) return
@@ -70,51 +85,99 @@ export default function BillDetail() {
     doTrack()
   }, [analysis, user, congress, type, number])
 
+  // Fetch bill detail when route params change. Guarded by a cancelled flag
+  // so that if the user navigates away (or to a different bill) mid-fetch we
+  // drop the stale response on the floor instead of calling setState on an
+  // unmounted component or overwriting the new bill's data.
   useEffect(() => {
-    fetchBillDetail()
+    let cancelled = false
+    async function run() {
+      setLoading(true)
+      try {
+        const legiscanId = passedBill?.legiscan_bill_id
+          || new URLSearchParams(window.location.search).get('legiscan_id')
+          || ''
+        const url = legiscanId
+          ? `${API_BASE}/api/bill/${congress}/${type}/${number}?legiscan_id=${legiscanId}`
+          : `${API_BASE}/api/bill/${congress}/${type}/${number}`
+        const resp = await fetch(url)
+        if (cancelled) return
+        if (resp.ok) {
+          const data = await resp.json()
+          if (cancelled) return
+          setDetail(data.bill || data)
+          if (!bill && data.bill) {
+            setBill({
+              congress: data.bill.congress,
+              type: data.bill.type,
+              number: data.bill.number,
+              title: data.bill.title,
+              originChamber: data.bill.originChamber,
+              latestAction: data.bill.latestAction?.text || 'No recent action',
+              latestActionDate: data.bill.latestAction?.actionDate || '',
+              url: data.bill.url,
+              legiscan_bill_id: data.bill.legiscan_bill_id,
+              state: data.bill.state,
+              isStateBill: data.bill.state && data.bill.state !== 'US',
+            })
+          }
+        } else {
+          setError('Could not load bill details.')
+        }
+      } catch {
+        if (!cancelled) setError('Network error loading bill details.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [congress, type, number])
 
-  async function fetchBillDetail() {
-    setLoading(true)
-    try {
-      const legiscanId = passedBill?.legiscan_bill_id || new URLSearchParams(window.location.search).get('legiscan_id') || ''
-      const url = legiscanId
-        ? `${API_BASE}/api/bill/${congress}/${type}/${number}?legiscan_id=${legiscanId}`
-        : `${API_BASE}/api/bill/${congress}/${type}/${number}`
-      const resp = await fetch(url)
-      if (resp.ok) {
-        const data = await resp.json()
-        setDetail(data.bill || data)
-        // If we didn't have bill info passed from Results, build it from API
-        if (!bill && data.bill) {
-          setBill({
-            congress: data.bill.congress,
-            type: data.bill.type,
-            number: data.bill.number,
-            title: data.bill.title,
-            originChamber: data.bill.originChamber,
-            latestAction: data.bill.latestAction?.text || 'No recent action',
-            latestActionDate: data.bill.latestAction?.actionDate || '',
-            url: data.bill.url,
-            legiscan_bill_id: data.bill.legiscan_bill_id,
-            state: data.bill.state,
-            isStateBill: data.bill.state && data.bill.state !== 'US',
-          })
-        }
-      } else {
-        setError('Could not load bill details.')
-      }
-    } catch {
-      setError('Network error loading bill details.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Re-fetch personalization once bill data loads. Same cancellation pattern
+  // so a pending Bill A request can't overwrite Bill B's analysis after
+  // navigation.
+  useEffect(() => {
+    if (!bill || analysis) return
+    let cancelled = false
+    // Capture the in-flight bill identity; abort if the route changes.
+    const requestBillId = `${bill.type}${bill.number}-${bill.congress}`
+    const currentRouteId = `${type.toUpperCase()}${number}-${congress}`
+    if (requestBillId !== currentRouteId) return
 
-  async function fetchPersonalization() {
+    async function run() {
+      const stored = sessionStorage.getItem('civicProfile')
+      if (!stored) return
+      setPersonalizationError(false)
+      const profile = JSON.parse(stored)
+      try {
+        const resp = await fetch(`${API_BASE}/api/personalize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bill, profile })
+        })
+        if (cancelled) return
+        if (resp.ok) {
+          const data = await resp.json()
+          if (cancelled) return
+          if (data.analysis) setAnalysis(data.analysis)
+          else setPersonalizationError(true)
+        } else {
+          setPersonalizationError(true)
+        }
+      } catch {
+        if (!cancelled) setPersonalizationError(true)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [bill, analysis, congress, type, number])
+
+  // Manual retry handler used by the "Try again" button in the UI.
+  async function retryPersonalization() {
     const stored = sessionStorage.getItem('civicProfile')
     if (!stored || !bill) return
-
     setPersonalizationError(false)
     const profile = JSON.parse(stored)
     try {
@@ -134,11 +197,6 @@ export default function BillDetail() {
       setPersonalizationError(true)
     }
   }
-
-  // Re-fetch personalization once bill data loads from API
-  useEffect(() => {
-    if (bill && !analysis) fetchPersonalization()
-  }, [bill])
 
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const displayTitle = bill?.title || detail?.title || `${type.toUpperCase()} ${number}`
@@ -283,7 +341,7 @@ export default function BillDetail() {
             <span>Personalization unavailable right now.</span>
             <button
               className={styles.retryBtn}
-              onClick={() => fetchPersonalization()}
+              onClick={() => retryPersonalization()}
             >
               Try again
             </button>

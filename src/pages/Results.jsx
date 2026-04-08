@@ -103,11 +103,15 @@ export default function Results() {
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
   }, [user])
 
-  // Fetch bills when profile is ready
+  // Fetch bills when profile is ready. Also re-fetch once the interaction
+  // summary loads so the interest-weighted ranking uses the user's click
+  // history on the first render (otherwise new logins see generic ranking
+  // until their next pull-to-refresh).
   useEffect(() => {
     if (!profile) return
     fetchBills()
-  }, [profile])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, interactionSummary])
 
   // Personalize a batch of bills in a single API call (all Claude calls run in parallel server-side).
   // Auto-retries any failed bills once to recover from transient errors before surfacing failure to the user.
@@ -172,7 +176,9 @@ export default function Results() {
     // Client-side retry pass for any bills that failed (server already retries 4x;
     // this catches network blips, cold-starts, and partial failures)
     if (failed.length) {
-      console.log(`[personalize] retrying ${failed.length} failed bill(s) client-side`)
+      if (import.meta.env.DEV) {
+        console.log(`[personalize] retrying ${failed.length} failed bill(s) client-side`)
+      }
       await new Promise(r => setTimeout(r, 1500))
       const second = await attempt(failed)
 
