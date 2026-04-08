@@ -5,12 +5,20 @@
 
 /* ─── Hero ─── */
 .heroWrap {
-  background:
-    radial-gradient(ellipse 70% 55% at 15% 5%, #f7d4d4 0%, transparent 60%),
-    radial-gradient(ellipse 65% 50% at 85% 10%, #d4dff5 0%, transparent 60%),
-    radial-gradient(ellipse 60% 45% at 50% 100%, #ecdcf2 0%, transparent 60%),
-    var(--cream);
+  background: var(--cream);
   color: var(--navy);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.heroWrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(10,25,41,0.02) 0%, transparent 40%),
+    repeating-linear-gradient(90deg, transparent 0 60px, rgba(10,25,41,0.015) 60px 61px);
+  pointer-events: none;
 }
 
 .hero {
@@ -28,27 +36,52 @@
   animation: fadeUp 0.6s ease forwards;
 }
 
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: var(--space-md);
+  display: block;
+  position: relative;
+  padding-left: 32px;
+}
+
+.eyebrow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 24px;
+  height: 1px;
+  background: var(--amber);
+}
+
 .headline {
-  font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 1.12;
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 4vw, 3.25rem);
+  line-height: 1.08;
   margin-bottom: var(--space-lg);
-  font-weight: 900;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
 }
 
 .accent {
-  color: var(--amber);
-  background: linear-gradient(90deg, #e85a73 0%, #c78ae8 50%, #7aa8e8 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-style: italic;
+  color: var(--navy);
+  font-style: normal;
+  border-bottom: 2px solid var(--amber);
+  padding-bottom: 2px;
 }
 
 .subhead {
-  font-size: 1.05rem;
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
   color: var(--text-secondary);
-  line-height: 1.7;
-  max-width: 440px;
+  line-height: 1.65;
+  max-width: 480px;
   margin-bottom: var(--space-xl);
   font-weight: 400;
 }
@@ -61,53 +94,60 @@
 
 .ctaPrimary {
   background: var(--navy);
-  color: var(--cream);
-  padding: 0.85rem 1.75rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 1rem;
-  transition: all 0.2s ease;
-  box-shadow: 0 4px 16px rgba(42,22,56,0.2);
+  color: var(--white);
+  padding: 14px 28px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
+  border: 1px solid var(--navy);
 }
 
 .ctaPrimary:hover {
-  background: #3d2548;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 24px rgba(42,22,56,0.3);
+  background: #15263a;
 }
 
 .ctaSecondary {
   background: transparent;
   color: var(--navy);
-  padding: 0.85rem 1.75rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 1rem;
-  border: 1.5px solid var(--navy);
-  transition: all 0.2s ease;
+  padding: 14px 28px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--navy);
+  transition: background 0.15s ease;
   cursor: pointer;
 }
 
 .ctaSecondary:hover {
-  background: rgba(42,22,56,0.06);
-  transform: translateY(-1px);
+  background: rgba(10,25,41,0.05);
 }
 
 /* ─── Trust strip (below hero CTAs) ─── */
 .trustStrip {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 18px;
   align-items: center;
-  margin-top: var(--space-md);
-  font-size: 0.78rem;
-  font-weight: 600;
+  margin-top: var(--space-xl);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
   color: var(--text-muted);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .trustCheck {
-  color: #355c2a;
+  color: var(--amber);
   font-weight: 700;
   margin-right: 4px;
 }
@@ -129,12 +169,25 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
-  border-radius: 100px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.chamberHouse {
+  background: transparent !important;
+  color: var(--house-text) !important;
+  border: 1px solid var(--house) !important;
+}
+
+.chamberSenate {
+  background: transparent !important;
+  color: var(--senate-text) !important;
+  border: 1px solid var(--senate) !important;
 }
 
 .chamberDot {
@@ -173,11 +226,14 @@
 }
 
 .demoChamberPill {
-  padding: 3px 10px;
-  border-radius: 100px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 1px;
+  border: 1px solid currentColor;
+  background: transparent !important;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
@@ -194,25 +250,27 @@
 }
 
 .chip {
-  background: rgba(107,61,143,0.1);
-  color: var(--amber);
-  border: 1px solid rgba(107,61,143,0.25);
-  padding: 3px 12px;
-  border-radius: 100px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  background: var(--white);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .demoCard {
   background: var(--white);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 1px;
   padding: var(--space-xl);
-  box-shadow: 0 10px 40px rgba(42,22,56,0.1);
+  box-shadow: none;
   position: relative;
   overflow: hidden;
-  min-height: 220px;
+  min-height: 240px;
   transition: opacity 0.4s ease;
 }
 
@@ -220,8 +278,20 @@
   content: '';
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #c8324a 0%, #6b3d8f 50%, #1e4d8c 100%);
+  height: 2px;
+  background: var(--amber);
+}
+
+.demoCard::after {
+  content: 'LIVE · CONGRESS.GOV';
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
 }
 
 .demoCardFading {
@@ -230,23 +300,26 @@
 
 .demoTag {
   display: inline-block;
-  padding: 3px 12px;
-  border-radius: 100px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 1px;
+  border: 1px solid currentColor;
+  background: transparent !important;
+  font-family: var(--font-mono) !important;
+  font-size: 0.62rem !important;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 
 .demoTitle {
   font-family: var(--font-display);
-  font-size: 1.35rem;
-  font-weight: 400;
+  font-size: 1.4rem;
+  font-weight: 700;
   color: var(--navy);
-  line-height: 1.25;
+  line-height: 1.2;
   margin-bottom: var(--space-md);
   min-height: 1.7em;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .cursor {
@@ -259,10 +332,13 @@
 }
 
 .demoSummary {
-  font-size: 0.9rem;
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
   color: var(--text-secondary);
   line-height: 1.6;
   margin-bottom: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border-light);
   animation: fadeIn 0.5s ease;
 }
 
@@ -270,18 +346,20 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  font-size: 0.8rem;
-  color: #355c2a;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--status-active);
   font-weight: 600;
   animation: fadeIn 0.5s ease;
 }
 
 .relevanceDot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #355c2a;
-  animation: pulse 2s infinite;
+  background: var(--status-active);
 }
 
 .demoDots {
@@ -292,17 +370,14 @@
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(42,22,56,0.2);
-  transition: all 0.3s ease;
+  width: 18px;
+  height: 2px;
+  background: var(--border);
+  transition: background 0.3s ease;
 }
 
 .dotActive {
   background: var(--amber);
-  width: 24px;
-  border-radius: 4px;
 }
 
 /* ─── Search Section ─── */
@@ -333,10 +408,11 @@
 
 .searchInput {
   flex: 1;
-  padding: 0.75rem 1rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 1rem;
+  padding: 14px 16px;
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
   color: var(--text-primary);
   background: var(--white);
   transition: border-color 0.2s;
@@ -344,18 +420,23 @@
 
 .searchInput:focus {
   outline: none;
-  border-color: var(--navy);
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px var(--amber);
 }
 
 .searchBtn {
   background: var(--navy);
   color: var(--white);
-  padding: 0.75rem 1.5rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 0.95rem;
-  transition: all 0.2s ease;
+  padding: 14px 24px;
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
   white-space: nowrap;
+  border: 1px solid var(--navy);
 }
 
 .searchBtn:hover {
@@ -371,21 +452,24 @@
 }
 
 .searchChip {
-  padding: 0.35rem 0.85rem;
+  padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 100px;
-  font-size: 0.8rem;
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
   font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text-secondary);
   background: var(--white);
-  transition: all 0.2s ease;
+  transition: all 0.15s ease;
   cursor: pointer;
 }
 
 .searchChip:hover {
   border-color: var(--amber);
   color: var(--amber);
-  background: rgba(107, 61, 143, 0.08);
+  background: var(--cream-dark);
 }
 
 /* ─── Topic Cards ─── */
@@ -411,32 +495,48 @@
 .topicCard {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-lg) var(--space-sm);
-  background: var(--topic-bg, var(--white));
-  border: 1px solid var(--border-light);
-  border-top: 4px solid var(--topic-color, var(--amber));
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s ease;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  border-radius: 1px;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
   cursor: pointer;
+  min-height: 110px;
+  text-align: left;
 }
 
 .topicCard:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateY(-3px);
+  background: var(--cream-dark);
+  border-top-color: var(--amber);
 }
 
 .topicEmoji {
-  font-size: 1.75rem;
+  display: none;
 }
 
 .topicLabel {
-  font-size: 0.85rem;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
   font-weight: 700;
-  color: var(--topic-color, var(--navy));
-  text-align: center;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.topicCard::after {
+  content: 'VIEW →';
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  color: var(--amber);
+  font-weight: 600;
+  align-self: flex-end;
 }
 
 /* ─── Timeline ─── */
@@ -465,21 +565,19 @@
 .timelineDot {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  background: var(--amber);
+  border-radius: 1px;
+  background: var(--navy);
   color: var(--white);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-family: var(--font-mono);
+  font-weight: 600;
   font-size: 0.85rem;
   margin-bottom: var(--space-sm);
   flex-shrink: 0;
+  border: 1px solid var(--navy);
 }
-
-.timelineStep:nth-child(1) .timelineDot { background: #c8324a; }  /* House red */
-.timelineStep:nth-child(3) .timelineDot { background: #6b3d8f; }  /* plum */
-.timelineStep:nth-child(5) .timelineDot { background: #1e4d8c; }  /* Senate blue */
 
 .timelineLine {
   flex: 1;
@@ -505,14 +603,39 @@
 
 /* ─── CTA Section ─── */
 .ctaSection {
-  background:
-    radial-gradient(ellipse 60% 80% at 20% 50%, #f7d4d4 0%, transparent 55%),
-    radial-gradient(ellipse 60% 80% at 80% 50%, #d4dff5 0%, transparent 55%),
-    var(--cream);
-  color: var(--navy);
+  background: var(--navy);
+  color: var(--white);
   text-align: center;
   padding: var(--space-3xl) var(--space-xl);
   border-top: 1px solid var(--border);
+  position: relative;
+}
+
+.ctaSection::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 80px, rgba(255,255,255,0.02) 80px 81px);
+  pointer-events: none;
+}
+
+.ctaSection h2 {
+  color: var(--white) !important;
+}
+
+.ctaSection p {
+  color: rgba(255,255,255,0.65) !important;
+}
+
+.ctaSection .ctaPrimary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--navy);
+}
+
+.ctaSection .ctaPrimary:hover {
+  background: var(--amber-dark);
+  border-color: var(--amber-dark);
 }
 
 .ctaSection h2 {

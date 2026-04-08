@@ -1,8 +1,8 @@
 .nav {
   height: calc(64px + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
-  background: var(--cream);
-  border-bottom: 1px solid var(--border);
+  background: var(--navy);
+  border-bottom: 2px solid var(--amber);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -43,8 +43,8 @@
   display: block;
   width: 22px;
   height: 2px;
-  background: var(--navy);
-  border-radius: 2px;
+  background: var(--white);
+  border-radius: 0;
   transition: all 0.25s ease;
   transform-origin: center;
 }
@@ -57,27 +57,31 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  color: var(--navy);
+  color: var(--white);
   transition: opacity 0.2s;
   min-width: 0;
+  padding-left: var(--space-sm);
+  border-left: 1px solid rgba(255,255,255,0.15);
 }
 
 .logo:hover { opacity: 0.85; }
 
 .logoIcon {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 0;
   flex-shrink: 0;
   object-fit: cover;
+  filter: grayscale(0.2) contrast(1.1);
 }
 
 .logoText {
   font-family: var(--font-display);
   font-size: 1.1rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0.02em;
   white-space: nowrap;
+  color: var(--white);
 }
 
 /* ── Dropdown menu ── */
@@ -143,13 +147,15 @@
 .link:hover, .active { color: var(--navy); }
 
 .signIn {
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-  font-weight: 500;
-  padding: 0.35rem 0.6rem;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  transition: all 0.2s ease;
+  color: rgba(255,255,255,0.7);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 1px;
+  border: 1px solid rgba(255,255,255,0.25);
+  transition: all 0.15s ease;
   background: none;
   cursor: pointer;
   font-family: var(--font-body);
@@ -157,35 +163,52 @@
 }
 
 .signIn:hover {
-  color: var(--navy);
+  color: var(--white);
   border-color: var(--amber);
 }
 
 .cta {
   background: var(--amber);
-  color: var(--white);
-  padding: 0.35rem 0.6rem;
-  border-radius: var(--radius-md);
-  font-weight: 600;
-  font-size: 0.75rem;
-  transition: all 0.2s ease;
+  color: var(--navy);
+  padding: 8px 14px;
+  border-radius: 1px;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
   white-space: nowrap;
+  border: 1px solid var(--amber);
 }
 
 .cta:hover {
   background: var(--amber-dark);
-  transform: translateY(-1px);
+  border-color: var(--amber-dark);
+}
+
+.link {
+  color: rgba(255,255,255,0.75) !important;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.link:hover, .active {
+  color: var(--amber) !important;
 }
 
 .userPill {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  border-radius: 1px;
   background: var(--amber);
-  color: var(--white);
+  color: var(--navy);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
   font-weight: 700;
 }

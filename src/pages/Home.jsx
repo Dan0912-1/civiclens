@@ -7,41 +7,41 @@ const SEARCH_CHIPS = ['Student Loans', 'Climate', 'Healthcare', 'Immigration', '
 
 const DEMO_BILLS = [
   {
-    tag: 'Education', tagColor: '#5d3a82', tagBg: '#ecdcf2',
+    tag: 'Education', tagColor: '#1A3557', tagBg: 'transparent',
     chamber: 'House',
-    title: 'Student Loan Refinancing Act',
-    summary: 'If this passes, your future federal student loans could drop to 4.5% interest — saving you thousands over a 10-year repayment.',
+    title: 'H.R. 2847 — Student Loan Refinancing Act',
+    summary: 'Reduces federal student loan interest to 4.5% for borrowers in qualifying income brackets. Estimated fiscal impact: $12.3B over 10 years.',
     relevance: 9,
-    chips: ['U.S. Congress', 'Age 17–18', 'Education'],
+    chips: ['119th Congress', 'Fiscal Note Attached', 'Ways & Means'],
   },
   {
-    tag: 'Healthcare', tagColor: '#355c2a', tagBg: '#d9e8d2',
+    tag: 'Healthcare', tagColor: '#1F4D3A', tagBg: 'transparent',
     chamber: 'Senate',
     title: 'CT HB 6941 — School Mental Health Services',
-    summary: 'Would require every Connecticut public school to have a licensed counselor on-site — meaning your school gets direct access to mental health support.',
+    summary: 'Mandates a licensed counselor on-site in every Connecticut public school. Appropriates $48M from the General Fund for FY26.',
     relevance: 8,
-    chips: ['Connecticut', 'Age 15–16', 'Healthcare'],
+    chips: ['CT Gen. Assembly', 'Public Health Cmte', 'Reported'],
   },
   {
-    tag: 'Economy', tagColor: '#9a4f12', tagBg: '#fbe5d4',
+    tag: 'Economy', tagColor: '#6B4A1A', tagBg: 'transparent',
     chamber: 'House',
-    title: 'Raise the Wage Act',
-    summary: 'Would increase federal minimum wage to $17/hr by 2028 — directly affecting your paycheck if you work part-time in Maryland.',
+    title: 'H.R. 603 — Raise the Wage Act',
+    summary: 'Increases federal minimum wage to $17.00/hr by 2028 in phased increments. Applies to employers with 15+ FTE.',
     relevance: 9,
-    chips: ['Maryland', 'Age 15–16', 'Economy'],
+    chips: ['119th Congress', 'Edu. & Workforce', 'In Committee'],
   },
 ]
 
 const TOPICS = [
-  { id: 'education',   label: 'Education',    emoji: '📚', color: '#5d3a82', bg: '#ecdcf2' },
-  { id: 'environment', label: 'Environment',  emoji: '🌿', color: '#2a5d8c', bg: '#d4e6f1' },
-  { id: 'economy',     label: 'Economy',      emoji: '💼', color: '#9a4f12', bg: '#fbe5d4' },
-  { id: 'healthcare',  label: 'Healthcare',   emoji: '🏥', color: '#355c2a', bg: '#d9e8d2' },
-  { id: 'technology',  label: 'Technology',   emoji: '💻', color: '#a8202e', bg: '#fbe5e8' },
-  { id: 'housing',     label: 'Housing',      emoji: '🏠', color: '#9a4f12', bg: '#fbe5d4' },
-  { id: 'immigration', label: 'Immigration',  emoji: '🌎', color: '#1e4d8c', bg: '#e2eaf7' },
-  { id: 'civil_rights',label: 'Civil Rights', emoji: '⚖️', color: '#5d3a82', bg: '#ecdcf2' },
-  { id: 'community',   label: 'Community',    emoji: '🤝', color: '#355c2a', bg: '#d9e8d2' },
+  { id: 'education',   label: 'Education',     emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'environment', label: 'Environment',   emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'economy',     label: 'Economy & Labor', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'healthcare',  label: 'Public Health', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'technology',  label: 'Tech & Privacy', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'housing',     label: 'Housing Policy', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'immigration', label: 'Immigration',   emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'civil_rights',label: 'Civil Rights',  emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'community',   label: 'Community Dev.', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
 ]
 
 export default function Home() {
@@ -100,45 +100,38 @@ export default function Home() {
       <section className={styles.heroWrap}>
         <div className={styles.hero}>
         <div className={styles.heroText}>
+          <span className={styles.eyebrow}>The Legislative Record</span>
           <h1 className={styles.headline}>
-            See how laws affect<br />
-            <span className={styles.accent}>your life.</span>
+            The Definitive Record of<br />
+            <span className={styles.accent}>American Legislation</span>.
           </h1>
           <p className={styles.subhead}>
-            Real bills from Congress and your state legislature — translated
-            into plain English, personalized to you.
+            Authoritative analysis of active bills across Congress and state
+            legislatures. Sourced directly from primary government records.
+            Nonpartisan. Independently operated.
           </p>
           <div className={styles.ctaRow}>
             <button
               className={styles.ctaPrimary}
               onClick={() => navigate('/profile')}
             >
-              Try it with your profile →
+              Enter Platform →
             </button>
             <button
               className={styles.ctaSecondary}
               onClick={() => navigate('/results')}
             >
-              Browse bills now
+              Browse Legislative Index
             </button>
           </div>
           <div className={styles.trustStrip}>
+            <span><span className={styles.trustCheck}>✓</span>Verified Sources</span>
+            <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Nonpartisan</span>
             <span className={styles.trustSep}>·</span>
-            <span><span className={styles.trustCheck}>✓</span>No ads</span>
+            <span><span className={styles.trustCheck}>✓</span>Updated Hourly</span>
             <span className={styles.trustSep}>·</span>
-            <span><span className={styles.trustCheck}>✓</span>No tracking</span>
-            <span className={styles.trustSep}>·</span>
-            <span><span className={styles.trustCheck}>✓</span>Free forever</span>
-          </div>
-          <div className={styles.chamberRow}>
-            <span className={`${styles.chamberChip} ${styles.chamberHouse}`}>
-              <span className={styles.chamberDot} /> House
-            </span>
-            <span className={`${styles.chamberChip} ${styles.chamberSenate}`}>
-              <span className={styles.chamberDot} /> Senate
-            </span>
-            <span className={styles.chamberCaption}>Both chambers, always.</span>
+            <span><span className={styles.trustCheck}>✓</span>Congress.gov</span>
           </div>
         </div>
 
@@ -186,8 +179,8 @@ export default function Home() {
 
       {/* Search */}
       <section className={styles.searchSection}>
-        <h2 className={styles.searchHeading}>Search for a bill</h2>
-        <p className={styles.searchSub}>Look up any federal or state legislation by keyword.</p>
+        <h2 className={styles.searchHeading}>Legislative Search</h2>
+        <p className={styles.searchSub}>Query federal and state legislation by keyword, bill number, sponsor, or committee.</p>
         <form className={styles.searchForm} onSubmit={handleSearch}>
           <input
             type="text"
@@ -213,7 +206,7 @@ export default function Home() {
 
       {/* Topic cards */}
       <section className={styles.topics}>
-        <h2 className={styles.topicsHeading}>What do you care about?</h2>
+        <h2 className={styles.topicsHeading}>Policy Subject Matter</h2>
         <div className={styles.topicScroll}>
           {TOPICS.map(t => (
             <button
@@ -236,34 +229,34 @@ export default function Home() {
       <section className={styles.timeline}>
         <div className={styles.timelineSteps}>
           <div className={styles.timelineStep}>
-            <div className={styles.timelineDot}>1</div>
-            <div className={styles.timelineLabel}>60-second profile</div>
-            <div className={styles.timelineSub}>State, age, interests</div>
+            <div className={styles.timelineDot}>01</div>
+            <div className={styles.timelineLabel}>Configure Profile</div>
+            <div className={styles.timelineSub}>Jurisdiction &amp; interests</div>
           </div>
           <div className={styles.timelineLine} />
           <div className={styles.timelineStep}>
-            <div className={styles.timelineDot}>2</div>
-            <div className={styles.timelineLabel}>AI matches bills</div>
-            <div className={styles.timelineSub}>Federal + your state</div>
+            <div className={styles.timelineDot}>02</div>
+            <div className={styles.timelineLabel}>Match Legislation</div>
+            <div className={styles.timelineSub}>Federal + state corpus</div>
           </div>
           <div className={styles.timelineLine} />
           <div className={styles.timelineStep}>
-            <div className={styles.timelineDot}>3</div>
-            <div className={styles.timelineLabel}>See your impact</div>
-            <div className={styles.timelineSub}>Plain English, personalized</div>
+            <div className={styles.timelineDot}>03</div>
+            <div className={styles.timelineLabel}>Review Impact</div>
+            <div className={styles.timelineSub}>Analysis &amp; sources</div>
           </div>
         </div>
       </section>
 
       {/* CTA */}
       <section className={styles.ctaSection}>
-        <h2>Your legislation is waiting.</h2>
-        <p>60 seconds. No account needed.</p>
+        <h2>Access the Legislative Record.</h2>
+        <p>No registration required. Anonymous browsing supported.</p>
         <button
           className={styles.ctaPrimary}
           onClick={() => navigate('/profile')}
         >
-          Build my profile →
+          Configure Profile →
         </button>
       </section>
 

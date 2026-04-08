@@ -4,19 +4,19 @@ import styles from './Onboarding.module.css'
 
 const SLIDES = [
   {
-    icon: '\uD83C\uDFDB\uFE0F',
-    title: 'Real bills. Real impact.',
-    body: 'CapitolKey pulls live legislation moving through Congress and shows you exactly how it could affect your life.',
+    eyebrow: 'Mission',
+    title: 'The Definitive Record of American Legislation.',
+    body: 'CapitolKey tracks active bills across Congress and state legislatures, sourced directly from primary government records.',
   },
   {
-    icon: '\uD83C\uDFAF',
-    title: 'Personalized to you',
-    body: 'Tell us your state, grade, and interests — we\'ll find the bills that matter most and explain them in plain English.',
+    eyebrow: 'Method',
+    title: 'Data-Driven Analysis. Verified Sources.',
+    body: 'Every bill is filtered by jurisdiction, status, sponsor, and committee — then contextualized for your state and grade level.',
   },
   {
-    icon: '\u2696\uFE0F',
-    title: 'Always nonpartisan',
-    body: 'We explain impact, never opinions. You decide what you think — we just make sure you have the facts.',
+    eyebrow: 'Standard',
+    title: 'Nonpartisan. Independently Operated.',
+    body: 'CapitolKey reports legislative impact without editorial spin. No endorsements. No agenda.',
   },
 ]
 
@@ -44,25 +44,36 @@ export default function Onboarding({ onComplete }) {
       <div className={styles.container}>
         <button className={styles.skip} onClick={skip}>Skip</button>
 
+        <div className={styles.brandMark}>CAPITOLKEY</div>
+        <div className={styles.rule} />
+
         <div className={styles.slideArea}>
-          <div className={styles.icon}>{SLIDES[slide].icon}</div>
+          <div className={styles.eyebrow}>{SLIDES[slide].eyebrow}</div>
           <h2 className={styles.title}>{SLIDES[slide].title}</h2>
           <p className={styles.body}>{SLIDES[slide].body}</p>
         </div>
 
-        {/* Dots */}
-        <div className={styles.dots}>
-          {SLIDES.map((_, i) => (
-            <div
-              key={i}
-              className={`${styles.dot} ${i === slide ? styles.dotActive : ''}`}
-            />
-          ))}
+        <div className={styles.progressRow}>
+          <span className={styles.progressLabel}>
+            {String(slide + 1).padStart(2, '0')} / {String(SLIDES.length).padStart(2, '0')}
+          </span>
+          <div className={styles.progressBar}>
+            {SLIDES.map((_, i) => (
+              <div
+                key={i}
+                className={`${styles.progressSegment} ${i <= slide ? styles.progressSegmentActive : ''}`}
+              />
+            ))}
+          </div>
         </div>
 
         <button className={styles.nextBtn} onClick={next}>
-          {isLast ? 'Get started' : 'Next'}
+          {isLast ? 'Enter Platform →' : 'Continue →'}
         </button>
+
+        <div className={styles.footer}>
+          Nonpartisan · Independently Operated · Source: Congress.gov
+        </div>
       </div>
     </div>
   )
