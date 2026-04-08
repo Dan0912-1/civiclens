@@ -4,7 +4,7 @@
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
-import rateLimit from 'express-rate-limit'
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
 import crypto from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import cron from 'node-cron'
@@ -82,7 +82,7 @@ app.use(express.json())
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
 // Uses user ID from JWT for authenticated users so that all students on the
 // same school WiFi (shared public IP) each get their own rate-limit bucket.
-function userOrIpKey(req) {
+function userOrIpKey(req, res) {
   const token = req.headers.authorization?.replace('Bearer ', '')
   if (token) {
     try {
@@ -90,7 +90,10 @@ function userOrIpKey(req) {
       if (payload.sub) return `user-${payload.sub}`
     } catch {}
   }
-  return req.ip
+  // ipKeyGenerator normalizes IPv6 into a /64 subnet bucket so an attacker
+  // can't bypass the limiter by rotating through the lower 64 bits. Required
+  // by express-rate-limit v7+ when a custom keyGenerator uses req.ip.
+  return ipKeyGenerator(req.ip)
 }
 
 const legislationLimiter = rateLimit({
