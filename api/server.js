@@ -697,6 +697,102 @@ app.get('/api/bill/:congress/:type/:number', async (req, res) => {
   }
 })
 
+// ─── Shared personalization helpers ─────────────────────────────────────────
+
+// Tightened v6 system prompt — same intent as v5 but ~35% shorter to cut input
+// tokens and TTFT. Pulled out so /personalize and /personalize-batch share it.
+const PERSONALIZE_SYSTEM_PROMPT = `You are CapitolKey, a strictly nonpartisan civic education tool. Show ONE specific high-school student how a U.S. bill touches THEIR life — concrete, factual, no opinions.
+
+ABSOLUTE RULES
+1. NEVER evaluate ("good", "bad", "important", "needed", "harmful"). Zero opinion.
+2. IMPACT ONLY: concrete factual changes to THIS student's daily reality.
+3. Plain language, 9th-grade level. No jargon, no acronyms without explanation.
+4. HYPER-PERSONALIZE: reference their state, age, job, family, interests by name. Generic = failure.
+5. STATE CONTEXT: if their state already has a relevant law (e.g. CA min wage $16.50/hr), say so and explain how the bill interacts.
+6. REAL NUMBERS only from the bill text or established law you are certain about. NEVER invent wages, salaries, prices, statistics, deadlines, or dollar amounts. No estimating.
+7. If no meaningful impact, say so directly with relevance ≤ 2.
+8. Use only facts from the provided bill text / CRS summary. If no text, say "based on available information" and stay conservative.
+9. Include 2-3 actionable civic_actions with real URLs (congress.gov, senate.gov, house.gov) or specific steps.
+10. NEVER tell the student to take personal action ("delete the app", "change your password") in headline/summary/if_it_passes/if_it_fails. Save action steps for civic_actions.
+11. For short bills (<500 words of source text), summary MUST cover every operative provision: dates, who runs it, deadlines, scope, temporary vs permanent. No cherry-picking.
+
+RELEVANCE
+9-10: directly changes daily life now (paycheck, school, healthcare)
+7-8: affects them within 1-2 years (college costs, job market)
+5-6: broader community / future
+3-4: tangential via interests or family
+1-2: no meaningful connection
+
+OUTPUT — return ONLY this JSON, nothing else:
+{
+  "headline": "Max 12 words. Single most concrete impact on THIS student. Not a title rewrite.",
+  "summary": "2-4 sentences. What the bill actually DOES (cover every operative provision, dates, scope). Why THIS specific student should care — reference their state/job/family/interests directly. Use real numbers from the bill text.",
+  "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Concrete: 'your paycheck goes up $X' not 'wages may increase'.",
+  "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
+  "relevance": <number 1-10>,
+  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
+  "civic_actions": [
+    { "action": "Short imperative title", "how": "One sentence with a specific URL/phone/step.", "time": "5 minutes | 15 minutes | 1 hour" }
+  ]
+}`
+
+// Normalize incoming profile (handles new + legacy field shapes)
+function normalizeProfile(profile) {
+  const familyArr = Array.isArray(profile.familySituation)
+    ? profile.familySituation
+    : (profile.familySituation ? [profile.familySituation] : [])
+  const employment = profile.employment
+    ?? (profile.hasJob === true ? 'part_time' : 'none')
+  return {
+    ...profile,
+    familySituation: familyArr,
+    employment,
+  }
+}
+
+function buildProfileHashInput(profile) {
+  const norm = normalizeProfile(profile)
+  const sortedInterests = (norm.interests || []).slice().sort()
+  const sortedFamily = norm.familySituation.slice().sort()
+  return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
+}
+
+function buildUserPrompt(profile, bill, billContent) {
+  const norm = normalizeProfile(profile)
+  const employmentLabel =
+    norm.employment === 'full_time' ? 'Yes — full-time job'
+    : norm.employment === 'part_time' ? 'Yes — part-time job'
+    : 'No'
+  const familyLabel = norm.familySituation.length
+    ? norm.familySituation.join(', ')
+    : 'Not specified'
+  // Cap bill content to ~8000 chars (~2000 tokens). This preserves the full
+  // text of short and medium bills (which the prompt's "comprehensive coverage"
+  // rule requires) while bounding TTFT on omnibus / multi-thousand-word bills
+  // that would otherwise dump 10k+ input tokens at the model. Only the long
+  // tail of bills hits this limit; for those, the LegiScan source link in the
+  // UI still gives users the full text.
+  const cappedContent = billContent && billContent.length > 8000
+    ? billContent.slice(0, 8000) + '\n\n[bill text truncated — see source link for full text]'
+    : billContent
+  return `STUDENT PROFILE:
+- State: ${norm.state}
+- Grade: ${norm.grade} (approximately ${gradeToAge(norm.grade)} years old)
+- Working: ${employmentLabel}
+- Family situation: ${familyLabel}
+- Top interests: ${(norm.interests || []).join(', ') || 'Not specified'}
+- Other context: ${norm.additionalContext || 'None provided'}
+
+BILL:
+- Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
+- Title: ${bill.title}
+- Chamber: ${bill.originChamber || 'Congress'}
+- Latest Action: ${bill.latestAction}
+- Date of Last Action: ${bill.latestActionDate}
+${cappedContent ? `\n${cappedContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
+Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
+}
+
 // ─── Personalization endpoint (Claude Haiku 4.5) ────────────────────────────
 app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const valErrors = validatePersonalizeBody(req.body)
@@ -704,14 +800,14 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
 
   const { bill, profile } = req.body
 
-  const sortedInterests = (profile.interests || []).sort()
-  // v5 cache key — bumped when tightening prompt (forbid invented numbers,
-  // require comprehensive coverage of short bills) so old cached responses
-  // regenerate under the new rules on next view.
+  const norm = normalizeProfile(profile)
+  const sortedInterests = (norm.interests || []).slice().sort()
+  // v6 cache key — bumped when employment field expanded to {none|part_time|full_time}
+  // and familySituation became multi-select. Old v5 cache entries regenerate.
   const profileHash = crypto.createHash('md5').update(
-    `${profile.grade}-${profile.state || ''}-${profile.hasJob || false}-${profile.familySituation || ''}-${sortedInterests.join('-')}-${profile.additionalContext || ''}`
+    buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
-  const cacheKey = `v5-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
+  const cacheKey = `v6-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
 
   // Check Supabase persistent cache first, fall back to in-memory
   const cached = await getSupabaseCache(cacheKey) || getCache(cacheKey)
@@ -723,64 +819,8 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const { billContent, sources } = buildBillContent(billData)
   console.log(`[personalize] ${bill.type}${bill.number}-${bill.congress}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
-  const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
-
-Your job: show ONE specific student how a federal or state bill touches THEIR life — not abstract policy talk.
-
-═══ ABSOLUTE RULES ═══
-1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
-2. NEVER tell them what to think, feel, or do about the bill's merits.
-3. IMPACT ONLY: concrete, factual changes to THIS student's daily reality.
-4. Plain language a 9th grader understands. No jargon, no legalese, no acronyms without explanation.
-5. HYPER-PERSONALIZE: reference their state, grade, job, family, interests BY NAME. Generic summaries = failure.
-6. STATE CONTEXT MATTERS: if their state already has a relevant law (e.g. California minimum wage is $16.50/hr, higher than federal), SAY SO and explain how the federal bill interacts with it.
-7. USE REAL NUMBERS — but ONLY numbers that appear in the bill text itself (effective dates, report deadlines, appropriation amounts, eligibility ages, fee thresholds, etc.) or established state/federal law you are certain about. If the bill does not specify a wage, salary, price, or economic figure, DO NOT estimate, extrapolate, or import one from outside knowledge. No "median wages around $X" guesses. No fabricated statistics.
-8. If the bill has no meaningful impact on this student, say so directly with relevance ≤ 2.
-9. ONLY use facts from the provided bill text and CRS summary. Never invent provisions, deadlines, dollar amounts, salary ranges, enrollment numbers, or job statistics that aren't in the source material. If the bill text was not available, say "based on available information" and keep claims conservative.
-10. Include 2-3 civic_actions that are genuinely actionable — with real websites (congress.gov, senate.gov, house.gov) or specific steps.
-11. NEVER instruct the student to take personal action (like "delete the app" or "change your password") in headline, summary, if_it_passes, or if_it_fails. Those fields describe WHAT CHANGES, not what the student should do. Save all actionable steps for civic_actions only.
-12. COMPREHENSIVE COVERAGE for short bills: if the bill text is under ~500 words, your summary MUST reference every operative provision in the bill — establishment dates, who runs the program, reporting deadlines, what reports must contain, pilot scope, and whether the program is temporary or permanent. Do not cherry-pick one angle and drop the rest. A short bill deserves a complete readout, not a one-line gloss.
-
-═══ RELEVANCE SCORING ═══
-- 9-10: Bill directly changes something in their daily life right now (their paycheck, their school, their healthcare)
-- 7-8: Bill affects something they'll encounter within 1-2 years (college costs, job market)
-- 5-6: Bill affects their broader community or future (state funding, industry shifts)
-- 3-4: Tangential connection through interests or family
-- 1-2: No meaningful connection to this student's life
-
-═══ JSON OUTPUT — return ONLY this, no other text ═══
-{
-  "headline": "Max 12 words. The single most concrete impact on THIS student. Not a bill title rewrite.",
-  "summary": "2-4 sentences. What does this bill actually DO — all of it? Cover every operative provision (effective dates, report deadlines, scope, temporary vs. permanent). Why should THIS specific student care? Reference their state, job, family, or interests directly. Include real numbers and dates drawn FROM the bill text (not invented).",
-  "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Be concrete — 'your paycheck goes up $X' not 'wages may increase.'",
-  "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
-  "relevance": <number 1-10 using the scoring guide above>,
-  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
-  "civic_actions": [
-    {
-      "action": "Short imperative title (e.g. Call Senator Padilla's office)",
-      "how": "One sentence with a specific step: URL, phone number, or exact action. e.g. 'Visit congress.gov/bill/119th-congress/senate-bill/567 to read the full text and track its status.'",
-      "time": "Realistic estimate: '5 minutes' / '15 minutes' / '1 hour'"
-    }
-  ]
-}`
-
-  const userPrompt = `STUDENT PROFILE:
-- State: ${profile.state}
-- Grade: ${profile.grade} (approximately ${gradeToAge(profile.grade)} years old)
-- Has a part-time job: ${profile.hasJob ? 'Yes' : 'No'}
-- Family situation: ${profile.familySituation || 'Not specified'}
-- Top interests: ${(profile.interests || []).join(', ') || 'Not specified'}
-- Other context: ${profile.additionalContext || 'None provided'}
-
-BILL:
-- Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
-- Title: ${bill.title}
-- Chamber: ${bill.originChamber || 'Congress'}
-- Latest Action: ${bill.latestAction}
-- Date of Last Action: ${bill.latestActionDate}
-${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
-Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
+  const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
+  const userPrompt = buildUserPrompt(profile, bill, billContent)
 
   const MAX_RETRIES = 4
   const billLabel = `${bill.type}${bill.number}-${bill.congress}`
@@ -797,7 +837,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
         signal: AbortSignal.timeout(30000),
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 900,
+          max_tokens: 700,
           temperature: 0.4,
           system: systemPrompt,
           messages: [
@@ -852,12 +892,11 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Maximum 20 bills per batch' })
   }
 
-  const sortedInterests = (profile.interests || []).sort()
-  // v5 cache key — bumped when tightening prompt (forbid invented numbers,
-  // require comprehensive coverage of short bills) so old cached responses
-  // regenerate under the new rules on next view.
+  const sortedInterests = (normalizeProfile(profile).interests || []).slice().sort()
+  // v6 cache key — bumped when employment field expanded and familySituation
+  // became multi-select. Old v5 entries auto-regenerate.
   const profileHash = crypto.createHash('md5').update(
-    `${profile.grade}-${profile.state || ''}-${profile.hasJob || false}-${profile.familySituation || ''}-${sortedInterests.join('-')}-${profile.additionalContext || ''}`
+    buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
   const results = {}
   const errors = {}
@@ -865,7 +904,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   // 1. Batch-check personalization cache (Supabase)
   const cacheKeys = bills.map(b =>
-    `v5-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
+    `v6-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
   )
 
   let cachedResults = new Map()
@@ -938,64 +977,8 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
 
-    const systemPrompt = `You are CapitolKey, a strictly nonpartisan civic education tool that makes U.S. legislation personal and real for high school students.
-
-Your job: show ONE specific student how a federal or state bill touches THEIR life — not abstract policy talk.
-
-═══ ABSOLUTE RULES ═══
-1. NEVER evaluate: no "good," "bad," "important," "needed," "harmful." Zero opinion.
-2. NEVER tell them what to think, feel, or do about the bill's merits.
-3. IMPACT ONLY: concrete, factual changes to THIS student's daily reality.
-4. Plain language a 9th grader understands. No jargon, no legalese, no acronyms without explanation.
-5. HYPER-PERSONALIZE: reference their state, grade, job, family, interests BY NAME. Generic summaries = failure.
-6. STATE CONTEXT MATTERS: if their state already has a relevant law (e.g. California minimum wage is $16.50/hr, higher than federal), SAY SO and explain how the federal bill interacts with it.
-7. USE REAL NUMBERS — but ONLY numbers that appear in the bill text itself (effective dates, report deadlines, appropriation amounts, eligibility ages, fee thresholds, etc.) or established state/federal law you are certain about. If the bill does not specify a wage, salary, price, or economic figure, DO NOT estimate, extrapolate, or import one from outside knowledge. No "median wages around $X" guesses. No fabricated statistics.
-8. If the bill has no meaningful impact on this student, say so directly with relevance ≤ 2.
-9. ONLY use facts from the provided bill text and CRS summary. Never invent provisions, deadlines, dollar amounts, salary ranges, enrollment numbers, or job statistics that aren't in the source material. If the bill text was not available, say "based on available information" and keep claims conservative.
-10. Include 2-3 civic_actions that are genuinely actionable — with real websites (congress.gov, senate.gov, house.gov) or specific steps.
-11. NEVER instruct the student to take personal action (like "delete the app" or "change your password") in headline, summary, if_it_passes, or if_it_fails. Those fields describe WHAT CHANGES, not what the student should do. Save all actionable steps for civic_actions only.
-12. COMPREHENSIVE COVERAGE for short bills: if the bill text is under ~500 words, your summary MUST reference every operative provision in the bill — establishment dates, who runs the program, reporting deadlines, what reports must contain, pilot scope, and whether the program is temporary or permanent. Do not cherry-pick one angle and drop the rest. A short bill deserves a complete readout, not a one-line gloss.
-
-═══ RELEVANCE SCORING ═══
-- 9-10: Bill directly changes something in their daily life right now (their paycheck, their school, their healthcare)
-- 7-8: Bill affects something they'll encounter within 1-2 years (college costs, job market)
-- 5-6: Bill affects their broader community or future (state funding, industry shifts)
-- 3-4: Tangential connection through interests or family
-- 1-2: No meaningful connection to this student's life
-
-═══ JSON OUTPUT — return ONLY this, no other text ═══
-{
-  "headline": "Max 12 words. The single most concrete impact on THIS student. Not a bill title rewrite.",
-  "summary": "2-4 sentences. What does this bill actually DO — all of it? Cover every operative provision (effective dates, report deadlines, scope, temporary vs. permanent). Why should THIS specific student care? Reference their state, job, family, or interests directly. Include real numbers and dates drawn FROM the bill text (not invented).",
-  "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Be concrete — 'your paycheck goes up $X' not 'wages may increase.'",
-  "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
-  "relevance": <number 1-10 using the scoring guide above>,
-  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
-  "civic_actions": [
-    {
-      "action": "Short imperative title (e.g. Call Senator Padilla's office)",
-      "how": "One sentence with a specific step: URL, phone number, or exact action. e.g. 'Visit congress.gov/bill/119th-congress/senate-bill/567 to read the full text and track its status.'",
-      "time": "Realistic estimate: '5 minutes' / '15 minutes' / '1 hour'"
-    }
-  ]
-}`
-
-    const userPrompt = `STUDENT PROFILE:
-- State: ${profile.state}
-- Grade: ${profile.grade} (approximately ${gradeToAge(profile.grade)} years old)
-- Has a part-time job: ${profile.hasJob ? 'Yes' : 'No'}
-- Family situation: ${profile.familySituation || 'Not specified'}
-- Top interests: ${(profile.interests || []).join(', ') || 'Not specified'}
-- Other context: ${profile.additionalContext || 'None provided'}
-
-BILL:
-- Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
-- Title: ${bill.title}
-- Chamber: ${bill.originChamber || 'Congress'}
-- Latest Action: ${bill.latestAction}
-- Date of Last Action: ${bill.latestActionDate}
-${billContent ? `\n${billContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
-Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
+    const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
+    const userPrompt = buildUserPrompt(profile, bill, billContent)
 
     const MAX_RETRIES = 4
     let lastError = null
@@ -1011,7 +994,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
           signal: AbortSignal.timeout(30000),
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 900,
+            max_tokens: 700,
             temperature: 0.4,
             system: systemPrompt,
             messages: [

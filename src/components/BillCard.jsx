@@ -52,6 +52,31 @@ function shareBill(bill, analysis) {
   }
 }
 
+// Open the user's actual reps using their state from the saved profile.
+// Falls back to the generic Congress.gov member finder when no state is set.
+async function openRepLookup() {
+  let state = ''
+  try {
+    const stored = sessionStorage.getItem('civicProfile')
+    if (stored) state = (JSON.parse(stored).state || '').toUpperCase()
+  } catch {}
+  // GovTrack accepts the 2-letter state code and returns BOTH senators + all
+  // House reps for that state on a single page — much better than the generic
+  // congress.gov "find your member" page that just dumps a search form.
+  const url = state
+    ? `https://www.govtrack.us/congress/members/${state}`
+    : 'https://www.congress.gov/members/find-your-member'
+  try {
+    const { Capacitor } = await import('@capacitor/core')
+    if (Capacitor.isNativePlatform()) {
+      const { Browser } = await import('@capacitor/browser')
+      await Browser.open({ url, presentationStyle: 'popover' })
+      return
+    }
+  } catch {}
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
 export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false, onPersonalize, personalizing = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -118,9 +143,11 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
       {/* Header */}
       <div className={styles.cardHeader}>
         <div className={styles.headerLeft}>
-          <span className={`${styles.tag} ${styles[`tag_${tagColor}`]}`}>
-            {isLoading ? '···' : (analysis?.topic_tag || 'Other')}
-          </span>
+          {analysis?.topic_tag && (
+            <span className={`${styles.tag} ${styles[`tag_${tagColor}`]}`}>
+              {analysis.topic_tag}
+            </span>
+          )}
           <span className={styles.billNum}>
             {bill.type} {bill.number}{bill.isStateBill ? ` · ${bill.state}` : ` · ${bill.congress}th Congress`}
           </span>
@@ -222,10 +249,23 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
           )}
 
           <div className={styles.cardFooter}>
-            <div className={styles.footerLinks}>
+            <button
+              className={styles.expandBtn}
+              onClick={() => {
+                haptic('Light')
+                const next = !expanded
+                setExpanded(next)
+                if (next && onTrackInteraction) {
+                  onTrackInteraction({ billId, actionType: 'expand_card', topicTag: analysis?.topic_tag })
+                }
+              }}
+            >
+              {expanded ? 'Show less \u2191' : 'See full impact \u2193'}
+            </button>
+            <div className={styles.footerActions}>
               {user && onToggleBookmark && (
                 <button
-                  className={`${styles.bookmarkBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
+                  className={`${styles.iconBtn} ${isBookmarked ? styles.bookmarkActive : ''}`}
                   onClick={e => {
                     e.stopPropagation()
                     haptic('Medium')
@@ -240,35 +280,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                 </button>
               )}
               <button
-                className={styles.expandBtn}
-                onClick={() => {
-                  haptic('Light')
-                  const next = !expanded
-                  setExpanded(next)
-                  if (next && onTrackInteraction) {
-                    onTrackInteraction({ billId, actionType: 'expand_card', topicTag: analysis?.topic_tag })
-                  }
-                }}
-              >
-                {expanded ? 'Show less \u2191' : 'See full impact + actions \u2193'}
-              </button>
-            </div>
-            <div className={styles.footerRight}>
-              <a
-                className={styles.contactRepBtn}
-                href={`https://www.congress.gov/members/find-your-member`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => {
-                  if (onTrackInteraction) {
-                    onTrackInteraction({ billId, actionType: 'contact_rep', topicTag: analysis?.topic_tag })
-                  }
-                }}
-              >
-                Contact My Rep
-              </a>
-              <button
-                className={styles.shareBtn}
+                className={styles.iconBtn}
                 onClick={e => {
                   e.stopPropagation()
                   haptic('Light')
@@ -279,8 +291,22 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                     onTrackInteraction({ billId, actionType: 'share', topicTag: analysis?.topic_tag })
                   }
                 }}
+                aria-label="Share bill"
               >
-                {copied ? 'Copied!' : 'Share'}
+                {copied ? '✓' : '↗'}
+              </button>
+              <button
+                className={styles.contactRepBtn}
+                onClick={e => {
+                  e.stopPropagation()
+                  haptic('Light')
+                  openRepLookup()
+                  if (onTrackInteraction) {
+                    onTrackInteraction({ billId, actionType: 'contact_rep', topicTag: analysis?.topic_tag })
+                  }
+                }}
+              >
+                Contact Rep
               </button>
             </div>
           </div>

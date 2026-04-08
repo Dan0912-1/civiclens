@@ -78,6 +78,12 @@ const FAMILY_OPTIONS = [
   { value: 'foster',      label: 'Foster care / group home' },
 ]
 
+const EMPLOYMENT_OPTIONS = [
+  { value: 'none',      label: 'No job' },
+  { value: 'part_time', label: 'Part-time' },
+  { value: 'full_time', label: 'Full-time' },
+]
+
 export default function Profile() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -87,14 +93,23 @@ export default function Profile() {
 
   const [profile, setProfile] = useState(() => {
     const stored = sessionStorage.getItem('civicProfile')
-    return stored ? JSON.parse(stored) : {
+    const base = {
       state: '',
       grade: '',
-      hasJob: false,
-      familySituation: '',
+      employment: 'none',
+      familySituation: [],
       interests: [],
       additionalContext: '',
     }
+    if (!stored) return base
+    const parsed = JSON.parse(stored)
+    // Backwards-compat migration: hasJob:bool → employment, familySituation:string → array
+    const employment = parsed.employment
+      ?? (parsed.hasJob === true ? 'part_time' : 'none')
+    const familySituation = Array.isArray(parsed.familySituation)
+      ? parsed.familySituation
+      : (parsed.familySituation ? [parsed.familySituation] : [])
+    return { ...base, ...parsed, employment, familySituation }
   })
   const [error, setError] = useState('')
   const [showAuth, setShowAuth] = useState(false)
@@ -210,34 +225,40 @@ export default function Profile() {
               <p className={styles.stepSub}>Helps us personalize which bills matter to your life.</p>
 
               <div className={styles.field}>
-                <label className={styles.label}>Do you have a part-time job?</label>
+                <label className={styles.label}>Are you working?</label>
                 <div className={styles.toggleRow}>
-                  <button
-                    className={`${styles.toggleBtn} ${!profile.hasJob ? styles.toggleActive : ''}`}
-                    onClick={() => setProfile(p => ({ ...p, hasJob: false }))}
-                  >No</button>
-                  <button
-                    className={`${styles.toggleBtn} ${profile.hasJob ? styles.toggleActive : ''}`}
-                    onClick={() => setProfile(p => ({ ...p, hasJob: true }))}
-                  >Yes</button>
+                  {EMPLOYMENT_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`${styles.toggleBtn} ${profile.employment === opt.value ? styles.toggleActive : ''}`}
+                      onClick={() => setProfile(p => ({ ...p, employment: opt.value }))}
+                    >{opt.label}</button>
+                  ))}
                 </div>
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>Family situation <span className={styles.optional}>(optional)</span></label>
+                <label className={styles.label}>
+                  Family situation <span className={styles.optional}>(select all that apply)</span>
+                </label>
                 <div className={styles.familyGrid}>
-                  {FAMILY_OPTIONS.map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`${styles.familyBtn} ${profile.familySituation === opt.value ? styles.familyBtnActive : ''}`}
-                      onClick={() => setProfile(p => ({
-                        ...p,
-                        familySituation: p.familySituation === opt.value ? '' : opt.value
-                      }))}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                  {FAMILY_OPTIONS.map(opt => {
+                    const selected = profile.familySituation.includes(opt.value)
+                    return (
+                      <button
+                        key={opt.value}
+                        className={`${styles.familyBtn} ${selected ? styles.familyBtnActive : ''}`}
+                        onClick={() => setProfile(p => ({
+                          ...p,
+                          familySituation: selected
+                            ? p.familySituation.filter(v => v !== opt.value)
+                            : [...p.familySituation, opt.value]
+                        }))}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 

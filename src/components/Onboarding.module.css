@@ -64,12 +64,12 @@
 }
 
 .slideArea {
-  animation: slideUp 0.35s ease;
+  animation: slideUp var(--dur-slow) var(--ease-out);
   min-height: 220px;
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
