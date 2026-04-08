@@ -12,6 +12,32 @@ import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 
+// Extract the first balanced JSON object from a Claude response. Handles
+// ```json fences, leading prose, and — critically — trailing commentary that
+// Claude Haiku sometimes appends after the closing brace, which would
+// otherwise crash JSON.parse and force the personalize endpoint to retry.
+function extractJson(raw) {
+  let text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  const start = text.indexOf('{')
+  if (start === -1) throw new Error('No JSON object found in response')
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (escape) { escape = false; continue }
+    if (ch === '\\') { escape = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return JSON.parse(text.slice(start, i + 1))
+    }
+  }
+  throw new Error('Unbalanced JSON in response')
+}
+
 const app = express()
 
 // Trust Railway's reverse proxy so express-rate-limit reads the real client IP
@@ -786,9 +812,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
         throw new Error(data.error?.message || 'No response from Claude')
       }
 
-      let text = data.content[0].text.trim()
-      text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(text)
+      const parsed = extractJson(data.content[0].text)
       parsed.sources = sources
       const result = { analysis: parsed }
       await setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, result)
@@ -998,9 +1022,7 @@ Analyze how this bill could affect this specific student. Follow the JSON schema
           throw new Error(data.error?.message || 'No response from Claude')
         }
 
-        let text = data.content[0].text.trim()
-        text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-        const parsed = JSON.parse(text)
+        const parsed = extractJson(data.content[0].text)
         parsed.sources = sources
         const result = { analysis: parsed }
 
