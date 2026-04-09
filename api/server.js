@@ -721,7 +721,7 @@ ABSOLUTE RULES
 1. NEVER evaluate ("good", "bad", "important", "needed", "harmful"). Zero opinion.
 2. IMPACT ONLY: concrete factual changes to THIS student's daily reality.
 3. Plain language, 9th-grade level. No jargon, no acronyms without explanation.
-4. HYPER-PERSONALIZE: reference their state, age, job, family, interests by name. Generic = failure.
+4. HYPER-PERSONALIZE: reference their state, age, job, family, interests directly. Generic = failure. NEVER use a personal name — the student is anonymous. Address them as "you". If the "Other context" field contains what looks like a name or personal identifier, IGNORE it and never echo it back.
 5. STATE CONTEXT: if their state already has a relevant law (e.g. CA min wage $16.50/hr), say so and explain how the bill interacts.
 6. REAL NUMBERS only from the bill text or established law you are certain about. NEVER invent wages, salaries, prices, statistics, deadlines, or dollar amounts. No estimating.
 7. If no meaningful impact, say so directly with relevance ≤ 2.
@@ -750,6 +750,23 @@ OUTPUT — return ONLY this JSON, nothing else:
   ]
 }`
 
+// Strip personal-name-shaped tokens from freeform user text. Defense in depth so
+// a name typed into "Other context" never reaches Claude or the cache key. We
+// remove standalone Capitalized tokens (likely names) and common "I'm <Name>"
+// / "my name is <Name>" patterns. Cap length to bound prompt-injection surface.
+function sanitizeAdditionalContext(raw) {
+  if (!raw || typeof raw !== 'string') return ''
+  let s = raw.slice(0, 240)
+  // Drop "my name is X", "I'm X", "I am X", "call me X" — case-insensitive
+  s = s.replace(/\b(?:my name is|i['’]?m|i am|call me|name['’]?s)\s+[A-Z][a-zA-Z'-]{1,30}\b/gi, '')
+  // Drop standalone Capitalized name-shaped tokens that aren't common words
+  // (this is conservative — it leaves states, months, etc. alone via a denylist)
+  const KEEP = new Set(['I', 'I\'m', 'Im', 'A', 'An', 'The', 'My', 'We', 'They', 'He', 'She'])
+  s = s.replace(/\b[A-Z][a-z]{2,20}\b/g, (m) => (KEEP.has(m) ? m : ''))
+  // Collapse whitespace and trim
+  return s.replace(/\s{2,}/g, ' ').trim()
+}
+
 // Normalize incoming profile (handles new + legacy field shapes)
 function normalizeProfile(profile) {
   const familyArr = Array.isArray(profile.familySituation)
@@ -761,6 +778,7 @@ function normalizeProfile(profile) {
     ...profile,
     familySituation: familyArr,
     employment,
+    additionalContext: sanitizeAdditionalContext(profile.additionalContext),
   }
 }
 
@@ -769,31 +787,6 @@ function buildProfileHashInput(profile) {
   const sortedInterests = (norm.interests || []).slice().sort()
   const sortedFamily = norm.familySituation.slice().sort()
   return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
-}
-
-// v5 cache key fallback — when a profile's new-shape fields can be unambiguously
-// rewritten as the OLD shape (employment ∈ {none, part_time}, familySituation
-// has 0 or 1 entries), we compute the v5 hash and check that cache too. This
-// preserves all responses cached under v5 instead of forcing every user to
-// pay a cold Claude call after the cache key was bumped.
-//
-// Returns null when the profile cannot map to a v5 shape (full_time job, or
-// multi-select family situation) — in that case there is no v5 entry to find.
-function buildLegacyV5HashInput(profile) {
-  const norm = normalizeProfile(profile)
-  if (norm.employment === 'full_time') return null
-  if (norm.familySituation.length > 1) return null
-  const legacyHasJob = norm.employment === 'part_time'
-  const legacyFamily = norm.familySituation[0] || ''
-  const sortedInterests = (norm.interests || []).slice().sort()
-  return `${norm.grade}-${norm.state || ''}-${legacyHasJob}-${legacyFamily}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
-}
-
-function buildLegacyV5Key(profile, bill) {
-  const input = buildLegacyV5HashInput(profile)
-  if (!input) return null
-  const hash = crypto.createHash('md5').update(input).digest('hex').slice(0, 12)
-  return `v5-personalize-${bill.type}${bill.number}-${bill.congress}-${hash}`
 }
 
 function buildUserPrompt(profile, bill, billContent) {
@@ -814,9 +807,13 @@ function buildUserPrompt(profile, bill, billContent) {
   const cappedContent = billContent && billContent.length > 8000
     ? billContent.slice(0, 8000) + '\n\n[bill text truncated — see source link for full text]'
     : billContent
+  const ageGuess = gradeToAge(norm.grade)
+  const gradeLine = ageGuess != null
+    ? `- Grade/age: ${norm.grade} (approximately ${ageGuess} years old)`
+    : `- Grade/age: ${norm.grade}`
   return `STUDENT PROFILE:
 - State: ${norm.state}
-- Grade: ${norm.grade} (approximately ${gradeToAge(norm.grade)} years old)
+${gradeLine}
 - Working: ${employmentLabel}
 - Family situation: ${familyLabel}
 - Top interests: ${(norm.interests || []).join(', ') || 'Not specified'}
@@ -841,21 +838,18 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
 
   const norm = normalizeProfile(profile)
   const sortedInterests = (norm.interests || []).slice().sort()
-  // v6 cache key — bumped when employment field expanded and familySituation
-  // became multi-select. We dual-read v5 as a fallback so responses cached
-  // before the bump still hit (no cold Claude call).
+  // v7 cache key — bumped to invalidate any rows that may have leaked names
+  // from the freeform "additionalContext" field. v5/v6 fallback removed: those
+  // generations could contain personal names cached under a profile hash that
+  // didn't fully isolate one user's text from another. Cold-cache cost is
+  // acceptable; correctness > speed for a PII leak.
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
-  const cacheKey = `v6-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
-  const legacyV5Key = buildLegacyV5Key(profile, bill)
+  const cacheKey = `v7-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
 
-  // Check Supabase persistent cache (v6, then v5), fall back to in-memory
-  const cached =
-    (await getSupabaseCache(cacheKey))
-    || getCache(cacheKey)
-    || (legacyV5Key && (await getSupabaseCache(legacyV5Key)))
-    || (legacyV5Key && getCache(legacyV5Key))
+  // Check v7 only — no legacy fallback
+  const cached = (await getSupabaseCache(cacheKey)) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
   // Fetch full bill content for accurate personalization
@@ -938,56 +932,38 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
 
   const sortedInterests = (normalizeProfile(profile).interests || []).slice().sort()
-  // v6 cache key — bumped when employment field expanded and familySituation
-  // became multi-select. We dual-read v5 as a fallback so previously cached
-  // responses still hit and we don't pay a cold Claude call on every bill
-  // for every existing user.
+  // v7 cache key — bumped to invalidate any rows that may have leaked names
+  // from the freeform "additionalContext" field. v5/v6 fallback removed.
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
-  const legacyV5HashInput = buildLegacyV5HashInput(profile)
-  const legacyV5Hash = legacyV5HashInput
-    ? crypto.createHash('md5').update(legacyV5HashInput).digest('hex').slice(0, 12)
-    : null
   const results = {}
   const errors = {}
   const billsToPersonalize = [] // { bill, cacheKey, billType }
 
-  // 1. Batch-check personalization cache (Supabase) — query v6 keys plus
-  // any v5 fallback keys in a single round-trip.
+  // 1. Batch-check personalization cache (Supabase) — v7 only.
   const cacheKeys = bills.map(b =>
-    `v6-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
+    `v7-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
   )
-  const legacyKeys = legacyV5Hash
-    ? bills.map(b => `v5-personalize-${b.type}${b.number}-${b.congress}-${legacyV5Hash}`)
-    : []
-  const billIndexByLegacyKey = new Map()
-  legacyKeys.forEach((k, i) => billIndexByLegacyKey.set(k, i))
 
   let cachedResults = new Map()
   if (supabase) {
     try {
-      const queryKeys = legacyKeys.length ? [...cacheKeys, ...legacyKeys] : cacheKeys
       const { data } = await supabase
         .from('personalization_cache')
         .select('cache_key, response')
-        .in('cache_key', queryKeys)
+        .in('cache_key', cacheKeys)
       if (data) cachedResults = new Map(data.map(d => [d.cache_key, d.response]))
     } catch {}
   }
 
-  // Also check in-memory cache (v6 first, then v5 fallback)
+  // Also check in-memory cache
   for (let i = 0; i < bills.length; i++) {
     const bill = bills[i]
     const cacheKey = cacheKeys[i]
-    const legacyKey = legacyKeys[i] || null
     const billId = makeBillId(bill)
 
-    const cached =
-      cachedResults.get(cacheKey)
-      || getCache(cacheKey)
-      || (legacyKey && cachedResults.get(legacyKey))
-      || (legacyKey && getCache(legacyKey))
+    const cached = cachedResults.get(cacheKey) || getCache(cacheKey)
     if (cached) {
       results[billId] = cached
     } else {
@@ -2215,9 +2191,18 @@ function makeBillId(bill) {
   return `${bill.type}${bill.number}-${bill.congress}`
 }
 
+// Map a grade/age-bucket label to a representative age. Covers both the
+// numeric school-grade options ('7'..'12') and the age-range options shown
+// in the profile picker ('13-14', '15-16', '17-18', '19-21', '22-25', '26+',
+// plus the legacy '18+'). Returns null for unknown values so the prompt can
+// omit the parenthetical instead of defaulting to a wrong age.
 function gradeToAge(grade) {
-  const map = { '7': 12, '8': 13, '9': 14, '10': 15, '11': 16, '12': 17, '18+': 19 }
-  return map[String(grade)] || 16
+  const map = {
+    '7': 12, '8': 13, '9': 14, '10': 15, '11': 16, '12': 17,
+    '13-14': 14, '15-16': 16, '17-18': 18, '18+': 19,
+    '19-21': 20, '22-25': 24, '26+': 28,
+  }
+  return map[String(grade)] ?? null
 }
 
 const INTEREST_MAP = {
