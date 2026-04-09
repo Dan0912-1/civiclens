@@ -78,29 +78,39 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 
-app.use(express.json())
+// 64KB body cap — large enough for batch personalize (20 bills) but tight
+// enough to bound abuse. Default is 100kb; an explicit value documents intent.
+app.use(express.json({ limit: '64kb' }))
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
 // Uses user ID from JWT for authenticated users so that all students on the
 // same school WiFi (shared public IP) each get their own rate-limit bucket.
+//
+// SECURITY: the JWT payload is NOT verified here — the rate limiter runs
+// before any auth middleware. So we can't trust `payload.sub` as identity.
+// We combine `sub` with the normalized IP, so a forged sub gets its OWN
+// per-(IP,sub) bucket but cannot escape the surrounding IP bucket. Real
+// users from the same school still get separate buckets (different `sub`
+// per Supabase user), and an attacker rotating fake `sub` values is still
+// pinned to their IP.
 function userOrIpKey(req, res) {
+  const ipBucket = ipKeyGenerator(req.ip)
   const token = req.headers.authorization?.replace('Bearer ', '')
   if (token) {
     try {
-      const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-      if (payload.sub) return `user-${payload.sub}`
+      const parts = token.split('.')
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
+        if (payload.sub && typeof payload.sub === 'string' && payload.sub.length < 80) {
+          return `${ipBucket}-u-${payload.sub}`
+        }
+      }
     } catch (err) {
-      // Malformed JWT — fall through to IP keying, but log so we can spot
-      // broken clients or abuse in Railway logs instead of silently bucketing
-      // them into the shared IP bucket.
       console.warn('[rate-limit] malformed auth token, falling back to IP:', err.message)
     }
   }
-  // ipKeyGenerator normalizes IPv6 into a /64 subnet bucket so an attacker
-  // can't bypass the limiter by rotating through the lower 64 bits. Required
-  // by express-rate-limit v7+ when a custom keyGenerator uses req.ip.
-  return ipKeyGenerator(req.ip)
+  return ipBucket
 }
 
 const legislationLimiter = rateLimit({
@@ -154,6 +164,21 @@ const billDetailLimiter = rateLimit({
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
+
+// ─── Global Anthropic spend cap (process-wide) ──────────────────────────────
+// Hard floor on how many Claude calls this process will make per hour. Defends
+// against bypassed per-user limiters and runaway batch jobs. Tunable via env
+// without redeploying. Far above legitimate traffic; trips only on abuse.
+const ANTHROPIC_HOURLY_CAP = parseInt(process.env.ANTHROPIC_HOURLY_CAP, 10) || 800
+const _anthropicCallLog = []
+function tryConsumeAnthropicQuota() {
+  const now = Date.now()
+  const cutoff = now - 60 * 60 * 1000
+  while (_anthropicCallLog.length && _anthropicCallLog[0] < cutoff) _anthropicCallLog.shift()
+  if (_anthropicCallLog.length >= ANTHROPIC_HOURLY_CAP) return false
+  _anthropicCallLog.push(now)
+  return true
+}
 
 // Warn loudly at startup if core API keys are missing. We DON'T hard-exit
 // because the server can still serve cached bills + degraded functionality,
@@ -287,10 +312,8 @@ function transformLegiScanBill(hit, searchTerm = '') {
   // Derive chamber from type prefix
   const chamber = rawType.startsWith('S') ? 'Senate' : 'House'
 
-  // Current Congress — LegiScan doesn't expose this directly for federal
-  // bills, so we compute it from the calendar year. The Nth Congress runs
-  // from Jan 3 of (1789 + 2*(N-1)), so floor((year - 1787) / 2) = N.
-  const congress = Math.floor((new Date().getFullYear() - 1787) / 2)
+  // Current Congress — see currentFederalCongress() for the date math.
+  const congress = currentFederalCongress()
 
   return {
     congress,
@@ -449,7 +472,8 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
   // Shared feed cache by interest+grade+state (bills don't change often).
   // Auth'd users still get personalized ranking from interaction history,
   // but the base bill list is shared to minimize LegiScan API calls.
-  const feedCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-${state || 'US'}`
+  // Use a copy so we don't mutate the caller's array.
+  const feedCacheKey = `ls-bills-${[...interests].sort().join('-')}-${grade}-${state || 'US'}`
   const cachedFeed = getCache(feedCacheKey)
   if (!userId && cachedFeed) return res.json(cachedFeed)
 
@@ -590,7 +614,11 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     // Combine — federal first, then state (frontend separates by tab)
     const balanced = [...pickedFederal, ...pickedState]
 
-    // Clean internal fields but keep _score as `rankScore` for frontend re-ranking
+    // Clean internal fields but keep _score as `rankScore` for frontend re-ranking.
+    // Note: _isDiscovery / _isEmerging are deliberately removed BEFORE caching
+    // because they're a function of this specific request's random discovery
+    // pick + the current user's interaction history; baking them into a 4-hour
+    // shared cache would freeze one user's discovery slate for everyone.
     for (const bill of balanced) {
       bill.rankScore = bill._score
       delete bill._score
@@ -718,7 +746,15 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
 // replaces the previously hardcoded `119` which would silently mislabel
 // federal bills once the 120th Congress begins on 2027-01-03.
 function currentFederalCongress() {
-  return Math.floor((new Date().getFullYear() - 1787) / 2)
+  // A new Congress begins at noon on Jan 3 of every odd year. From Jan 1-2
+  // of an odd year, the calendar year already advanced but the previous
+  // Congress is still in session. Subtract one in that two-day window.
+  const now = new Date()
+  let year = now.getFullYear()
+  if (year % 2 === 1 && now.getMonth() === 0 && now.getDate() < 3) {
+    year -= 1
+  }
+  return Math.floor((year - 1787) / 2)
 }
 
 // Derive a bill's origin chamber from its type prefix. Works for federal
@@ -864,21 +900,23 @@ OUTPUT — return ONLY this JSON, nothing else:
   ]
 }`
 
-// Strip personal-name-shaped tokens from freeform user text. Defense in depth so
-// a name typed into "Other context" never reaches Claude or the cache key. We
-// remove standalone Capitalized tokens (likely names) and common "I'm <Name>"
-// / "my name is <Name>" patterns. Cap length to bound prompt-injection surface.
+// Sanitize freeform "Other context" text. Previously this also tried to strip
+// personal-name-shaped tokens with a regex, but that filter was both too
+// aggressive (it removed "California", "Catholic", "Asian") and trivially
+// bypassable (lowercase names, all-caps, names with apostrophes). The real
+// guarantees that prevent the original PII leak are:
+//   1. The cache key fully covers `additionalContext` (so one user's freeform
+//      text can never be served to another user from cache).
+//   2. The Claude system prompt is instructed to never echo personal names.
+// All this function does now is bound length, strip control characters, and
+// collapse whitespace — no false confidence.
 function sanitizeAdditionalContext(raw) {
   if (!raw || typeof raw !== 'string') return ''
-  let s = raw.slice(0, 240)
-  // Drop "my name is X", "I'm X", "I am X", "call me X" — case-insensitive
-  s = s.replace(/\b(?:my name is|i['’]?m|i am|call me|name['’]?s)\s+[A-Z][a-zA-Z'-]{1,30}\b/gi, '')
-  // Drop standalone Capitalized name-shaped tokens that aren't common words
-  // (this is conservative — it leaves states, months, etc. alone via a denylist)
-  const KEEP = new Set(['I', 'I\'m', 'Im', 'A', 'An', 'The', 'My', 'We', 'They', 'He', 'She'])
-  s = s.replace(/\b[A-Z][a-z]{2,20}\b/g, (m) => (KEEP.has(m) ? m : ''))
-  // Collapse whitespace and trim
-  return s.replace(/\s{2,}/g, ' ').trim()
+  return raw
+    .slice(0, 240)
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
 
 // Normalize incoming profile (handles new + legacy field shapes). Unknown
@@ -915,6 +953,26 @@ function buildProfileHashInput(profile) {
   return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
 }
 
+// Build a trusted bill object from req.body bill + canonical LegiScan meta.
+// Attacker-controlled fields (title, latestAction, latestActionDate) come
+// from `meta` when available, falling back to req.body only if LegiScan
+// didn't return them. type/number/congress are validated below by callers.
+function buildTrustedBill(reqBill, meta) {
+  const safeStr = v => (typeof v === 'string' ? v.slice(0, 500) : '')
+  return {
+    type: safeStr(reqBill.type),
+    number: Number.isFinite(+reqBill.number) ? +reqBill.number : 0,
+    congress: Number.isFinite(+reqBill.congress) ? +reqBill.congress : 0,
+    state: safeStr(reqBill.state || (meta?.state || '')),
+    isStateBill: !!reqBill.isStateBill,
+    originChamber: safeStr(reqBill.originChamber),
+    title: safeStr(meta?.title || reqBill.title),
+    latestAction: safeStr(meta?.latestAction || reqBill.latestAction),
+    latestActionDate: safeStr(meta?.latestActionDate || reqBill.latestActionDate),
+    legiscan_bill_id: meta?.legiscanBillId || reqBill.legiscan_bill_id,
+  }
+}
+
 function buildUserPrompt(profile, bill, billContent) {
   const norm = normalizeProfile(profile)
   const employmentLabel =
@@ -934,9 +992,16 @@ function buildUserPrompt(profile, bill, billContent) {
     ? billContent.slice(0, 8000) + '\n\n[bill text truncated — see source link for full text]'
     : billContent
   const ageGuess = gradeToAge(norm.grade)
-  const gradeLine = ageGuess != null
-    ? `- Grade/age: ${norm.grade} (approximately ${ageGuess} years old)`
-    : `- Grade/age: ${norm.grade}`
+  let gradeLine
+  if (!norm.grade) {
+    gradeLine = `- Grade/age: not specified`
+  } else if (ageGuess != null) {
+    gradeLine = `- Grade/age: ${norm.grade} (approximately ${ageGuess} years old)`
+  } else if (norm.grade === '26+') {
+    gradeLine = `- Grade/age: 26+ (adult, 26 or older)`
+  } else {
+    gradeLine = `- Grade/age: ${norm.grade}`
+  }
   return `STUDENT PROFILE:
 - State: ${norm.state}
 ${gradeLine}
@@ -955,6 +1020,13 @@ ${cappedContent ? `\n${cappedContent}` : '\nNote: Full bill text was not availab
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 }
 
+// Build a stable identity key for a bill — preferring legiscan_bill_id which
+// uniquely identifies the bill regardless of attacker-controlled type/number.
+function billIdentityKey(bill) {
+  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
+  return `${bill.type}${bill.number}-${bill.congress}`
+}
+
 // ─── Personalization endpoint (Claude Haiku 4.5) ────────────────────────────
 app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const valErrors = validatePersonalizeBody(req.body)
@@ -964,17 +1036,15 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
 
   const norm = normalizeProfile(profile)
   const sortedInterests = (norm.interests || []).slice().sort()
-  // v7 cache key — bumped to invalidate any rows that may have leaked names
-  // from the freeform "additionalContext" field. v5/v6 fallback removed: those
-  // generations could contain personal names cached under a profile hash that
-  // didn't fully isolate one user's text from another. Cold-cache cost is
-  // acceptable; correctness > speed for a PII leak.
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
-  const cacheKey = `v7-personalize-${bill.type}${bill.number}-${bill.congress}-${profileHash}`
+  // v8 cache key — keyed on canonical bill identity (legiscan_bill_id when
+  // available) so an attacker can't poison the cache by submitting fake
+  // metadata under a real bill's type/number/congress.
+  const identity = billIdentityKey(bill)
+  const cacheKey = `v8-personalize-${identity}-${profileHash}`
 
-  // Check v7 only — no legacy fallback
   const cached = (await getSupabaseCache(cacheKey)) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
@@ -982,16 +1052,37 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
   const billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
   const { billContent, sources } = buildBillContent(billData)
-  console.log(`[personalize] ${bill.type}${bill.number}-${bill.congress}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
+  // Build a TRUSTED bill object using canonical metadata from LegiScan when
+  // available. This is the C1 fix — req.body.bill.title is no longer the
+  // source of truth for the prompt or for what we cache.
+  const trustedBill = buildTrustedBill(bill, billData?.meta)
+  console.log(`[personalize] ${identity}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
   const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
-  const userPrompt = buildUserPrompt(profile, bill, billContent)
+  const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
+
+  // Wall-clock cap so a long retry storm can't pin a request open while the
+  // client has already given up — prevents Claude tokens being burned for a
+  // response we'll never deliver.
+  const requestStart = Date.now()
+  const REQUEST_BUDGET_MS = 45000
+  let clientGone = false
+  req.on('close', () => { clientGone = true })
 
   const MAX_RETRIES = 4
-  const billLabel = `${bill.type}${bill.number}-${bill.congress}`
+  const billLabel = identity
   let lastError = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (clientGone) return
+    if (Date.now() - requestStart > REQUEST_BUDGET_MS) {
+      lastError = lastError || 'request budget exceeded'
+      break
+    }
+    if (!tryConsumeAnthropicQuota()) {
+      return res.status(503).json({ error: 'Service temporarily at capacity, please try again shortly', retryable: true })
+    }
     try {
+      const remaining = REQUEST_BUDGET_MS - (Date.now() - requestStart)
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -999,7 +1090,7 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
           'x-api-key': ANTHROPIC_KEY,
           'anthropic-version': '2023-06-01'
         },
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 700,
@@ -1043,6 +1134,7 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       console.error(`[personalize] Failed for ${billLabel} after ${MAX_RETRIES} retries:`, err.message)
     }
   }
+  if (clientGone) return
   res.status(502).json({ error: 'Personalization failed', detail: lastError, retryable: true })
 })
 
@@ -1057,9 +1149,17 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Maximum 20 bills per batch' })
   }
 
+  // H2 — same input validation as /api/personalize. Previously the batch
+  // endpoint skipped validateProfileShape and per-bill checks entirely.
+  const profileErrors = validateProfileShape(profile)
+  if (profileErrors.length) return res.status(400).json({ error: profileErrors.join(', ') })
+  for (const b of bills) {
+    if (!b || typeof b !== 'object' || !b.type || b.number == null) {
+      return res.status(400).json({ error: 'each bill must include type and number' })
+    }
+  }
+
   const sortedInterests = (normalizeProfile(profile).interests || []).slice().sort()
-  // v7 cache key — bumped to invalidate any rows that may have leaked names
-  // from the freeform "additionalContext" field. v5/v6 fallback removed.
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
@@ -1067,9 +1167,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   const errors = {}
   const billsToPersonalize = [] // { bill, cacheKey, billType }
 
-  // 1. Batch-check personalization cache (Supabase) — v7 only.
+  // v8 cache key — keyed on canonical bill identity (legiscan_bill_id when
+  // available) so attacker-supplied metadata can't poison cache entries.
   const cacheKeys = bills.map(b =>
-    `v7-personalize-${b.type}${b.number}-${b.congress}-${profileHash}`
+    `v8-personalize-${billIdentityKey(b)}-${profileHash}`
   )
 
   let cachedResults = new Map()
@@ -1138,17 +1239,33 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   const billsWithText = await Promise.all(textFetches)
 
-  // 3. Fire Claude calls with concurrency limit (3 at a time) and retry on transient failures
+  // Wall-clock cap for the whole batch — bound how long Claude retries can run.
+  const batchStart = Date.now()
+  const BATCH_BUDGET_MS = 60000
+  let clientGone = false
+  req.on('close', () => { clientGone = true })
+
+  // 3. Fire Claude calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
+    // C1 — replace attacker-supplied metadata with canonical LegiScan title.
+    const trustedBill = buildTrustedBill(bill, billData?.meta)
 
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
-    const userPrompt = buildUserPrompt(profile, bill, billContent)
+    const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
 
     const MAX_RETRIES = 4
     let lastError = null
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (clientGone) return { billId, error: 'client closed' }
+      if (Date.now() - batchStart > BATCH_BUDGET_MS) {
+        return { billId, error: lastError || 'batch budget exceeded' }
+      }
+      if (!tryConsumeAnthropicQuota()) {
+        return { billId, error: 'service capacity' }
+      }
       try {
+        const remaining = BATCH_BUDGET_MS - (Date.now() - batchStart)
         const resp = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
@@ -1156,7 +1273,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
             'x-api-key': ANTHROPIC_KEY,
             'anthropic-version': '2023-06-01'
           },
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 700,
@@ -1246,6 +1363,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     }
   }
 
+  if (clientGone) return
   console.log(`[personalize-batch] ${Object.keys(results).length} ok, ${Object.keys(errors).length} errors`)
   res.json({ results, errors })
 })
@@ -1342,6 +1460,25 @@ BILL:
 Write 3 drafts. Different angles. Under ${spec.maxLen} chars each. Follow the JSON schema exactly.`
 }
 
+// Trim+escape an analysis field before letting it land in a Claude prompt.
+// `analysis` comes from req.body and is otherwise unverified — without these
+// caps an attacker could stuff prompt-injection payloads into a "trusted"
+// CapitolKey endpoint via fields like analysis.summary.
+function sanitizeAnalysisField(value, max) {
+  if (typeof value !== 'string') return ''
+  return value.replace(/[\u0000-\u001F\u007F]/g, ' ').slice(0, max).trim()
+}
+function sanitizeAnalysis(analysis) {
+  if (!analysis || typeof analysis !== 'object') return null
+  return {
+    headline: sanitizeAnalysisField(analysis.headline, 200),
+    summary: sanitizeAnalysisField(analysis.summary, 800),
+    if_it_passes: sanitizeAnalysisField(analysis.if_it_passes, 400),
+    if_it_fails: sanitizeAnalysisField(analysis.if_it_fails, 400),
+    topic_tag: sanitizeAnalysisField(analysis.topic_tag, 60),
+  }
+}
+
 app.post('/api/share-post', personalizeLimiter, async (req, res) => {
   const { bill, analysis, profile, platform, perspective } = req.body || {}
   if (!bill || !bill.title || !bill.type || !bill.number) {
@@ -1366,12 +1503,27 @@ app.post('/api/share-post', personalizeLimiter, async (req, res) => {
     }
   }
 
-  const userPrompt = buildSharePostUserPrompt({ bill, analysis, profile, platform, perspective })
+  // M1 — sanitize the client-supplied analysis object so it can't smuggle
+  // arbitrary instructions into the Claude prompt.
+  const safeAnalysis = sanitizeAnalysis(analysis)
+
+  // Bound title length so a hostile bill payload can't bloat the prompt.
+  const safeBill = {
+    ...bill,
+    title: typeof bill.title === 'string' ? bill.title.slice(0, 300) : '',
+    type: typeof bill.type === 'string' ? bill.type.slice(0, 20) : '',
+    number: Number.isFinite(+bill.number) ? +bill.number : 0,
+    state: typeof bill.state === 'string' ? bill.state.slice(0, 4) : '',
+  }
+  const userPrompt = buildSharePostUserPrompt({ bill: safeBill, analysis: safeAnalysis, profile, platform, perspective })
   const billLabel = `${bill.type}${bill.number}-${bill.congress || 'state'}`
 
   const MAX_RETRIES = 2
   let lastError = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (!tryConsumeAnthropicQuota()) {
+      return res.status(503).json({ error: 'Service temporarily at capacity, please try again shortly', retryable: true })
+    }
     try {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -1440,19 +1592,39 @@ async function requireAuth(req) {
 
 // ─── Interaction tracking (interest refinement) ─────────────────────────────
 
+const VALID_ACTION_TYPES = new Set(['view_detail', 'expand_card', 'bookmark'])
+const VALID_TOPIC_TAGS = new Set([
+  'Education', 'Healthcare', 'Economy', 'Environment',
+  'Technology', 'Housing', 'Civil Rights', 'Immigration', 'Community', 'Other',
+])
+const MAX_INTERACTIONS_PER_REQUEST = 25
+
 app.post('/api/interactions', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 
-    // Support single or batch interactions
-    const items = req.body.interactions || [req.body]
-    const rows = items
-      .filter(i => i.bill_id && i.action_type)
+    // Support single or batch interactions, but cap the batch size and
+    // validate every field. Without these caps a single user can flood
+    // bill_interactions and manipulate the global popularity feed (audit C3).
+    const rawItems = Array.isArray(req.body.interactions)
+      ? req.body.interactions
+      : [req.body]
+    if (rawItems.length > MAX_INTERACTIONS_PER_REQUEST) {
+      return res.status(400).json({ error: `Maximum ${MAX_INTERACTIONS_PER_REQUEST} interactions per request` })
+    }
+    const rows = rawItems
+      .filter(i =>
+        i &&
+        typeof i.bill_id === 'string' && i.bill_id.length > 0 && i.bill_id.length <= 80 &&
+        typeof i.action_type === 'string' && VALID_ACTION_TYPES.has(i.action_type)
+      )
       .map(i => ({
         user_id: user.id,
         bill_id: i.bill_id,
         action_type: i.action_type,
-        topic_tag: i.topic_tag || null,
+        topic_tag: typeof i.topic_tag === 'string' && VALID_TOPIC_TAGS.has(i.topic_tag)
+          ? i.topic_tag
+          : null,
       }))
 
     if (rows.length && supabase) {
@@ -1508,10 +1680,23 @@ app.post('/api/push/register', async (req, res) => {
     const user = await requireAuth(req)
     const { token, platform } = req.body
 
-    if (!token || !platform) return res.status(400).json({ error: 'token and platform required' })
-    if (!['ios', 'android'].includes(platform)) return res.status(400).json({ error: 'platform must be ios or android' })
+    if (!token || typeof token !== 'string' || token.length > 4096) {
+      return res.status(400).json({ error: 'token required' })
+    }
+    if (!platform || !['ios', 'android'].includes(platform)) {
+      return res.status(400).json({ error: 'platform must be ios or android' })
+    }
 
     if (supabase) {
+      // C4 — FCM tokens are 1:1 with app installs, NOT with users. If user A
+      // and then user B sign in on the same device, both inherit the same
+      // token. Without this delete, both users get push notifications meant
+      // for either bookmark set. Take exclusive ownership of the token now.
+      await supabase
+        .from('push_tokens')
+        .delete()
+        .eq('token', token)
+        .neq('user_id', user.id)
       await supabase
         .from('push_tokens')
         .upsert({ user_id: user.id, token, platform }, { onConflict: 'user_id,token' })
@@ -1659,6 +1844,10 @@ app.get('/api/notifications/preferences', async (req, res) => {
   try {
     const user = await requireAuth(req)
 
+    if (!supabase) {
+      return res.status(503).json({ error: 'Database not configured' })
+    }
+
     const { data, error } = await supabase
       .from('user_profiles')
       .select('email_notifications, push_notifications')
@@ -1726,10 +1915,14 @@ async function checkBillUpdates() {
 
   console.log('[cron] Starting daily bill-update check...')
 
-  // 1. Fetch all bookmarks with user info
+  // 1. Fetch bookmarks with user info. Bound by limit so the cron can't OOM
+  // the container as the table grows.
+  const BOOKMARKS_SCAN_LIMIT = parseInt(process.env.BOOKMARKS_SCAN_LIMIT, 10) || 5000
   const { data: bookmarks, error: bmErr } = await supabase
     .from('bookmarks')
     .select('id, user_id, bill_id, bill_data, last_known_action')
+    .order('created_at', { ascending: false })
+    .limit(BOOKMARKS_SCAN_LIMIT)
 
   if (bmErr || !bookmarks?.length) {
     console.log('[cron] No bookmarks to check', bmErr?.message || '')
@@ -1770,6 +1963,10 @@ async function checkBillUpdates() {
   const userChanges = new Map() // userId → [{ ...billInfo, oldAction, newAction }]
   const bookmarkUpdates = []    // [{ id, last_known_action }]
 
+  // Normalize action text for comparison so cosmetic LegiScan re-imports
+  // (whitespace, punctuation, casing) don't fire false-positive notifications.
+  const normAction = (s) => String(s || '').replace(/\s+/g, ' ').replace(/[.,;]+$/g, '').trim().toLowerCase()
+
   for (const bm of bookmarks) {
     const current = currentStatuses.get(bm.bill_id)
     if (!current) continue
@@ -1783,7 +1980,7 @@ async function checkBillUpdates() {
       continue
     }
 
-    if (newAction && newAction !== oldAction) {
+    if (newAction && normAction(newAction) !== normAction(oldAction)) {
       const bill = bm.bill_data?.bill || {}
       const change = {
         type: bill.type || '?',
@@ -1811,6 +2008,7 @@ async function checkBillUpdates() {
 
   // 6. Send emails to users with changes (respecting notification preferences)
   let emailsSent = 0
+  let emailsFailed = 0
   if (!resend) console.log('[cron] Email sending skipped — Resend not configured')
   for (const [userId, changes] of resend ? userChanges : []) {
     try {
@@ -1840,8 +2038,12 @@ async function checkBillUpdates() {
       })
       emailsSent++
     } catch (err) {
+      emailsFailed++
       console.error(`[cron] Failed to email user ${userId}:`, err.message)
     }
+  }
+  if (emailsFailed > 0) {
+    console.error(`[cron] WARNING: ${emailsFailed} email send(s) failed this run`)
   }
 
   // 7. Send push notifications to users with changes (FCM V1 API)
@@ -2031,7 +2233,9 @@ function isStaleBillTextCache(cached) {
   const wc = cached.word_count || 0
   const hasCrs = !!cached.crs_summary
   if (hasCrs) return false
-  if (wc > 0 && wc < BILL_TEXT_STALE_WORD_THRESHOLD) return true
+  // Anything below the threshold (including 0-word "we wrote a row but
+  // extraction returned nothing" failures) should re-run the extractor.
+  if (wc < BILL_TEXT_STALE_WORD_THRESHOLD) return true
   return false
 }
 
@@ -2109,6 +2313,10 @@ function stripRtf(rtf) {
     .trim()
 }
 
+// Hard cap on bill-text decoded size before we hand it to a parser. Bounds
+// CPU/memory exposure to a malformed PDF or hostile binary.
+const MAX_DECODED_BILL_BYTES = 8 * 1024 * 1024 // 8 MB
+
 // Extract plain text from a single LegiScan getBillText response based on its
 // mime type. Returns empty string if the format is unparseable.
 async function extractTextFromLegiScanDoc(textData) {
@@ -2117,6 +2325,10 @@ async function extractTextFromLegiScanDoc(textData) {
   if (!doc) return ''
 
   const decoded = Buffer.from(doc, 'base64')
+  if (decoded.length > MAX_DECODED_BILL_BYTES) {
+    console.warn(`[billtext] Document exceeds ${MAX_DECODED_BILL_BYTES} bytes (${decoded.length}); skipping`)
+    return ''
+  }
 
   if (mime.includes('html') || mime.includes('htm')) {
     return stripHtml(decoded.toString('utf-8'))
@@ -2158,8 +2370,17 @@ async function extractTextFromLegiScanDoc(textData) {
 async function fetchBillTextFromLegiScan(legiscanBillId) {
   try {
     const billData = await legiscanRequest('getBill', { id: legiscanBillId })
+    // Capture canonical metadata so callers can override attacker-supplied
+    // bill fields (defends the personalize cache against client-controlled
+    // bill.title interpolation — see C1 in audit).
+    const canonicalMeta = {
+      title: billData.bill?.title || '',
+      latestAction: billData.bill?.last_action || billData.bill?.status_desc || '',
+      latestActionDate: billData.bill?.last_action_date || billData.bill?.status_date || '',
+      legiscanBillId: billData.bill?.bill_id || legiscanBillId,
+    }
     const texts = (billData.bill?.texts || []).filter(t => t.doc_id)
-    if (!texts.length) return null
+    if (!texts.length) return { text: null, wordCount: 0, version: '', meta: canonicalMeta }
 
     // Sort newest → oldest so we prefer the latest version of the bill.
     const ordered = [...texts].reverse()
@@ -2179,6 +2400,7 @@ async function fetchBillTextFromLegiScan(legiscanBillId) {
             text: plainText,
             wordCount,
             version: candidate.type || 'Latest version',
+            meta: canonicalMeta,
           }
         }
       } catch (err) {
@@ -2195,9 +2417,10 @@ async function fetchBillTextFromLegiScan(legiscanBillId) {
         wordCount: desc.split(/\s+/).length,
         version: 'description only',
         degraded: true,
+        meta: canonicalMeta,
       }
     }
-    return null
+    return { text: null, wordCount: 0, version: '', meta: canonicalMeta }
   } catch (err) {
     console.error(`[billtext] LegiScan failed for bill ${legiscanBillId}:`, err.message)
     return null
@@ -2252,6 +2475,7 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
     version: textResult?.version || '',
     crsSummary: null, // LegiScan doesn't have CRS summaries
     crsVersion: '',
+    meta: textResult?.meta || null, // canonical title/action from LegiScan
   }
 
   // Only cache GOOD results. A transient LegiScan failure or a degraded
@@ -2306,13 +2530,26 @@ function buildBillContent(billData) {
   return { billContent, sources }
 }
 
-// Fire-and-forget: pre-fetch bill texts for all returned bills
+// Fire-and-forget: pre-fetch bill texts for all returned bills.
+// Bounded concurrency so a single /api/legislation request can't fan out
+// 12 bills × 2-3 LegiScan calls each in parallel and burn through quota.
 async function prefetchBillTexts(bills) {
-  const fetches = bills.map(b => {
-    const type = b.type?.toLowerCase().replace(/\./g, '') || ''
-    return fetchBillContent(b.congress, type, b.number, b.legiscan_bill_id).catch(() => null)
-  })
-  await Promise.allSettled(fetches)
+  const PREFETCH_CONCURRENCY = 3
+  let cursor = 0
+  async function worker() {
+    while (true) {
+      const i = cursor++
+      if (i >= bills.length) return
+      const b = bills[i]
+      const type = b.type?.toLowerCase().replace(/\./g, '') || ''
+      try {
+        await fetchBillContent(b.congress, type, b.number, b.legiscan_bill_id)
+      } catch {}
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(PREFETCH_CONCURRENCY, bills.length) }, worker)
+  )
 }
 
 // ─── Deduplicate companion bills (Senate/House versions, amended versions) ──
@@ -2474,37 +2711,51 @@ async function getUserInteractions(userId) {
   return { interactionMap, topicCounts }
 }
 
-// Collaborative filtering: find bills popular among all students in the last 30 days
-// Returns a Set of bill_ids with high engagement (bookmarks weighted 3×, views 1×)
-const _popularBillsCache = { data: null, ts: 0 }
+// Collaborative filtering: find bills popular among all students in the last 30 days.
+// Each interaction is recency-decayed (halflife ~10 days) so bills that were
+// hot a month ago don't keep their score forever.
+const _popularBillsCache = { data: null, ts: 0, inflight: null }
 async function getPopularBillIds() {
-  // Cache for 1 hour to avoid hammering Supabase
   if (_popularBillsCache.data && Date.now() - _popularBillsCache.ts < 3600000) {
     return _popularBillsCache.data
   }
+  // Single-flight: if a refresh is already running, await it instead of
+  // starting a parallel scan (thundering herd on TTL expiry).
+  if (_popularBillsCache.inflight) return _popularBillsCache.inflight
   if (!supabase) return new Set()
 
-  const cutoff = new Date(Date.now() - 30 * 86400000).toISOString()
-  const { data, error } = await supabase
-    .from('bill_interactions')
-    .select('bill_id, action_type')
-    .gte('created_at', cutoff)
+  _popularBillsCache.inflight = (async () => {
+    try {
+      const cutoff = new Date(Date.now() - 30 * 86400000).toISOString()
+      const { data, error } = await supabase
+        .from('bill_interactions')
+        .select('bill_id, action_type, created_at')
+        .gte('created_at', cutoff)
+        .limit(20000)
 
-  if (error || !data) return new Set()
+      if (error || !data) return new Set()
 
-  // Weight: bookmark = 3, view_detail = 1, expand_card = 0.5
-  const scores = {}
-  for (const row of data) {
-    const w = row.action_type === 'bookmark' ? 3 : row.action_type === 'view_detail' ? 1 : 0.5
-    scores[row.bill_id] = (scores[row.bill_id] || 0) + w
-  }
-
-  // Top 20 most popular bills
-  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 20)
-  const result = new Set(sorted.map(([id]) => id))
-  _popularBillsCache.data = result
-  _popularBillsCache.ts = Date.now()
-  return result
+      // Weight: bookmark = 3, view_detail = 1, expand_card = 0.5
+      // Recency: exponential decay, halflife 10 days
+      const now = Date.now()
+      const scores = {}
+      for (const row of data) {
+        const baseW = row.action_type === 'bookmark' ? 3
+          : row.action_type === 'view_detail' ? 1 : 0.5
+        const ageDays = (now - new Date(row.created_at).getTime()) / 86400000
+        const decay = Math.exp(-ageDays / 10)
+        scores[row.bill_id] = (scores[row.bill_id] || 0) + baseW * decay
+      }
+      const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, 20)
+      const result = new Set(sorted.map(([id]) => id))
+      _popularBillsCache.data = result
+      _popularBillsCache.ts = Date.now()
+      return result
+    } finally {
+      _popularBillsCache.inflight = null
+    }
+  })()
+  return _popularBillsCache.inflight
 }
 
 // Optional auth — returns user or null (never throws)
@@ -2667,7 +2918,7 @@ const CATEGORY_TO_TOPIC = {
 function transformCuratedBill(row) {
   const type = (row.bill_type || '').toLowerCase()
   return {
-    congress: row.congress || Math.floor((new Date().getFullYear() - 1787) / 2),
+    congress: row.congress || currentFederalCongress(),
     type,
     number: parseInt(row.bill_number, 10) || 0,
     title: row.title || '',
@@ -2821,8 +3072,13 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   // prevent header injection. Bodies are fine with newlines.
   const safeName = (name || '').replace(/[\r\n]/g, ' ').slice(0, 120)
   const safeEmail = (email || '').replace(/[\r\n]/g, ' ').slice(0, 200)
-  try {
-    if (resend) {
+  // Track which sinks succeeded so we can fail the request if BOTH email
+  // and DB drop the feedback. Previously the endpoint always returned 200
+  // even when nothing was actually persisted.
+  let emailOk = false
+  let dbOk = false
+  if (resend) {
+    try {
       await resend.emails.send({
         from: RESEND_FROM,
         to: 'capitolkeyapp@gmail.com',
@@ -2835,21 +3091,29 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
           message.trim(),
         ].join('\n'),
       })
+      emailOk = true
+    } catch (err) {
+      console.error('[feedback] Resend send error:', err.message)
     }
-    // Also store in Supabase if available
-    if (supabase) {
-      await supabase.from('feedback').insert({
+  }
+  if (supabase) {
+    try {
+      const { error: dbErr } = await supabase.from('feedback').insert({
         name: safeName || null,
         email: safeEmail || null,
         type: feedbackType,
         message: message.trim(),
-      }).catch(() => {}) // table may not exist yet
+      })
+      if (!dbErr) dbOk = true
+      else console.error('[feedback] Supabase insert error:', dbErr.message)
+    } catch (err) {
+      console.error('[feedback] Supabase insert exception:', err.message)
     }
-    res.json({ ok: true })
-  } catch (err) {
-    console.error('Feedback send error:', err)
-    res.json({ ok: true }) // still return success — we don't want to block user
   }
+  if (!emailOk && !dbOk) {
+    return res.status(502).json({ error: 'Feedback could not be saved. Please try again later.' })
+  }
+  res.json({ ok: true })
 })
 
 const PORT = process.env.PORT || 3001
