@@ -1148,6 +1148,159 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   res.json({ results, errors })
 })
 
+// ─── Advocacy share-post generation ─────────────────────────────────────────
+// Turns a personalized bill into 2-3 short, platform-appropriate drafts the
+// student can copy/paste to share their own take. The student is the author —
+// CapitolKey just helps them articulate it. The system prompt enforces:
+//  - Voice in the FIRST PERSON ("I think", "I'm worried", "I want")
+//  - Concrete, specific to their state/grade/job — not generic talking points
+//  - A clear ask (contact rep, register to vote, learn more)
+//  - Platform-appropriate length and style
+//  - No partisan framing — let the user's perspective drive the angle
+const PLATFORM_SPECS = {
+  instagram: { name: 'Instagram story', maxLen: 220, style: 'punchy, line-broken, 1-2 emoji ok' },
+  x:         { name: 'X / Twitter',     maxLen: 270, style: 'one tight post, no thread, hashtags optional' },
+  threads:   { name: 'Threads',         maxLen: 480, style: 'conversational, can run a few sentences' },
+  tiktok:    { name: 'TikTok caption',  maxLen: 300, style: 'hook-first, hashtags at end' },
+}
+
+const SHARE_POST_SYSTEM_PROMPT = `You are CapitolKey's advocacy-post writer. A high school student wants to share a U.S. bill with their network and explain why they care. Your job is to give them 3 short drafts they can copy, edit, and post.
+
+VOICE
+- First person. The STUDENT is the author. Write as "I", not "we" or "you".
+- Sound like a real teenager — direct, specific, not corporate. No press-release voice.
+- If the student gave a perspective line, that take drives the angle. Don't soften or rewrite their position. Don't add a counterpoint.
+- If they didn't give a perspective, lead with WHY the bill matters to someone like them (their state, age, job, family, interests) — still neutral on the partisan question.
+
+RULES
+1. Three drafts. Each draft must take a DIFFERENT angle:
+   - Draft A: personal stake ("Here's how this hits me")
+   - Draft B: a single surprising fact from the bill + why it matters
+   - Draft C: a direct call to action (contact rep, register to vote, show up)
+2. Stay under the platform's character limit. Count characters carefully.
+3. Use facts from the bill summary provided. Never invent numbers or claims.
+4. Always include ONE call to action somewhere across the 3 drafts (link to congress.gov, "text your rep", etc.). The CTA goes in the draft, not as separate field.
+5. No hashtag spam. 0-3 hashtags max, only if natural for the platform.
+6. NEVER use slurs, partisan attack lines, or call any group evil/stupid/etc. Critique policy, not people.
+7. NEVER claim the student said something they didn't say. If they gave no perspective, don't put words in their mouth — keep it factual + curious.
+
+OUTPUT — return ONLY this JSON, nothing else:
+{
+  "drafts": [
+    { "angle": "personal stake", "text": "the post draft, ready to copy" },
+    { "angle": "surprising fact", "text": "the post draft, ready to copy" },
+    { "angle": "call to action", "text": "the post draft, ready to copy" }
+  ]
+}`
+
+function buildSharePostUserPrompt({ bill, analysis, profile, platform, perspective }) {
+  const norm = normalizeProfile(profile || {})
+  const spec = PLATFORM_SPECS[platform] || PLATFORM_SPECS.instagram
+  const employmentLabel =
+    norm.employment === 'full_time' ? 'full-time job'
+    : norm.employment === 'part_time' ? 'part-time job'
+    : 'no job'
+  const familyLabel = norm.familySituation?.length ? norm.familySituation.join(', ') : 'not specified'
+  return `PLATFORM: ${spec.name}
+CHARACTER LIMIT: ${spec.maxLen} per draft (strict)
+STYLE: ${spec.style}
+
+STUDENT (the author of these posts):
+- State: ${norm.state || 'not specified'}
+- Grade: ${norm.grade || 'not specified'}
+- Working: ${employmentLabel}
+- Family: ${familyLabel}
+- Interests: ${(norm.interests || []).join(', ') || 'not specified'}
+
+STUDENT'S PERSPECTIVE (drive the angle from this if present):
+${perspective?.trim() ? `"${perspective.trim()}"` : '(none — student did not add a perspective; lean factual + curious)'}
+
+BILL:
+- ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
+- Title: ${bill.title}
+- Headline (from CapitolKey): ${analysis?.headline || 'n/a'}
+- Summary (from CapitolKey): ${analysis?.summary || 'n/a'}
+- If it passes: ${analysis?.if_it_passes || 'n/a'}
+- If it fails: ${analysis?.if_it_fails || 'n/a'}
+- Topic: ${analysis?.topic_tag || 'n/a'}
+
+Write 3 drafts. Different angles. Under ${spec.maxLen} chars each. Follow the JSON schema exactly.`
+}
+
+app.post('/api/share-post', personalizeLimiter, async (req, res) => {
+  const { bill, analysis, profile, platform, perspective } = req.body || {}
+  if (!bill || !bill.title || !bill.type || !bill.number) {
+    return res.status(400).json({ error: 'bill (with title, type, number) is required' })
+  }
+  if (!PLATFORM_SPECS[platform]) {
+    return res.status(400).json({ error: `platform must be one of: ${Object.keys(PLATFORM_SPECS).join(', ')}` })
+  }
+  if (perspective && typeof perspective === 'string' && perspective.length > 500) {
+    return res.status(400).json({ error: 'perspective must be 500 characters or fewer' })
+  }
+
+  const userPrompt = buildSharePostUserPrompt({ bill, analysis, profile, platform, perspective })
+  const billLabel = `${bill.type}${bill.number}-${bill.congress || 'state'}`
+
+  const MAX_RETRIES = 2
+  let lastError = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 800,
+          temperature: 0.8, // higher than personalize — we want voice variety across drafts
+          system: SHARE_POST_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      })
+
+      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
+        const delay = Math.min(4000, 800 * 2 ** attempt) + Math.floor(Math.random() * 300)
+        lastError = `HTTP ${resp.status}`
+        console.log(`[share-post] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      const data = await resp.json()
+      if (!data.content?.[0]?.text) {
+        throw new Error(data.error?.message || 'No response from Claude')
+      }
+
+      const parsed = extractJson(data.content[0].text)
+      if (!Array.isArray(parsed.drafts) || !parsed.drafts.length) {
+        throw new Error('Claude returned no drafts')
+      }
+      // Filter out anything malformed and trim. We don't reject the whole
+      // response over one bad draft — surface the good ones.
+      const drafts = parsed.drafts
+        .filter(d => d && typeof d.text === 'string' && d.text.trim())
+        .map(d => ({ angle: d.angle || 'draft', text: d.text.trim() }))
+      if (!drafts.length) throw new Error('All drafts were empty')
+      return res.json({ drafts, platform })
+    } catch (err) {
+      lastError = err.message
+      if (attempt < MAX_RETRIES) {
+        const delay = Math.min(4000, 800 * 2 ** attempt) + Math.floor(Math.random() * 300)
+        console.log(`[share-post] ${err.message} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      console.error(`[share-post] Failed for ${billLabel} after ${MAX_RETRIES} retries:`, err.message)
+    }
+  }
+  res.status(502).json({ error: 'Draft generation failed', detail: lastError, retryable: true })
+})
+
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 async function requireAuth(req) {
   const authHeader = req.headers.authorization
