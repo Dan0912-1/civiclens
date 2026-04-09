@@ -120,7 +120,7 @@ export function AuthProvider({ children }) {
 
         const result = await SignInWithApple.authorize({
           clientId: 'com.danieljacius.capitolkey',
-          redirectURI: 'https://drljemedyhpyvrzumusd.supabase.co/auth/v1/callback',
+          redirectURI: 'https://auth.capitolkey.org/auth/v1/callback',
           scopes: 'email name',
           nonce: hashedNonce,
         })
