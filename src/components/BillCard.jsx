@@ -1,6 +1,7 @@
 import { useState, useRef, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import SharePostModal from './SharePostModal'
 import styles from './BillCard.module.css'
 
 function haptic(style = 'Light') {
@@ -83,6 +84,7 @@ async function openRepLookup() {
 export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false, onPersonalize, personalizing = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const [swipeOffset, setSwipeOffset] = useState(0)
   const swipeStart = useRef(null)
   const navigate = useNavigate()
@@ -287,9 +289,17 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                 onClick={e => {
                   e.stopPropagation()
                   haptic('Light')
-                  shareBill(bill, analysis)
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 2000)
+                  // With an analysis loaded we open the advocacy-post composer
+                  // so the user shares THEIR take, not just a link. Without an
+                  // analysis there's nothing to advocate about yet, so fall
+                  // back to the plain link share.
+                  if (analysis) {
+                    setShareOpen(true)
+                  } else {
+                    shareBill(bill, analysis)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2000)
+                  }
                   if (onTrackInteraction) {
                     onTrackInteraction({ billId, actionType: 'share', topicTag: analysis?.topic_tag })
                   }
@@ -316,6 +326,12 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         </>
       )}
 
+      <SharePostModal
+        isOpen={shareOpen}
+        onClose={() => setShareOpen(false)}
+        bill={bill}
+        analysis={analysis}
+      />
     </div>
   )
 })
