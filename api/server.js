@@ -519,7 +519,15 @@ app.get('/api/version', (req, res) => {
 // When a new option is added to the UI, add it here too — if the backend's
 // validator is a superset of the UI, future schema drift fails loud (400)
 // instead of silent (default-fallback garbage in the Claude prompt).
-const VALID_GRADES = ['7', '8', '9', '10', '11', '12', '18+', '13-14', '15-16', '17-18', '19-21', '22-25', '26+']
+// Accept any age 13–99 as well as the legacy range values (some cached
+// profiles still send the old format).
+const LEGACY_GRADES = new Set(['7', '8', '9', '10', '11', '12', '18+', '13-14', '15-16', '17-18', '19-21', '22-25', '26+'])
+function isValidGrade(val) {
+  const s = String(val)
+  if (LEGACY_GRADES.has(s)) return true
+  const n = Number(s)
+  return Number.isInteger(n) && n >= 13 && n <= 99
+}
 const VALID_INTERESTS = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
 const VALID_EMPLOYMENT = ['none', 'part_time', 'full_time']
 const VALID_FAMILY = ['standard', 'independent', 'low_income', 'immigrant', 'foster']
@@ -527,7 +535,7 @@ const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','
 
 function validateLegislationBody(body) {
   const errors = []
-  if (body.grade && !VALID_GRADES.includes(String(body.grade))) errors.push('Invalid grade')
+  if (body.grade && !isValidGrade(body.grade)) errors.push('Invalid grade')
   if (body.state && !US_STATES.includes(body.state)) errors.push('Invalid state')
   if (body.interests && !Array.isArray(body.interests)) errors.push('Interests must be an array')
   if (body.interests?.some(i => !VALID_INTERESTS.includes(i))) errors.push('Invalid interest value')
@@ -544,7 +552,7 @@ function validateProfileShape(profile) {
     errors.push('profile must be an object')
     return errors
   }
-  if (profile.grade && !VALID_GRADES.includes(String(profile.grade))) {
+  if (profile.grade && !isValidGrade(profile.grade)) {
     errors.push('Invalid profile.grade')
   }
   if (profile.state && !US_STATES.includes(profile.state)) {
@@ -1118,7 +1126,7 @@ function normalizeProfile(profile) {
   const rawInterests = Array.isArray(profile.interests) ? profile.interests : []
   const interests = rawInterests.filter(i => VALID_INTERESTS.includes(i))
   const state = US_STATES.includes(profile.state) ? profile.state : ''
-  const grade = VALID_GRADES.includes(String(profile.grade)) ? String(profile.grade) : ''
+  const grade = isValidGrade(profile.grade) ? String(profile.grade) : ''
   return {
     ...profile,
     state,
