@@ -17,7 +17,11 @@ function escapeHtml(value) {
 
 export function billUpdateEmail(userName, changedBills) {
   const safeName = escapeHtml(userName)
-  const billRows = changedBills.map(b => `
+  const billRows = changedBills.map(b => {
+    const milestoneBadge = b.milestone
+      ? `<span style="display:inline-block;background:#111827;color:#fff;font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:2px 8px;border-radius:2px;margin-left:8px">${escapeHtml(b.milestone)}</span>`
+      : ''
+    return `
     <tr>
       <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb">
         <strong style="color:#111827">${escapeHtml(b.type)} ${escapeHtml(b.number)}</strong>
@@ -28,9 +32,10 @@ export function billUpdateEmail(userName, changedBills) {
       <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;vertical-align:top">
         <span style="color:#9ca3af;font-size:13px;text-decoration:line-through">${escapeHtml(b.oldAction)}</span>
         <br>
-        <span style="color:#059669;font-size:14px;font-weight:600">${escapeHtml(b.newAction)}</span>
+        <span style="color:#059669;font-size:14px;font-weight:600">${escapeHtml(b.newAction)}</span>${milestoneBadge}
       </td>
-    </tr>`).join('')
+    </tr>`
+  }).join('')
 
   const html = `
 <!DOCTYPE html>
@@ -88,8 +93,11 @@ export function billUpdateEmail(userName, changedBills) {
   // Subject is plain text, but newlines must be stripped for header safety.
   // Bill type/number are short and from LegiScan; still strip CR/LF defensively.
   const stripCtl = s => String(s == null ? '' : s).replace(/[\r\n]/g, ' ')
+  const first = changedBills[0]
   const subject = changedBills.length === 1
-    ? `${stripCtl(changedBills[0].type)} ${stripCtl(changedBills[0].number)} has a new status update`
+    ? (first.milestone
+      ? `${stripCtl(first.type)} ${stripCtl(first.number)} advanced to ${stripCtl(first.milestone)}`
+      : `${stripCtl(first.type)} ${stripCtl(first.number)} has a new status update`)
     : `${changedBills.length} of your saved bills have new status updates`
 
   return { subject, html }

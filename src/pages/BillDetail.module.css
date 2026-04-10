@@ -99,6 +99,206 @@
   font-style: italic;
 }
 
+/* Bill progress */
+.progressSection {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  border-radius: 1px;
+  padding: var(--space-xl);
+  margin-bottom: var(--space-xl);
+  animation: fadeUp var(--dur-slow) 40ms var(--ease-out) both;
+}
+
+.progressHeading {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--navy);
+  margin-bottom: var(--space-xl);
+}
+
+.progressBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+  margin-bottom: var(--space-lg);
+}
+
+.progressStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.progressStep:last-child { flex: 0; }
+
+.progressDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--white);
+  position: relative;
+  z-index: 1;
+  transition: all var(--dur-normal) var(--ease-out);
+}
+
+.progressReached .progressDot {
+  border-color: var(--navy);
+  background: var(--navy);
+}
+
+.progressCurrent .progressDot {
+  border-color: var(--amber);
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(232, 160, 32, 0.2);
+}
+
+.progressLine {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  right: -50%;
+  height: 2px;
+  background: var(--border);
+  z-index: 0;
+}
+
+.progressReached .progressLine {
+  background: var(--navy);
+}
+
+.progressLabel {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.progressReached .progressLabel { color: var(--navy); }
+.progressCurrent .progressLabel { color: var(--amber); font-weight: 700; }
+
+.progressDate {
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .progressLabel { font-size: 0.48rem; letter-spacing: 0.04em; }
+  .progressDate { font-size: 0.44rem; }
+  .progressDot { width: 10px; height: 10px; }
+  .progressLine { top: 4px; }
+}
+
+/* History toggle */
+.historyToggle {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-sm) 0;
+  border-top: 1px solid var(--border-light);
+  width: 100%;
+  text-align: left;
+  transition: color 0.2s;
+}
+
+.historyToggle:hover { color: var(--navy); }
+
+/* History timeline */
+.historyTimeline {
+  padding-top: var(--space-md);
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--border);
+  margin-left: 5px;
+}
+
+.historyItem {
+  position: relative;
+  padding-left: var(--space-lg);
+  padding-bottom: var(--space-md);
+}
+
+.historyItem:last-child { padding-bottom: 0; }
+
+.historyDot {
+  position: absolute;
+  left: calc(-1 * var(--space-md) - 4px);
+  top: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.historyMajor .historyDot {
+  background: var(--amber);
+  width: 8px;
+  height: 8px;
+  left: calc(-1 * var(--space-md) - 5px);
+  top: 3px;
+}
+
+.historyContent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.historyDate {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.historyAction {
+  font-family: var(--font-serif);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.historyMajor .historyAction {
+  color: var(--navy);
+  font-weight: 600;
+}
+
+.historyMore {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-md) 0;
+  transition: color 0.2s;
+}
+
+.historyMore:hover { color: var(--navy); }
+
 /* Analysis section */
 .analysisSection {
   background: var(--white);

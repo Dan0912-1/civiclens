@@ -116,6 +116,35 @@
   color: var(--senate-text);
 }
 
+/* Mini progress dots */
+.miniProgress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: var(--space-sm);
+}
+
+.miniDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+
+.miniDotReached { background: var(--navy); }
+.miniDotCurrent { background: var(--amber); }
+
+.miniStageLabel {
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
 /* Title */
 .title {
   font-family: var(--font-display);

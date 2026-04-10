@@ -50,6 +50,7 @@ export default function BillDetail() {
   const [error, setError] = useState('')
   const [personalizationError, setPersonalizationError] = useState(false)
   const [noProfile, setNoProfile] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -283,6 +284,67 @@ export default function BillDetail() {
             </p>
           )}
         </div>
+
+        {/* Bill progress timeline */}
+        {detail?.statusStage && (
+          <div className={styles.progressSection}>
+            <h3 className={styles.progressHeading}>Bill progress</h3>
+            <div className={styles.progressBar}>
+              {['Introduced', 'Committee', 'Floor Vote', 'Passed', 'Signed'].map((label, i) => {
+                const stage = i + 1
+                const reached = detail.statusStage >= stage
+                const current = detail.statusStage === stage
+                const progressDate = detail.progress?.find(p => {
+                  const eventToStage = { 1: 1, 2: 3, 3: 4, 4: 4, 5: 4, 6: 5 }
+                  return eventToStage[p.event] === stage
+                })?.date
+                return (
+                  <div key={label} className={`${styles.progressStep} ${reached ? styles.progressReached : ''} ${current ? styles.progressCurrent : ''}`}>
+                    <div className={styles.progressDot} />
+                    {i < 4 && <div className={styles.progressLine} />}
+                    <span className={styles.progressLabel}>{label}</span>
+                    {reached && progressDate && (
+                      <span className={styles.progressDate}>{progressDate}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {detail.history?.length > 0 && (
+              <>
+                <button
+                  className={styles.historyToggle}
+                  onClick={() => setHistoryOpen(o => !o)}
+                >
+                  {historyOpen ? 'Hide history ↑' : `Show full history (${detail.history.length}) ↓`}
+                </button>
+
+                {historyOpen && (
+                  <div className={styles.historyTimeline}>
+                    {detail.history.slice().reverse().slice(0, 20).map((h, i) => (
+                      <div key={i} className={`${styles.historyItem} ${h.importance ? styles.historyMajor : ''}`}>
+                        <div className={styles.historyDot} />
+                        <div className={styles.historyContent}>
+                          <span className={styles.historyDate}>{h.date}{h.chamber ? ` · ${h.chamber}` : ''}</span>
+                          <span className={styles.historyAction}>{h.action}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {detail.history.length > 20 && (
+                      <button
+                        className={styles.historyMore}
+                        onClick={() => openInAppBrowser(billUrl)}
+                      >
+                        View all on LegiScan →
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Personalized analysis */}
         {analysis ? (

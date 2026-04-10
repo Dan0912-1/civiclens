@@ -456,6 +456,7 @@ function transformLegiScanBill(hit, searchTerm = '') {
     searchTerm,
     legiscan_bill_id: hit.bill_id,
     state: hit.state || 'US',
+    statusStage: deriveStageFromBill({ status_desc: hit.last_action || '', progress: [] }),
   }
 }
 
@@ -482,6 +483,7 @@ function transformLegiScanStateBill(hit, searchTerm = '') {
     legiscan_bill_id: hit.bill_id,
     state: hit.state || '',
     isStateBill: true,
+    statusStage: deriveStageFromBill({ status_desc: hit.last_action || '', progress: [] }),
   }
 }
 
@@ -899,6 +901,56 @@ function originChamberFromType(type) {
   return ''
 }
 
+// LegiScan progress event IDs → readable milestone names
+const PROGRESS_EVENTS = {
+  1: 'Introduced',
+  2: 'Engrossed',   // passed originating chamber
+  3: 'Enrolled',    // passed both chambers
+  4: 'Passed',
+  5: 'Vetoed',
+  6: 'Signed',
+}
+
+// Derive a 1-based stage index from LegiScan progress events for the 5-step
+// progress bar: 1=Introduced, 2=Committee, 3=Floor Vote, 4=Passed, 5=Signed.
+// Falls back to parsing latestAction text if no progress array is available.
+function deriveStageFromBill(b) {
+  const progress = b.progress || []
+  if (progress.length) {
+    const maxEvent = Math.max(...progress.map(p => p.event || 0))
+    if (maxEvent >= 6) return 5 // Signed
+    if (maxEvent >= 4) return 4 // Passed
+    if (maxEvent >= 3) return 4 // Enrolled = passed both
+    if (maxEvent >= 2) return 3 // Engrossed = floor vote stage
+    return 1 // Introduced
+  }
+  // Fallback: parse action text
+  const action = (b.status_desc || b.last_action || '').toLowerCase()
+  if (/signed|became\s+law|enacted|enrolled/.test(action)) return 5
+  if (/passed/.test(action)) return 4
+  if (/floor\s+(vote|consideration|calendar)/.test(action)) return 3
+  if (/reported|markup|committee|subcommittee/.test(action)) return 2
+  return 1
+}
+
+// Transform LegiScan history + progress arrays for frontend consumption
+function transformBillTimeline(b) {
+  const history = (b.history || []).map((h, i) => ({
+    step: i + 1,
+    date: h.date || '',
+    action: h.action || '',
+    chamber: h.chamber_id === 1 ? 'House' : h.chamber_id === 2 ? 'Senate' : '',
+    importance: h.importance || 0,
+  }))
+  const progress = (b.progress || []).map((p, i) => ({
+    step: i + 1,
+    date: p.date || '',
+    event: p.event || 0,
+    label: PROGRESS_EVENTS[p.event] || 'Unknown',
+  }))
+  return { history, progress, statusStage: deriveStageFromBill(b) }
+}
+
 app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res) => {
   const { congress, type, number } = req.params
   const legiscanId = req.query.legiscan_id
@@ -934,6 +986,7 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
           committees: { count: (b.committee || []).length },
           state: b.state || 'US',
           legiscan_bill_id: b.bill_id,
+          ...transformBillTimeline(b),
         },
       }
       setCache(cacheKey, result)
@@ -977,6 +1030,7 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
             introducedDate: b.status_date || '',
             committees: { count: (b.committee || []).length },
             legiscan_bill_id: b.bill_id,
+            ...transformBillTimeline(b),
           },
         }
         setCache(cacheKey, result)
@@ -2133,10 +2187,13 @@ async function checkBillUpdates() {
     try {
       const data = await cachedGetBill(legiscanId)
       const b = data.bill
+      const stage = deriveStageFromBill(b)
+      const stageLabels = { 1: 'Introduced', 2: 'In Committee', 3: 'Floor Vote', 4: 'Passed', 5: 'Signed into Law' }
       currentStatuses.set(billId, {
         latestAction: b.last_action || b.status_desc || '',
         latestActionDate: b.last_action_date || b.status_date || '',
         changeHash: b.change_hash || '',
+        milestone: stageLabels[stage] || '',
       })
       await new Promise(r => setTimeout(r, 200)) // rate limit
     } catch (err) {
@@ -2175,6 +2232,7 @@ async function checkBillUpdates() {
         title: bill.title || 'Unknown bill',
         oldAction,
         newAction,
+        milestone: current.milestone || '',
       }
 
       if (!userChanges.has(bm.user_id)) userChanges.set(bm.user_id, [])
@@ -2273,8 +2331,14 @@ async function checkBillUpdates() {
         if (!tokens?.length) continue
 
         const count = changes.length
+        const firstBill = changes[0]
+        const title = count === 1 && firstBill.milestone
+          ? `${firstBill.type.toUpperCase()} ${firstBill.number}: ${firstBill.milestone}`
+          : 'Bill Update'
         const body = count === 1
-          ? `${changes[0].type} ${changes[0].number} has a new status update`
+          ? (firstBill.milestone
+            ? `${firstBill.type.toUpperCase()} ${firstBill.number} advanced to ${firstBill.milestone}`
+            : `${firstBill.type.toUpperCase()} ${firstBill.number} has a new status update`)
           : `${count} of your saved bills have new status updates`
 
         for (const { token } of tokens) {
@@ -2290,7 +2354,7 @@ async function checkBillUpdates() {
                 body: JSON.stringify({
                   message: {
                     token,
-                    notification: { title: 'Bill Update', body },
+                    notification: { title, body },
                     data: { url: '/bookmarks' },
                   },
                 }),

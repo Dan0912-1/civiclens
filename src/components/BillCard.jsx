@@ -162,6 +162,18 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         </span>
       </div>
 
+      {/* Mini progress dots */}
+      {bill.statusStage > 0 && (
+        <div className={styles.miniProgress} title={['Introduced','Committee','Floor Vote','Passed','Signed'][bill.statusStage - 1]}>
+          {[1,2,3,4,5].map(s => (
+            <div key={s} className={`${styles.miniDot} ${bill.statusStage >= s ? styles.miniDotReached : ''} ${bill.statusStage === s ? styles.miniDotCurrent : ''}`} />
+          ))}
+          <span className={styles.miniStageLabel}>
+            {['Introduced','Committee','Floor Vote','Passed','Signed'][bill.statusStage - 1]}
+          </span>
+        </div>
+      )}
+
       {/* Title — clickable to detail page */}
       <h3 className={styles.title}>
         <button className={styles.titleLink} onClick={openDetail}>
