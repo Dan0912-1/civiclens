@@ -123,10 +123,12 @@ export default function Profile() {
     }))
   }
 
-  const isUnder13 = profile.grade !== '' && Number(profile.grade) < 13
+  const ageNum = Number(profile.grade)
+  const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
+  const isUnder13 = ageValid && ageNum < 13
 
   function canAdvance() {
-    if (step === 1) return profile.state && profile.grade && Number(profile.grade) >= 13
+    if (step === 1) return profile.state && ageValid && ageNum >= 13
     if (step === 2) return true
     if (step === 3) return profile.interests.length > 0
     return true
@@ -136,6 +138,8 @@ export default function Profile() {
     if (!canAdvance()) {
       if (step === 1 && isUnder13) {
         setError('You must be 13 or older to use CapitolKey.')
+      } else if (step === 1 && profile.grade && !ageValid) {
+        setError('Please enter a valid age.')
       } else {
         setError('Please fill in the required fields.')
       }

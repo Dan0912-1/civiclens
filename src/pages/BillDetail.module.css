@@ -200,8 +200,8 @@
 }
 
 @media (max-width: 480px) {
-  .progressLabel { font-size: 0.48rem; letter-spacing: 0.04em; }
-  .progressDate { font-size: 0.44rem; }
+  .progressLabel { font-size: 0.6rem; letter-spacing: 0.04em; }
+  .progressDate { font-size: 0.55rem; }
   .progressDot { width: 10px; height: 10px; }
   .progressLine { top: 4px; }
 }
@@ -334,15 +334,15 @@
 
 .relevanceBar {
   flex: 1;
-  height: 2px;
+  height: 6px;
   background: var(--border);
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .relevanceFill {
   height: 100%;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   transition: width var(--dur-xslow) var(--ease-emphasized);
 }
 
@@ -657,6 +657,42 @@
 .footer {
   text-align: center;
   padding: var(--space-xl) 0;
+}
+
+.footerActions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: center;
+  margin-bottom: var(--space-md);
+}
+
+.footerBtn {
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--white);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+
+.footerBtn:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+
+.footerBtnActive {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--white);
+}
+
+.footerBtnActive:hover {
+  background: #c28a1a;
+  border-color: #c28a1a;
+  color: var(--white);
 }
 
 .congressLink {

@@ -21,27 +21,27 @@ export default class ErrorBoundary extends Component {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#fbf7f9',
+          background: 'var(--cream, #F5F2EC)',
           padding: '2rem',
         }}>
-          <div style={{ textAlign: 'center', maxWidth: 360 }}>
-            <div style={{ fontSize: '3rem', marginBottom: '1rem', opacity: 0.5 }}>&#9888;</div>
+          <div role="alert" aria-live="assertive" style={{ textAlign: 'center', maxWidth: 360 }}>
+            <div aria-hidden="true" style={{ fontSize: '3rem', marginBottom: '1rem', opacity: 0.5 }}>&#9888;</div>
             <h2 style={{
-              fontFamily: "'Instrument Serif', Georgia, serif",
+              fontFamily: "var(--font-display, 'Playfair Display', Georgia, serif)",
               fontSize: '1.75rem',
               fontWeight: 400,
-              color: '#2a1638',
+              color: 'var(--navy, #0A1929)',
               marginBottom: '0.5rem',
             }}>
               Something went wrong
             </h2>
             <p style={{
-              color: '#8a7090',
+              color: 'var(--text-muted, #6B7583)',
               fontSize: '0.95rem',
               lineHeight: 1.6,
               marginBottom: '1.5rem',
             }}>
-              The app ran into an unexpected error. Restarting should fix it.
+              Oops, something unexpected happened. Let's get you back on track.
             </p>
             <button
               onClick={() => {
@@ -49,12 +49,12 @@ export default class ErrorBoundary extends Component {
                 window.location.href = '/'
               }}
               style={{
-                background: '#6b3d8f',
+                background: 'var(--navy, #0A1929)',
                 color: '#ffffff',
                 fontWeight: 700,
                 fontSize: '0.95rem',
                 padding: '0.7rem 2rem',
-                borderRadius: 8,
+                borderRadius: 'var(--radius-md, 10px)',
                 border: 'none',
                 cursor: 'pointer',
               }}
