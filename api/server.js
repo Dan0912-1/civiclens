@@ -3213,6 +3213,21 @@ const CATEGORY_TO_TOPIC = {
   community: 'Community',
 }
 
+// Build a human-readable Congress.gov URL from bill metadata
+function buildCongressGovUrl(congress, type, number) {
+  const t = String(type).toLowerCase()
+  const slug = t === 's' ? 'senate-bill'
+    : t === 'hr' ? 'house-bill'
+    : t === 'sjres' ? 'senate-joint-resolution'
+    : t === 'hjres' ? 'house-joint-resolution'
+    : t === 'sres' ? 'senate-resolution'
+    : t === 'hres' ? 'house-resolution'
+    : t === 'sconres' ? 'senate-concurrent-resolution'
+    : t === 'hconres' ? 'house-concurrent-resolution'
+    : 'bill'
+  return `https://www.congress.gov/bill/${congress}th-congress/${slug}/${number}`
+}
+
 // Map a curated_bills row → frontend bill object
 function transformCuratedBill(row) {
   const type = (row.bill_type || '').toLowerCase()
@@ -3224,7 +3239,7 @@ function transformCuratedBill(row) {
     originChamber: row.origin_chamber || (type.startsWith('s') ? 'Senate' : 'House'),
     latestAction: row.latest_action || 'No recent action',
     latestActionDate: row.latest_action_date || '',
-    url: row.api_url || '',
+    url: buildCongressGovUrl(row.congress || currentFederalCongress(), type, parseInt(row.bill_number, 10) || 0),
     updateDate: row.update_date || row.latest_action_date || '',
     source: row.source || 'congress.gov',
   }

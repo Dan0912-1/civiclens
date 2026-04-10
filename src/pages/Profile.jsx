@@ -196,24 +196,15 @@ export default function Profile() {
 
               <div className={styles.field}>
                 <label className={styles.label}>Your age <span className={styles.req}>*</span></label>
-                <div className={styles.ageGrid}>
-                  {[
-                    { value: '13-14', label: '13–14' },
-                    { value: '15-16', label: '15–16' },
-                    { value: '17-18', label: '17–18' },
-                    { value: '19-21', label: '19–21' },
-                    { value: '22-25', label: '22–25' },
-                    { value: '26+',   label: '26+' },
-                  ].map(a => (
-                    <button
-                      key={a.value}
-                      className={`${styles.ageBtn} ${profile.grade === a.value ? styles.ageBtnActive : ''}`}
-                      onClick={() => setProfile(p => ({ ...p, grade: a.value }))}
-                    >
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
+                <input
+                  type="number"
+                  className={styles.ageInput}
+                  placeholder="Enter your age"
+                  min={13}
+                  max={99}
+                  value={profile.grade}
+                  onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
+                />
               </div>
             </div>
           )}

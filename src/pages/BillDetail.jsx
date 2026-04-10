@@ -49,6 +49,7 @@ export default function BillDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [personalizationError, setPersonalizationError] = useState(false)
+  const [noProfile, setNoProfile] = useState(false)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -59,6 +60,7 @@ export default function BillDetail() {
     setDetail(null)
     setError('')
     setPersonalizationError(false)
+    setNoProfile(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -148,7 +150,7 @@ export default function BillDetail() {
 
     async function run() {
       const stored = sessionStorage.getItem('civicProfile')
-      if (!stored) return
+      if (!stored) { setNoProfile(true); return }
       setPersonalizationError(false)
       const profile = JSON.parse(stored)
       try {
@@ -200,9 +202,14 @@ export default function BillDetail() {
 
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const displayTitle = bill?.title || detail?.title || `${type.toUpperCase()} ${number}`
-  const billUrl = passedBill?.url || detail?.url || (
-    passedBill?.isStateBill
-      ? `https://legiscan.com/${passedBill.state}/bill/${type.toUpperCase()}${number}/2026`
+  // Build a human-readable bill URL. LegiScan URLs (from passedBill/detail) are
+  // already good. The fallback constructs a Congress.gov or LegiScan URL. Filter
+  // out any API-style URLs (e.g. api.congress.gov) that aren't meant for users.
+  const rawUrl = passedBill?.url || detail?.url || ''
+  const isApiUrl = rawUrl.includes('api.congress.gov') || rawUrl.includes('api.legiscan.com')
+  const billUrl = (rawUrl && !isApiUrl) ? rawUrl : (
+    (passedBill?.isStateBill || bill?.isStateBill)
+      ? `https://legiscan.com/${passedBill?.state || bill?.state}/bill/${type.toUpperCase()}${number}/2026`
       : `https://www.congress.gov/bill/${congress}th-congress/${
           type === 's' ? 'senate-bill' : type === 'hr' ? 'house-bill' : type === 'sjres' ? 'senate-joint-resolution' : 'house-joint-resolution'
         }/${number}`
@@ -344,6 +351,16 @@ export default function BillDetail() {
               onClick={() => retryPersonalization()}
             >
               Try again
+            </button>
+          </div>
+        ) : noProfile ? (
+          <div className={styles.loadingAnalysis}>
+            <span>Tell us about yourself so we can personalize this bill for you.</span>
+            <button
+              className={styles.retryBtn}
+              onClick={() => navigate('/profile', { state: { returnTo: location.pathname } })}
+            >
+              Complete your profile
             </button>
           </div>
         ) : (
