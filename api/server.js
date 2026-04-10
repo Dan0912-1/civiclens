@@ -283,6 +283,17 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
   }
 }
 
+// ─── LegiScan API metrics ──────────────────────────────────────────────────
+const lsMetrics = {
+  search: 0, getBill: 0, getBillText: 0, getMasterList: 0, getSessionList: 0,
+  cacheHitL1: 0, cacheHitL2: 0, cacheMiss: 0,
+  _lastLog: Date.now(),
+}
+function logLsMetrics(context = '') {
+  const elapsed = ((Date.now() - lsMetrics._lastLog) / 1000).toFixed(0)
+  console.log(`[ls-metrics] ${context} (${elapsed}s): API calls: search=${lsMetrics.search} getBill=${lsMetrics.getBill} getBillText=${lsMetrics.getBillText} getMasterList=${lsMetrics.getMasterList} getSessionList=${lsMetrics.getSessionList} | Cache: L1=${lsMetrics.cacheHitL1} L2=${lsMetrics.cacheHitL2} miss=${lsMetrics.cacheMiss}`)
+}
+
 // ─── LegiScan API helpers ───────────────────────────────────────────────────
 async function legiscanRequest(op, params = {}) {
   const url = new URL(LEGISCAN_BASE)
@@ -291,10 +302,127 @@ async function legiscanRequest(op, params = {}) {
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, v)
   }
+  if (lsMetrics[op] !== undefined) lsMetrics[op]++
   const resp = await fetch(url.toString())
   if (!resp.ok) throw new Error(`LegiScan ${op} failed: ${resp.status}`)
   const data = await resp.json()
   if (data.status === 'ERROR') throw new Error(`LegiScan ${op}: ${JSON.stringify(data)}`)
+  return data
+}
+
+// ─── Supabase-backed persistent cache for LegiScan search results ──────────
+const SEARCH_CACHE_TTL = 1000 * 60 * 60 * 6 // 6 hours
+
+async function getSearchCacheFromSupabase(cacheKey) {
+  if (!supabase) return null
+  try {
+    const { data, error } = await supabase
+      .from('search_cache')
+      .select('results, created_at')
+      .eq('cache_key', cacheKey)
+      .single()
+    if (error || !data) return null
+    // TTL check
+    if (Date.now() - new Date(data.created_at).getTime() > SEARCH_CACHE_TTL) return null
+    return data.results
+  } catch { return null }
+}
+
+async function setSearchCacheToSupabase(cacheKey, results) {
+  if (!supabase) return
+  try {
+    await supabase
+      .from('search_cache')
+      .upsert({ cache_key: cacheKey, results, created_at: new Date().toISOString() },
+        { onConflict: 'cache_key' })
+  } catch (err) {
+    console.error('[search_cache] Write error:', err.message)
+  }
+}
+
+// 3-layer cached search: L1 (in-memory) → L2 (Supabase) → L3 (LegiScan API)
+async function cachedLegiscanSearch(state, query, year = '2', page = '1') {
+  const cacheKey = `ls-search-${state}-${query.toLowerCase().trim()}-${year}-${page}`
+
+  // L1: in-memory
+  const memCached = getCache(cacheKey)
+  if (memCached) { lsMetrics.cacheHitL1++; return memCached }
+
+  // L2: Supabase persistent
+  const dbCached = await getSearchCacheFromSupabase(cacheKey)
+  if (dbCached) {
+    lsMetrics.cacheHitL2++
+    setCache(cacheKey, dbCached) // repopulate L1
+    return dbCached
+  }
+
+  // L3: LegiScan API
+  lsMetrics.cacheMiss++
+  const data = await legiscanRequest('search', { state, query, year, ...(page !== '1' ? { page } : {}) })
+
+  // Store in both layers
+  setCache(cacheKey, data)
+  setSearchCacheToSupabase(cacheKey, data) // fire-and-forget
+  return data
+}
+
+// ─── Supabase-backed persistent cache for LegiScan getBill responses ───────
+async function getBillCacheFromSupabase(cacheKey) {
+  if (!supabase) return null
+  try {
+    const { data, error } = await supabase
+      .from('bill_cache')
+      .select('bill_data, change_hash, session_id')
+      .eq('cache_key', cacheKey)
+      .single()
+    if (error || !data) return null
+    return data
+  } catch { return null }
+}
+
+async function setBillCacheToSupabase(cacheKey, billData, changeHash, sessionId) {
+  if (!supabase) return
+  try {
+    await supabase
+      .from('bill_cache')
+      .upsert({
+        cache_key: cacheKey,
+        bill_data: billData,
+        change_hash: changeHash || '',
+        session_id: sessionId || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'cache_key' })
+  } catch (err) {
+    console.error('[bill_cache] Write error:', err.message)
+  }
+}
+
+// 3-layer cached getBill: L1 (in-memory) → L2 (Supabase) → L3 (LegiScan API)
+// Returns the full LegiScan getBill response (with .bill property)
+async function cachedGetBill(legiscanId) {
+  const cacheKey = `bill-ls-${legiscanId}`
+
+  // L1: in-memory
+  const memCached = getCache(cacheKey)
+  if (memCached) { lsMetrics.cacheHitL1++; return memCached }
+
+  // L2: Supabase persistent (bill data doesn't expire — change_hash validates freshness)
+  const dbCached = await getBillCacheFromSupabase(cacheKey)
+  if (dbCached?.bill_data) {
+    lsMetrics.cacheHitL2++
+    setCache(cacheKey, dbCached.bill_data)
+    return dbCached.bill_data
+  }
+
+  // L3: LegiScan API
+  lsMetrics.cacheMiss++
+  const data = await legiscanRequest('getBill', { id: legiscanId })
+
+  // Store in both layers (capture change_hash and session_id for bookmark cron)
+  const changeHash = data.bill?.change_hash || ''
+  const sessionId = data.bill?.session_id || data.bill?.session?.session_id || null
+  setCache(cacheKey, data)
+  setBillCacheToSupabase(cacheKey, data, changeHash, sessionId) // fire-and-forget
   return data
 }
 
@@ -506,7 +634,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
       // Interest-matched federal bills (6 terms × 10 results)
       const federalFetches = searchTerms.slice(0, 6).map(term =>
-        legiscanRequest('search', { state: 'US', query: term, year: '2' })
+        cachedLegiscanSearch('US', term)
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
@@ -522,7 +650,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
       // Discovery federal bills (3 trending terms × 6 results)
       const discoveryFetches = discoveryTerms.map(term =>
-        legiscanRequest('search', { state: 'US', query: term, year: '2' })
+        cachedLegiscanSearch('US', term)
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
@@ -538,7 +666,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
       // State bills (6 interest terms × 6 results — need enough to pick 6 after dedup)
       const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
-        legiscanRequest('search', { state, query: term, year: '2' })
+        cachedLegiscanSearch(state, term)
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
@@ -595,7 +723,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       if (emergingInterests.has(bill.searchTerm)) bill._isEmerging = true
     }
 
-    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds }
+    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys: interests }
 
     // ── 6. Score every bill ──
     for (const bill of unique) computeBillScore(bill, scoringCtx)
@@ -637,6 +765,8 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     prefetchBillTexts(result.bills).catch(err =>
       console.error('[prefetch] Background bill text fetch error:', err.message)
     )
+
+    logLsMetrics('/api/legislation')
 
   } catch (err) {
     console.error('Legislation fetch error:', err)
@@ -689,7 +819,7 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
       searchQuery = `${chamberMap[prefix] || prefix.toLowerCase()} ${num}`
     }
 
-    const data = await legiscanRequest('search', { state, query: searchQuery, year: '2', page })
+    const data = await cachedLegiscanSearch(state, searchQuery, '2', String(page))
     if (!data.searchresult) return res.json({ bills: [], pagination: { page, totalResults: 0, hasMore: false } })
 
     const summary = data.searchresult.summary || {}
@@ -774,12 +904,12 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
   const legiscanId = req.query.legiscan_id
 
   if (legiscanId) {
-    const cacheKey = `bill-ls-${legiscanId}`
-    const cached = getCache(cacheKey)
+    const billCacheKey = `bill-ls-${legiscanId}`
+    const cached = getCache(billCacheKey)
     if (cached) return res.json(cached)
 
     try {
-      const data = await legiscanRequest('getBill', { id: legiscanId })
+      const data = await cachedGetBill(legiscanId)
       const b = data.bill
       // Transform to a shape the frontend expects
       const result = {
@@ -820,11 +950,11 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
 
     try {
       const billNumber = `${type.toUpperCase()}${number}`
-      const data = await legiscanRequest('search', { state: 'US', query: billNumber, year: '2' })
+      const data = await cachedLegiscanSearch('US', billNumber)
       const results = data.searchresult ? Object.values(data.searchresult).filter(r => r.bill_id) : []
       const match = results.find(r => r.bill_number === billNumber)
       if (match) {
-        const detailData = await legiscanRequest('getBill', { id: match.bill_id })
+        const detailData = await cachedGetBill(match.bill_id)
         const b = detailData.bill
         const result = {
           bill: {
@@ -1920,7 +2050,7 @@ async function checkBillUpdates() {
   const BOOKMARKS_SCAN_LIMIT = parseInt(process.env.BOOKMARKS_SCAN_LIMIT, 10) || 5000
   const { data: bookmarks, error: bmErr } = await supabase
     .from('bookmarks')
-    .select('id, user_id, bill_id, bill_data, last_known_action')
+    .select('id, user_id, bill_id, bill_data, last_known_action, change_hash')
     .order('created_at', { ascending: false })
     .limit(BOOKMARKS_SCAN_LIMIT)
 
@@ -1929,30 +2059,86 @@ async function checkBillUpdates() {
     return
   }
 
-  // 2. Deduplicate bills (many users may bookmark the same bill)
-  const uniqueBills = new Map()
+  // 2. Deduplicate bills and collect stored change_hashes
+  const uniqueBills = new Map() // billId → { ...billInfo, storedChangeHash }
   for (const bm of bookmarks) {
     if (!uniqueBills.has(bm.bill_id)) {
-      uniqueBills.set(bm.bill_id, bm.bill_data?.bill || {})
+      uniqueBills.set(bm.bill_id, {
+        ...(bm.bill_data?.bill || {}),
+        storedChangeHash: bm.change_hash || null,
+      })
     }
   }
 
-  // 3. Fetch current status for each unique bill from LegiScan
+  // 3. Use getMasterList to bulk-fetch change_hashes, then only getBill for changed bills
+  //    Group bills by session_id (from bill_cache) for efficient getMasterList calls
+  const sessionBills = new Map()  // sessionId → [{ billId, legiscanId, storedHash }]
+  const noSessionBills = []       // bills without a known session_id
+  for (const [billId, billInfo] of uniqueBills) {
+    const legiscanId = billInfo.legiscan_bill_id
+    if (!legiscanId) continue
+    // Look up session_id from bill_cache
+    const cached = await getBillCacheFromSupabase(`bill-ls-${legiscanId}`)
+    const sessionId = cached?.session_id
+    const entry = { billId, legiscanId, storedHash: billInfo.storedChangeHash }
+    if (sessionId) {
+      if (!sessionBills.has(sessionId)) sessionBills.set(sessionId, [])
+      sessionBills.get(sessionId).push(entry)
+    } else {
+      noSessionBills.push(entry)
+    }
+  }
+
+  // 3a. Fetch getMasterList per session — one API call returns all bill change_hashes
+  const masterListHashes = new Map() // legiscanId → { change_hash }
+  for (const [sessionId, bills] of sessionBills) {
+    try {
+      const mlData = await legiscanRequest('getMasterList', { id: sessionId })
+      const masterList = mlData.masterlist || {}
+      for (const [key, entry] of Object.entries(masterList)) {
+        if (entry.bill_id) masterListHashes.set(String(entry.bill_id), entry.change_hash || '')
+      }
+      console.log(`[cron] getMasterList session ${sessionId}: ${Object.keys(masterList).length} bills`)
+      await new Promise(r => setTimeout(r, 500)) // rate limit between sessions
+    } catch (err) {
+      console.error(`[cron] getMasterList failed for session ${sessionId}:`, err.message)
+      // Fall back to individual getBill for this session's bills
+      noSessionBills.push(...bills)
+    }
+  }
+
+  // 3b. Determine which bills actually changed (hash differs or unknown)
+  const changedBillIds = new Set() // legiscanIds that need fresh getBill
+  const unchangedSkipped = []
+  for (const [sessionId, bills] of sessionBills) {
+    for (const { billId, legiscanId, storedHash } of bills) {
+      const currentHash = masterListHashes.get(String(legiscanId))
+      if (currentHash && storedHash && currentHash === storedHash) {
+        unchangedSkipped.push(billId)
+      } else {
+        changedBillIds.add(legiscanId)
+      }
+    }
+  }
+  // All no-session bills need individual fetch
+  for (const { legiscanId } of noSessionBills) changedBillIds.add(legiscanId)
+
+  console.log(`[cron] Bills: ${uniqueBills.size} unique, ${unchangedSkipped.length} unchanged (skipped), ${changedBillIds.size} to fetch`)
+
+  // 3c. Fetch only changed/unknown bills via getBill
   const currentStatuses = new Map()
   for (const [billId, billInfo] of uniqueBills) {
+    const legiscanId = billInfo.legiscan_bill_id
+    if (!legiscanId || !changedBillIds.has(legiscanId)) continue
     try {
-      const legiscanId = billInfo.legiscan_bill_id
-      if (!legiscanId) continue
-
-      const data = await legiscanRequest('getBill', { id: legiscanId })
+      const data = await cachedGetBill(legiscanId)
       const b = data.bill
       currentStatuses.set(billId, {
         latestAction: b.last_action || b.status_desc || '',
         latestActionDate: b.last_action_date || b.status_date || '',
+        changeHash: b.change_hash || '',
       })
-
-      // Small delay to respect rate limits
-      await new Promise(r => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200)) // rate limit
     } catch (err) {
       console.error(`[cron] Failed to fetch bill ${billId}:`, err.message)
     }
@@ -1961,7 +2147,7 @@ async function checkBillUpdates() {
   // 4. Find bookmarks with changed statuses
   //    Group changes by user_id for batched emails
   const userChanges = new Map() // userId → [{ ...billInfo, oldAction, newAction }]
-  const bookmarkUpdates = []    // [{ id, last_known_action }]
+  const bookmarkUpdates = []    // [{ id, last_known_action, change_hash }]
 
   // Normalize action text for comparison so cosmetic LegiScan re-imports
   // (whitespace, punctuation, casing) don't fire false-positive notifications.
@@ -1976,7 +2162,7 @@ async function checkBillUpdates() {
 
     // If no stored action yet, seed it without sending a notification
     if (!bm.last_known_action) {
-      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction })
+      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction, change_hash: current.changeHash })
       continue
     }
 
@@ -1994,17 +2180,34 @@ async function checkBillUpdates() {
       if (!userChanges.has(bm.user_id)) userChanges.set(bm.user_id, [])
       userChanges.get(bm.user_id).push(change)
 
-      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction })
+      bookmarkUpdates.push({ id: bm.id, last_known_action: newAction, change_hash: current.changeHash })
     }
   }
 
-  // 5. Update last_known_action for all processed bookmarks
-  for (const upd of bookmarkUpdates) {
-    await supabase
-      .from('bookmarks')
-      .update({ last_known_action: upd.last_known_action })
-      .eq('id', upd.id)
+  // Also update change_hash for unchanged bills (seed the hash for future comparisons)
+  for (const bm of bookmarks) {
+    const legiscanId = bm.bill_data?.bill?.legiscan_bill_id
+    if (!legiscanId) continue
+    const currentHash = masterListHashes.get(String(legiscanId))
+    if (currentHash && !bm.change_hash) {
+      bookmarkUpdates.push({ id: bm.id, last_known_action: bm.last_known_action, change_hash: currentHash })
+    }
   }
+
+  // 5. Update last_known_action and change_hash for all processed bookmarks
+  for (const upd of bookmarkUpdates) {
+    const updateFields = {}
+    if (upd.last_known_action) updateFields.last_known_action = upd.last_known_action
+    if (upd.change_hash) updateFields.change_hash = upd.change_hash
+    if (Object.keys(updateFields).length) {
+      await supabase
+        .from('bookmarks')
+        .update(updateFields)
+        .eq('id', upd.id)
+    }
+  }
+
+  logLsMetrics('checkBillUpdates')
 
   // 6. Send emails to users with changes (respecting notification preferences)
   let emailsSent = 0
@@ -2155,7 +2358,7 @@ async function prewarmFeedCache() {
       try {
         const searchTerms = buildSearchTerms(interests)
         const federalFetches = searchTerms.slice(0, 6).map(term =>
-          legiscanRequest('search', { state: 'US', query: term, year: '2' })
+          cachedLegiscanSearch('US', term)
             .then(data => {
               if (!data.searchresult) return []
               return Object.values(data.searchresult)
@@ -2191,6 +2394,7 @@ async function prewarmFeedCache() {
   }
 
   console.log(`[prewarm] Done. Warmed ${warmed} feed cache entries.`)
+  logLsMetrics('prewarmFeedCache')
 
   // Also pre-fetch bill texts for all warmed bills
   const allCachedBills = []
@@ -2367,9 +2571,11 @@ async function extractTextFromLegiScanDoc(textData) {
 // back to bill.description (often just the act title) for any non-HTML mime,
 // which caused state bills like CT raised bills to get personalized from the
 // title alone — missing entire sections of the bill text.
-async function fetchBillTextFromLegiScan(legiscanBillId) {
+async function fetchBillTextFromLegiScan(legiscanBillId, existingBillData = null) {
   try {
-    const billData = await legiscanRequest('getBill', { id: legiscanBillId })
+    // Use existing bill data if provided (avoids redundant getBill call),
+    // otherwise fetch via 3-layer cache
+    const billData = existingBillData || await cachedGetBill(legiscanBillId)
     // Capture canonical metadata so callers can override attacker-supplied
     // bill fields (defends the personalize cache against client-controlled
     // bill.title interpolation — see C1 in audit).
@@ -2430,14 +2636,18 @@ async function fetchBillTextFromLegiScan(legiscanBillId) {
 // Fetch bill content, checking caches first, then LegiScan
 // Accepts either legiscanBillId (preferred) or congress/type/number (legacy)
 async function fetchBillContent(congress, type, number, legiscanBillId) {
-  const cacheKey = legiscanBillId ? `bt-ls-${legiscanBillId}` : `bt-${congress}-${type}-${number}`
+  // Normalize cache key: always prefer legiscanId when available to prevent
+  // the same bill being cached under two different keys
+  const canonicalKey = legiscanBillId ? `bt-ls-${legiscanBillId}` : `bt-${congress}-${type}-${number}`
+  const alternateKey = legiscanBillId && congress ? `bt-${congress}-${type}-${number}` : null
 
-  // L1: in-memory
-  const memCached = getCache(cacheKey)
+  // L1: in-memory (check both canonical and alternate keys)
+  const memCached = getCache(canonicalKey) || (alternateKey && getCache(alternateKey))
   if (memCached) return memCached
 
-  // L2: Supabase persistent
-  const dbCached = await getBillTextFromSupabase(cacheKey)
+  // L2: Supabase persistent (check both keys)
+  let dbCached = await getBillTextFromSupabase(canonicalKey)
+  if (!dbCached && alternateKey) dbCached = await getBillTextFromSupabase(alternateKey)
   if (dbCached && (dbCached.bill_text || dbCached.crs_summary) && !isStaleBillTextCache(dbCached)) {
     const result = {
       text: dbCached.bill_text || null,
@@ -2446,19 +2656,22 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
       crsSummary: dbCached.crs_summary || null,
       crsVersion: dbCached.crs_version || '',
     }
-    setCache(cacheKey, result)
+    setCache(canonicalKey, result)
     return result
   }
 
   // L3: LegiScan API
+  // Try to reuse bill data from bill_cache to avoid a redundant getBill call
   let textResult = null
   if (legiscanBillId) {
-    textResult = await fetchBillTextFromLegiScan(legiscanBillId)
+    const cachedBill = getCache(`bill-ls-${legiscanBillId}`) || await getBillCacheFromSupabase(`bill-ls-${legiscanBillId}`)
+    const billData = cachedBill?.bill_data || (cachedBill?.bill ? cachedBill : null)
+    textResult = await fetchBillTextFromLegiScan(legiscanBillId, billData)
   } else {
     // Try to find the bill on LegiScan by searching
     try {
       const billNumber = `${type.toUpperCase()}${number}`
-      const searchData = await legiscanRequest('search', { state: 'US', query: billNumber, year: '2' })
+      const searchData = await cachedLegiscanSearch('US', billNumber)
       const hits = searchData.searchresult ? Object.values(searchData.searchresult).filter(r => r.bill_id) : []
       const match = hits.find(r => r.bill_number === billNumber)
       if (match) {
@@ -2490,13 +2703,13 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
     result.version !== 'description only'
 
   if (isGood) {
-    setCache(cacheKey, result)
-    setBillTextToSupabase(cacheKey, result.text, result.wordCount, result.version, result.crsSummary, result.crsVersion)
+    setCache(canonicalKey, result)
+    setBillTextToSupabase(canonicalKey, result.text, result.wordCount, result.version, result.crsSummary, result.crsVersion)
   } else {
     // Cache the degraded result for a SHORT window (5 min) so a stampede
     // of concurrent requests for a broken bill don't all hit LegiScan,
     // but recovery happens quickly once LegiScan is healthy again.
-    setCache(cacheKey, result, 5 * 60 * 1000)
+    setCache(canonicalKey, result, 5 * 60 * 1000)
   }
 
   return result
@@ -2621,15 +2834,66 @@ function gradeToAge(grade) {
 }
 
 const INTEREST_MAP = {
-  education:    ['student loan', 'education funding', 'youth'],
-  environment:  ['climate change', 'clean energy', 'environmental protection'],
-  economy:      ['minimum wage', 'workforce training', 'student debt'],
-  healthcare:   ['mental health', 'student health', 'medicaid'],
-  technology:   ['artificial intelligence', 'data privacy', 'broadband'],
-  housing:      ['affordable housing', 'rent assistance'],
-  immigration:  ['immigration reform', 'DACA', 'student visa'],
-  civil_rights: ['voting rights', 'civil rights', 'discrimination'],
-  community:    ['national service', 'community grants', 'AmeriCorps'],
+  education: [
+    'student loan', 'education funding', 'youth',
+    'school safety', 'teacher pay', 'college tuition',
+    'Pell Grant', 'charter school', 'special education',
+  ],
+  environment: [
+    'climate change', 'clean energy', 'environmental protection',
+    'carbon emissions', 'water quality', 'wildlife conservation',
+    'renewable energy', 'electric vehicle', 'pollution',
+  ],
+  economy: [
+    'minimum wage', 'workforce training', 'student debt',
+    'small business', 'unemployment', 'gig economy',
+    'tax reform', 'cost of living', 'wage theft',
+  ],
+  healthcare: [
+    'mental health', 'student health', 'medicaid',
+    'prescription drug', 'health insurance', 'substance abuse',
+    'maternal health', 'telehealth', 'public health',
+  ],
+  technology: [
+    'artificial intelligence', 'data privacy', 'broadband',
+    'social media', 'cybersecurity', 'algorithm',
+    'encryption', 'autonomous vehicle', 'net neutrality',
+  ],
+  housing: [
+    'affordable housing', 'rent assistance',
+    'homelessness', 'mortgage', 'public housing',
+    'tenant rights', 'zoning reform', 'housing voucher',
+  ],
+  immigration: [
+    'immigration reform', 'DACA', 'student visa',
+    'asylum', 'citizenship', 'border security',
+    'work permit', 'refugee', 'deportation',
+  ],
+  civil_rights: [
+    'voting rights', 'civil rights', 'discrimination',
+    'police reform', 'racial justice', 'disability rights',
+    'LGBTQ', 'hate crime', 'equal pay',
+  ],
+  community: [
+    'national service', 'community grants', 'AmeriCorps',
+    'volunteer', 'nonprofit', 'community development',
+    'rural development', 'food assistance', 'public library',
+  ],
+}
+
+// Map interest categories to LegiScan subject names for scoring boost.
+// When a bill's subjects match a user's interests, boost its score even
+// if the keyword search term didn't match directly.
+const INTEREST_TO_SUBJECTS = {
+  education:    ['Education', 'Higher Education', 'Elementary and Secondary Education'],
+  environment:  ['Environmental Protection', 'Energy', 'Public Lands and Natural Resources'],
+  economy:      ['Economics and Public Finance', 'Labor and Employment', 'Taxation'],
+  healthcare:   ['Health', 'Mental Health'],
+  technology:   ['Science, Technology, Communications', 'Computer Security'],
+  housing:      ['Housing and Community Development'],
+  immigration:  ['Immigration'],
+  civil_rights: ['Civil Rights and Liberties, Minority Issues', 'Crime and Law Enforcement'],
+  community:    ['Social Welfare', 'Agriculture and Food'],
 }
 
 // ─── Hybrid Interest-Discovery scoring ──────────────────────────────────────
@@ -2646,12 +2910,28 @@ const SCORE_WEIGHTS = {
 }
 const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
 
-function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds }) {
+function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys }) {
   // InterestScore (0–1): how well does this bill match the user's interests?
   let interestScore = 0.3 // base/default
   if (interestTerms.has(bill.searchTerm)) interestScore = 1.0
   else if (bill._isEmerging) interestScore = 0.7
   else if (bill._isDiscovery) interestScore = 0.5
+
+  // Subject-based boost: if the bill has LegiScan subjects that match the user's
+  // interests, boost the interestScore even if the search term didn't match.
+  // This catches bills found via broad keywords that are actually highly relevant.
+  if (interestScore < 0.8 && bill.legiscan_bill_id && userInterestKeys?.length) {
+    const cached = getCache(`bill-ls-${bill.legiscan_bill_id}`)
+    const subjects = cached?.bill?.subjects || []
+    const subjectNames = new Set(subjects.map(s => s.subject_name || s))
+    for (const interest of userInterestKeys) {
+      const matchSubjects = INTEREST_TO_SUBJECTS[interest] || []
+      if (matchSubjects.some(s => subjectNames.has(s))) {
+        interestScore = Math.max(interestScore, 0.85)
+        break
+      }
+    }
+  }
 
   // FreshnessScore (0–1): exponential decay over FRESHNESS_HALFLIFE days
   const daysSinceUpdate = Math.max(0, (Date.now() - new Date(bill.updateDate).getTime()) / 86400000)
@@ -2782,19 +3062,17 @@ function pickDiscoveryTerms(userInterests = []) {
     return FALLBACK_DISCOVERY
   }
 
-  // Shuffle unused interests, pick 2-3, grab one search term from each
+  // Date-seeded shuffle: rotates discovery terms daily
+  const rng = seededRng(todaySeed() + unused.length * 7)
   const shuffled = [...unused]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-  }
+  seededShuffle(shuffled, rng)
 
   const terms = []
-  const count = Math.min(2, shuffled.length)
+  const count = Math.min(3, shuffled.length) // increased from 2 → 3
   for (let i = 0; i < count; i++) {
     const mapped = INTEREST_MAP[shuffled[i]]
-    // Pick a random term from this interest category
-    terms.push(mapped[Math.floor(Math.random() * mapped.length)])
+    // Pick a term from this interest category (date-seeded)
+    terms.push(mapped[Math.floor(rng() * mapped.length)])
   }
   return terms
 }
@@ -2811,6 +3089,31 @@ const TAG_TO_INTEREST = {
   'Other': null,
 }
 
+// Date-seeded PRNG: same day = same shuffle (cache-friendly), different days =
+// different subset so users see diverse bills over time. Uses a simple mulberry32.
+function seededRng(seed) {
+  let t = seed | 0
+  return function () {
+    t = (t + 0x6d2b79f5) | 0
+    let x = Math.imul(t ^ (t >>> 15), 1 | t)
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296
+  }
+}
+function todaySeed() {
+  const d = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+  let h = 0
+  for (let i = 0; i < d.length; i++) h = ((h << 5) - h + d.charCodeAt(i)) | 0
+  return h
+}
+function seededShuffle(arr, rng) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]]
+  }
+  return arr
+}
+
 function buildSearchTerms(interests = []) {
   const base = ['student loan', 'education funding', 'youth']
 
@@ -2821,12 +3124,10 @@ function buildSearchTerms(interests = []) {
   }
 
   const unique = [...new Set(terms)]
-  for (let i = unique.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [unique[i], unique[j]] = [unique[j], unique[i]]
-  }
+  const rng = seededRng(todaySeed() + unique.length)
+  seededShuffle(unique, rng)
 
-  return unique.slice(0, 5)
+  return unique.slice(0, 7) // increased from 5 → 7 with expanded vocabulary
 }
 
 function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
@@ -2842,7 +3143,7 @@ function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   }
 
   // High-engagement interests (>5 interactions): include all terms
-  // Medium (1-5): include 1-2 terms
+  // Medium (1-5): include 2-3 terms (increased from 1-2 with expanded vocab)
   // Zero but in profile: include 1 discovery term
   for (const interest of interests) {
     const mapped = INTEREST_MAP[interest]
@@ -2852,7 +3153,7 @@ function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
     if (count > 5) {
       terms.push(...mapped) // all terms
     } else if (count >= 1) {
-      terms.push(...mapped.slice(0, 2)) // 1-2 terms
+      terms.push(...mapped.slice(0, 3)) // 2-3 terms
     } else {
       terms.push(mapped[0]) // 1 discovery term
     }
@@ -2866,13 +3167,11 @@ function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   }
 
   const unique = [...new Set(terms)]
-  // Light shuffle to add variety without destroying relevance order
-  for (let i = unique.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [unique[i], unique[j]] = [unique[j], unique[i]]
-  }
+  // Date-seeded shuffle: consistent within a day, rotates across days
+  const rng = seededRng(todaySeed() + unique.length)
+  seededShuffle(unique, rng)
 
-  return unique.slice(0, 7)
+  return unique.slice(0, 9) // increased from 7 → 9 with expanded vocabulary
 }
 
 // ─── Auto-create bill_text_cache table if missing ──────────────────────────
