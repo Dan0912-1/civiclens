@@ -14,6 +14,9 @@ import { billUpdateEmail } from './emailTemplates.js'
 // pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
+import compression from 'compression'
+
+process.on('unhandledRejection', (reason) => { console.error('[unhandledRejection]', reason) })
 
 // Extract the first balanced JSON object from a Claude response. Handles
 // ```json fences, leading prose, and — critically — trailing commentary that
@@ -77,6 +80,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
+
+app.use(compression())
 
 // 64KB body cap — large enough for batch personalize (20 bills) but tight
 // enough to bound abuse. Default is 100kb; an explicit value documents intent.
@@ -161,6 +166,15 @@ const billDetailLimiter = rateLimit({
   message: { error: 'Too many requests — please slow down.' },
 })
 
+// Public featured-bills endpoint — generous but bounded.
+const featuredLimiter = rateLimit({
+  windowMs: 60 * 1000,      // 1 minute
+  max: 60,                   // 60 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please slow down.' },
+})
+
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY
@@ -194,8 +208,13 @@ if (missingKeys.length) {
     `Dependent endpoints will return errors until these are set.`)
 }
 // FCM V1 API — uses a service account JSON (set as env var FCM_SERVICE_ACCOUNT)
-const FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
-  ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : null
+let FCM_SERVICE_ACCOUNT = null
+try {
+  FCM_SERVICE_ACCOUNT = process.env.FCM_SERVICE_ACCOUNT
+    ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : null
+} catch (e) {
+  console.error('[startup] FCM_SERVICE_ACCOUNT is not valid JSON — push notifications disabled:', e.message)
+}
 const FCM_PROJECT_ID = FCM_SERVICE_ACCOUNT?.project_id || null
 const fcmAuth = FCM_SERVICE_ACCOUNT
   ? new GoogleAuth({
@@ -305,7 +324,7 @@ async function legiscanRequest(op, params = {}) {
     url.searchParams.set(k, v)
   }
   if (lsMetrics[op] !== undefined) lsMetrics[op]++
-  const resp = await fetch(url.toString())
+  const resp = await fetch(url.toString(), { signal: AbortSignal.timeout(15000) })
   if (!resp.ok) throw new Error(`LegiScan ${op} failed: ${resp.status}`)
   const data = await resp.json()
   if (data.status === 'ERROR') throw new Error(`LegiScan ${op}: ${JSON.stringify(data)}`)
@@ -1296,6 +1315,11 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
         })
       })
 
+      // Auth errors are not transient — fail immediately
+      if (resp.status === 401 || resp.status === 403) {
+        throw new Error(`Anthropic auth error: ${resp.status}`)
+      }
+
       // Retry on rate limit or server error
       if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
         const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
@@ -1478,6 +1502,11 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
             ]
           })
         })
+
+        // Auth errors are not transient — fail immediately
+        if (resp.status === 401 || resp.status === 403) {
+          throw new Error(`Anthropic auth error: ${resp.status}`)
+        }
 
         // Retry on rate limit or server error
         if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
@@ -1736,6 +1765,11 @@ app.post('/api/share-post', personalizeLimiter, async (req, res) => {
         })
       })
 
+      // Auth errors are not transient — fail immediately
+      if (resp.status === 401 || resp.status === 403) {
+        throw new Error(`Anthropic auth error: ${resp.status}`)
+      }
+
       if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
         const delay = Math.min(4000, 800 * 2 ** attempt) + Math.floor(Math.random() * 300)
         lastError = `HTTP ${resp.status}`
@@ -1834,7 +1868,7 @@ app.post('/api/interactions', authLimiter, async (req, res) => {
   }
 })
 
-app.get('/api/interactions/summary', async (req, res) => {
+app.get('/api/interactions/summary', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 
@@ -1869,7 +1903,7 @@ app.get('/api/interactions/summary', async (req, res) => {
 
 // ─── Push notification token management ─────────────────────────────────────
 
-app.post('/api/push/register', async (req, res) => {
+app.post('/api/push/register', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
     const { token, platform } = req.body
@@ -1893,7 +1927,7 @@ app.post('/api/push/register', async (req, res) => {
         .neq('user_id', user.id)
       await supabase
         .from('push_tokens')
-        .upsert({ user_id: user.id, token, platform }, { onConflict: 'user_id,token' })
+        .upsert({ user_id: user.id, token, platform }, { onConflict: 'token' })
     }
 
     res.json({ registered: true })
@@ -1905,7 +1939,7 @@ app.post('/api/push/register', async (req, res) => {
   }
 })
 
-app.delete('/api/push/register', async (req, res) => {
+app.delete('/api/push/register', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
     const { token } = req.body
@@ -1971,7 +2005,7 @@ app.delete('/api/account', authLimiter, async (req, res) => {
 // Gated behind NODE_ENV so it can't be used to spam users in production.
 // Set ALLOW_PUSH_TEST=1 on Railway if you need it temporarily for debugging.
 
-app.post('/api/push/test', async (req, res) => {
+app.post('/api/push/test', authLimiter, async (req, res) => {
   if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PUSH_TEST !== '1') {
     return res.status(404).json({ error: 'Not found' })
   }
@@ -2034,7 +2068,7 @@ app.post('/api/push/test', async (req, res) => {
 
 // ─── Notification preferences ────────────────────────────────────────────────
 
-app.get('/api/notifications/preferences', async (req, res) => {
+app.get('/api/notifications/preferences', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 
@@ -2061,7 +2095,7 @@ app.get('/api/notifications/preferences', async (req, res) => {
   }
 })
 
-app.post('/api/notifications/preferences', async (req, res) => {
+app.post('/api/notifications/preferences', authLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
 
@@ -2426,7 +2460,7 @@ async function prewarmFeedCache() {
 
   for (const interests of PREWARM_INTEREST_COMBOS) {
     for (const grade of PREWARM_GRADES) {
-      const feedCacheKey = `ls-bills-${interests.sort().join('-')}-${grade}-US`
+      const feedCacheKey = `ls-bills-${[...interests].sort().join('-')}-${grade}-US`
       if (getCache(feedCacheKey)) continue // already cached
 
       try {
@@ -2474,7 +2508,7 @@ async function prewarmFeedCache() {
   const allCachedBills = []
   for (const interests of PREWARM_INTEREST_COMBOS) {
     for (const grade of PREWARM_GRADES) {
-      const key = `ls-bills-${interests.sort().join('-')}-${grade}-US`
+      const key = `ls-bills-${[...interests].sort().join('-')}-${grade}-US`
       const cached = getCache(key)
       if (cached?.bills) allCachedBills.push(...cached.bills)
     }
@@ -3584,7 +3618,7 @@ async function buildFeaturedBills() {
   }
 }
 
-app.get('/api/featured', async (req, res) => {
+app.get('/api/featured', featuredLimiter, async (req, res) => {
   // Short in-memory cache — curated_bills changes slowly, scoring is deterministic
   const cached = getCache('featured-bills')
   if (cached) return res.json(cached)
@@ -3675,7 +3709,7 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
 })
 
 const PORT = process.env.PORT || 3001
-app.listen(PORT, '0.0.0.0', async () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   LegiScan key: ${process.env.LEGISCAN_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
@@ -3685,3 +3719,6 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
   await ensureBillTextCache()
 })
+
+process.on('SIGTERM', () => { console.log('[shutdown] SIGTERM received'); server.close(() => process.exit(0)) })
+process.on('SIGINT', () => { console.log('[shutdown] SIGINT received'); server.close(() => process.exit(0)) })
