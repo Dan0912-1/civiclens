@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
+import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -52,6 +53,8 @@ export default function BillDetail() {
   const [personalizationError, setPersonalizationError] = useState(false)
   const [noProfile, setNoProfile] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [bookmarked, setBookmarked] = useState(false)
+  const [shareMsg, setShareMsg] = useState('')
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -88,6 +91,15 @@ export default function BillDetail() {
     }
     doTrack()
   }, [analysis, user, congress, type, number])
+
+  // Check if bill is bookmarked
+  useEffect(() => {
+    if (!user) return
+    const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
+    getBookmarks(user.id).then(bms => {
+      setBookmarked(bms.some(b => b.bill_id === bId))
+    })
+  }, [user, bill, congress, type, number])
 
   // Fetch bill detail when route params change. Guarded by a cancelled flag
   // so that if the user navigates away (or to a different bill) mid-fetch we
@@ -248,7 +260,7 @@ export default function BillDetail() {
       <main className={styles.page}>
         <div className={styles.container}>
           <p className={styles.error}>{error}</p>
-          <button className={styles.backBtn} onClick={() => navigate(-1)}>
+          <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
             ← Go back
           </button>
         </div>
@@ -259,7 +271,7 @@ export default function BillDetail() {
   return (
     <main className={styles.page}>
       <div className={styles.container}>
-        <button className={styles.backBtn} onClick={() => navigate(-1)}>
+        <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
           ← Back to results
         </button>
 
@@ -392,7 +404,12 @@ export default function BillDetail() {
                   {analysis.civic_actions.map((a, i) => (
                     <div key={i} className={styles.actionCard}>
                       <div className={styles.actionTitle}>{a.action}</div>
-                      <p className={styles.actionHow}>{a.how}</p>
+                      <p className={styles.actionHow} dangerouslySetInnerHTML={{
+                        __html: a.how.replace(
+                          /(https?:\/\/[^\s,)]+)/g,
+                          '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--amber);text-decoration:underline">$1</a>'
+                        )
+                      }} />
                       <span className={styles.actionTime}>~{a.time}</span>
                     </div>
                   ))}
@@ -477,6 +494,40 @@ export default function BillDetail() {
         )}
 
         <div className={styles.footer}>
+          <div className={styles.footerActions}>
+            {user && (
+              <button
+                className={`${styles.footerBtn} ${bookmarked ? styles.footerBtnActive : ''}`}
+                onClick={async () => {
+                  const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
+                  if (bookmarked) {
+                    await removeBookmark(user.id, bId)
+                    setBookmarked(false)
+                  } else {
+                    await addBookmark(user.id, bId, { ...bill, analysis })
+                    setBookmarked(true)
+                  }
+                }}
+              >
+                {bookmarked ? '★ Saved' : '☆ Save'}
+              </button>
+            )}
+            <button
+              className={styles.footerBtn}
+              onClick={async () => {
+                const text = `${displayTitle} — ${analysis?.headline || ''}\n${window.location.href}`
+                if (navigator.share) {
+                  try { await navigator.share({ title: displayTitle, text, url: window.location.href }) } catch {}
+                } else {
+                  await navigator.clipboard.writeText(text)
+                  setShareMsg('Link copied!')
+                  setTimeout(() => setShareMsg(''), 2000)
+                }
+              }}
+            >
+              {shareMsg || 'Share'}
+            </button>
+          </div>
           <button
             className={styles.congressLink}
             onClick={() => openInAppBrowser(billUrl)}

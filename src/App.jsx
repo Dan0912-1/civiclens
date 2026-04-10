@@ -2,7 +2,7 @@ import { useEffect, useState, Suspense, lazy } from 'react'
 import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
-import { initPushNotifications } from './lib/pushNotifications'
+import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
 import { getApiBase } from './lib/api'
 import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
@@ -45,6 +45,9 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(
     () => !localStorage.getItem('ck_onboarded_v2')
   )
+
+  // Inject navigate into push notification handler so it uses SPA routing
+  useEffect(() => { setPushNavigate(navigate) }, [navigate])
 
   // Hide splash screen with a brief branded moment + smooth haptic wave
   useEffect(() => {

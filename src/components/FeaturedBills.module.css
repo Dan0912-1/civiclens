@@ -320,12 +320,19 @@
   100% { background-position: -200% 0; }
 }
 
-/* ─── Mobile ─── */
+/* ─── Tablet ─── */
 @media (max-width: 900px) {
   .billGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
   .moving {
     padding: var(--space-2xl) var(--space-lg);
+  }
+}
+
+/* ─── Mobile ─── */
+@media (max-width: 600px) {
+  .billGrid {
+    grid-template-columns: 1fr;
   }
 }

@@ -89,7 +89,9 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
   const swipeStart = useRef(null)
   const navigate = useNavigate()
   const { user } = useAuth()
-  const billId = `${bill.type}${bill.number}-${bill.congress}`
+  const billId = bill.legiscan_bill_id
+    ? `ls-${bill.legiscan_bill_id}`
+    : `${bill.type}${bill.number}-${bill.congress}`
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
 

@@ -1,6 +1,12 @@
 import { getApiBase } from './api'
 
 let registered = false
+let _navigate = null
+
+// Allow the app to inject a React Router navigate function
+export function setPushNavigate(navigateFn) {
+  _navigate = navigateFn
+}
 
 // Check if we're on a native platform with push support
 export async function canRequestPush() {
@@ -36,8 +42,8 @@ export async function initPushNotifications(userId, token) {
   const permResult = await PushNotifications.requestPermissions()
   if (permResult.receive !== 'granted') return
 
-  await PushNotifications.register()
-
+  // Add listeners BEFORE register() to avoid race condition where
+  // the native platform fires the registration event synchronously
   PushNotifications.addListener('registration', async ({ value: deviceToken }) => {
     const platform = Capacitor.getPlatform() // 'ios' or 'android'
     try {
@@ -55,15 +61,18 @@ export async function initPushNotifications(userId, token) {
   })
 
   PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-    // Navigate to bookmarks when user taps a notification
+    // Navigate using React Router to preserve SPA state
     const url = notification.notification?.data?.url
-    if (url) {
-      window.location.hash = ''
-      window.location.pathname = url
+    const target = url || '/bookmarks'
+    if (_navigate) {
+      _navigate(target)
     } else {
-      window.location.pathname = '/bookmarks'
+      // Fallback if navigate not yet injected
+      window.location.pathname = target
     }
   })
+
+  await PushNotifications.register()
 
   registered = true
 }

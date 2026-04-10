@@ -30,7 +30,7 @@
 .dot {
   width: 32px;
   height: 32px;
-  border-radius: 1px;
+  border-radius: 50%;
   background: var(--white);
   border: 1px solid var(--border);
   display: flex;
@@ -303,7 +303,9 @@
 }
 
 .interestEmoji {
-  display: none;
+  font-size: 1.5rem;
+  display: block;
+  margin-bottom: 4px;
 }
 
 /* Textarea */

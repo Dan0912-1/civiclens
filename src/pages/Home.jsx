@@ -33,15 +33,15 @@ const DEMO_BILLS = [
 ]
 
 const TOPICS = [
-  { id: 'education',   label: 'Education',     emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'environment', label: 'Environment',   emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'economy',     label: 'Economy & Labor', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'healthcare',  label: 'Public Health', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'technology',  label: 'Tech & Privacy', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'housing',     label: 'Housing Policy', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'immigration', label: 'Immigration',   emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'civil_rights',label: 'Civil Rights',  emoji: '', color: '#0A1929', bg: '#FFFFFF' },
-  { id: 'community',   label: 'Community Dev.', emoji: '', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'education',   label: 'Education',       emoji: '📚', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'environment', label: 'Environment',     emoji: '🌿', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'economy',     label: 'Economy & Jobs',  emoji: '💼', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'healthcare',  label: 'Healthcare',      emoji: '🏥', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'technology',  label: 'Tech & Privacy',  emoji: '💻', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'housing',     label: 'Housing',         emoji: '🏠', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'immigration', label: 'Immigration',     emoji: '🌎', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'civil_rights',label: 'Civil Rights',    emoji: '⚖️', color: '#0A1929', bg: '#FFFFFF' },
+  { id: 'community',   label: 'Community',       emoji: '🤝', color: '#0A1929', bg: '#FFFFFF' },
 ]
 
 export default function Home() {
@@ -70,27 +70,29 @@ export default function Home() {
     setShowSummary(false)
     setFading(false)
     let i = 0
+    let summaryTimer
     const title = DEMO_BILLS[billIndex].title
     intervalRef.current = setInterval(() => {
       i++
       setTypedTitle(title.slice(0, i))
       if (i >= title.length) {
         clearInterval(intervalRef.current)
-        setTimeout(() => setShowSummary(true), 300)
+        summaryTimer = setTimeout(() => setShowSummary(true), 300)
       }
     }, 40)
-    return () => clearInterval(intervalRef.current)
+    return () => { clearInterval(intervalRef.current); clearTimeout(summaryTimer) }
   }, [billIndex])
 
   // Cycle through bills
   useEffect(() => {
+    let fadeTimer
     const timer = setTimeout(() => {
       setFading(true)
-      setTimeout(() => {
+      fadeTimer = setTimeout(() => {
         setBillIndex(prev => (prev + 1) % DEMO_BILLS.length)
       }, 400)
-    }, 6000)
-    return () => clearTimeout(timer)
+    }, 9000)
+    return () => { clearTimeout(timer); clearTimeout(fadeTimer) }
   }, [billIndex])
 
   return (
@@ -100,28 +102,28 @@ export default function Home() {
       <section className={styles.heroWrap}>
         <div className={styles.hero}>
         <div className={styles.heroText}>
-          <span className={styles.eyebrow}>The Legislative Record</span>
+          <span className={styles.eyebrow}>Your Laws, Your Future</span>
           <h1 className={styles.headline}>
-            Know the Laws<br />
-            <span className={styles.accent}>Shaping Your Future</span>.
+            What Laws Are<br />
+            <span className={styles.accent}>Shaping Your Life</span>?
           </h1>
           <p className={styles.subhead}>
-            Track every active bill in Congress and your state legislature.
-            Plain-language analysis, sourced from primary government records.
-            Nonpartisan. Independently operated.
+            Track bills in Congress and your state legislature, explained
+            in plain language. See how they affect you personally.
+            Nonpartisan. Built by a student.
           </p>
           <div className={styles.ctaRow}>
             <button
               className={styles.ctaPrimary}
               onClick={() => navigate('/profile')}
             >
-              Enter Platform →
+              Get Started →
             </button>
             <button
               className={styles.ctaSecondary}
               onClick={() => navigate('/results')}
             >
-              Browse Legislative Index
+              Explore Bills
             </button>
           </div>
           <div className={styles.trustStrip}>
@@ -179,8 +181,8 @@ export default function Home() {
 
       {/* Search */}
       <section className={styles.searchSection}>
-        <h2 className={styles.searchHeading}>Legislative Search</h2>
-        <p className={styles.searchSub}>Query federal and state legislation by keyword, bill number, sponsor, or committee.</p>
+        <h2 className={styles.searchHeading}>Search Bills</h2>
+        <p className={styles.searchSub}>Find bills by keyword, topic, bill number, or sponsor.</p>
         <form className={styles.searchForm} onSubmit={handleSearch}>
           <input
             type="text"
@@ -206,13 +208,13 @@ export default function Home() {
 
       {/* Topic cards */}
       <section className={styles.topics}>
-        <h2 className={styles.topicsHeading}>Policy Subject Matter</h2>
+        <h2 className={styles.topicsHeading}>Explore by Topic</h2>
         <div className={styles.topicScroll}>
           {TOPICS.map(t => (
             <button
               key={t.id}
               className={styles.topicCard}
-              onClick={() => navigate('/profile')}
+              onClick={() => navigate(`/search?q=${encodeURIComponent(t.label)}`)}
               style={{
                 '--topic-color': t.color,
                 '--topic-bg':    t.bg,
@@ -230,33 +232,33 @@ export default function Home() {
         <div className={styles.timelineSteps}>
           <div className={styles.timelineStep}>
             <div className={styles.timelineDot}>01</div>
-            <div className={styles.timelineLabel}>Configure Profile</div>
-            <div className={styles.timelineSub}>Jurisdiction &amp; interests</div>
+            <div className={styles.timelineLabel}>Set Up Your Feed</div>
+            <div className={styles.timelineSub}>Your state &amp; interests</div>
           </div>
           <div className={styles.timelineLine} />
           <div className={styles.timelineStep}>
             <div className={styles.timelineDot}>02</div>
-            <div className={styles.timelineLabel}>Match Legislation</div>
-            <div className={styles.timelineSub}>Federal + state corpus</div>
+            <div className={styles.timelineLabel}>Get Matched Bills</div>
+            <div className={styles.timelineSub}>Federal + state bills</div>
           </div>
           <div className={styles.timelineLine} />
           <div className={styles.timelineStep}>
             <div className={styles.timelineDot}>03</div>
-            <div className={styles.timelineLabel}>Review Impact</div>
-            <div className={styles.timelineSub}>Analysis &amp; sources</div>
+            <div className={styles.timelineLabel}>See Your Impact</div>
+            <div className={styles.timelineSub}>Plain-language analysis</div>
           </div>
         </div>
       </section>
 
       {/* CTA */}
       <section className={styles.ctaSection}>
-        <h2>Access the Legislative Record.</h2>
-        <p>No registration required. Anonymous browsing supported.</p>
+        <h2>Ready to see what's happening?</h2>
+        <p>No sign-up needed. Just dive in.</p>
         <button
           className={styles.ctaPrimary}
           onClick={() => navigate('/profile')}
         >
-          Configure Profile →
+          Get Started →
         </button>
       </section>
 

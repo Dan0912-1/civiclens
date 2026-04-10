@@ -101,13 +101,14 @@ export default function Search() {
   }, [activeTabParam])
 
   useEffect(() => {
-    if (activeQuery) {
-      setInputValue(activeQuery)
-      fetchResults(activeQuery, 1, true, activeTab)
-    }
+    if (!activeQuery) return
+    const controller = new AbortController()
+    setInputValue(activeQuery)
+    fetchResults(activeQuery, 1, true, activeTab, undefined, controller.signal)
+    return () => controller.abort()
   }, [activeQuery, activeTab])
 
-  async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride) {
+  async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride, signal) {
     if (reset) {
       setLoading(true)
       setBills([])
@@ -123,7 +124,7 @@ export default function Search() {
 
     const stateParam = tab === 'state' ? (stateOverride || selectedState || profile?.state || 'US') : 'US'
     try {
-      const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}&state=${stateParam}`)
+      const resp = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${pageNum}&state=${stateParam}`, { signal })
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}))
         throw new Error(data.error || 'Search failed')
@@ -138,6 +139,7 @@ export default function Search() {
       setHasMore(data.pagination?.hasMore || false)
       setTotalResults(data.pagination?.totalResults || 0)
     } catch (err) {
+      if (err.name === 'AbortError') return
       setError(err.message || 'Unable to search. Please try again.')
     } finally {
       setLoading(false)

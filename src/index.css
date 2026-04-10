@@ -62,16 +62,16 @@
   --space-2xl: 3rem;
   --space-3xl: 4rem;
 
-  /* Radius — flattened for institutional feel */
-  --radius-sm: 1px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 3px;
+  /* Radius — modern, approachable feel */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
 
-  /* Shadows — hairline borders preferred over elevation */
-  --shadow-sm: 0 1px 0 rgba(10,25,41,0.04);
-  --shadow-md: 0 1px 0 rgba(10,25,41,0.06), 0 0 0 1px rgba(10,25,41,0.04);
-  --shadow-lg: 0 2px 0 rgba(10,25,41,0.08), 0 0 0 1px rgba(10,25,41,0.06);
+  /* Shadows — subtle elevation for depth */
+  --shadow-sm: 0 1px 3px rgba(10,25,41,0.06);
+  --shadow-md: 0 2px 8px rgba(10,25,41,0.08), 0 0 0 1px rgba(10,25,41,0.04);
+  --shadow-lg: 0 4px 16px rgba(10,25,41,0.10), 0 0 0 1px rgba(10,25,41,0.06);
   --shadow-amber: 0 0 0 1px rgba(164,126,59,0.30);
 
   /* Easing — premium "iOS-style" curves */
@@ -183,6 +183,12 @@ input, select, textarea {
 
 .animate-fade-in {
   animation: fadeIn var(--dur-base) var(--ease-out) forwards;
+}
+
+/* Accessibility — global focus-visible ring */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

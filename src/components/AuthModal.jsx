@@ -32,12 +32,22 @@ export default function AuthModal({ isOpen, onClose }) {
     onClose()
   }
 
+  function friendlyError(msg) {
+    if (!msg) return 'Something went wrong. Please try again.'
+    if (msg.includes('Invalid login credentials')) return "That email/password combo didn't work. Double-check and try again."
+    if (msg.includes('Email not confirmed')) return 'Check your inbox for a confirmation email, then try again.'
+    if (msg.includes('already registered') || msg.includes('already been registered')) return 'An account with this email already exists. Try signing in instead.'
+    if (msg.includes('Password should be at least')) return 'Your password needs to be at least 6 characters.'
+    if (msg.includes('rate limit') || msg.includes('too many requests')) return 'Too many attempts. Please wait a minute and try again.'
+    return msg
+  }
+
   async function handleGoogle() {
     setError('')
     setLoading(true)
     const { error } = await signInWithGoogle()
     setLoading(false)
-    if (error) setError(error.message)
+    if (error) setError(friendlyError(error.message))
   }
 
   async function handleApple() {
@@ -63,7 +73,7 @@ export default function AuthModal({ isOpen, onClose }) {
     if (mode === 'signin') {
       const { error } = await signInWithEmail(email, password)
       if (error) {
-        setError(error.message)
+        setError(friendlyError(error.message))
         setLoading(false)
       } else {
         handleClose()
@@ -71,7 +81,7 @@ export default function AuthModal({ isOpen, onClose }) {
     } else {
       const { error } = await signUpWithEmail(email, password)
       if (error) {
-        setError(error.message)
+        setError(friendlyError(error.message))
         setLoading(false)
       } else {
         setSignupSuccess(true)
