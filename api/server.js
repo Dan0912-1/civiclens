@@ -2589,20 +2589,28 @@ async function refreshCuratedBills() {
       const category = POLICY_AREA_TO_CATEGORY[policyArea] || categorizeBillByTitle(b.title)
 
       const latestAction = b.latestAction || {}
-      const originChamber = b.originChamber || (String(b.type).toLowerCase().startsWith('s') ? 'Senate' : 'House')
+      const billType = (b.type || entry.type || '').toUpperCase().replace(/\./g, '')
+      const billNumber = String(b.number || entry.number || '')
+      const originChamber = b.originChamber || (billType.startsWith('S') ? 'Senate' : 'House')
+      const apiUrl = entry.url || ''
 
       rows.push({
+        id: `${billType}${billNumber}-${congress}`,
         congress,
-        bill_type: normaliseCongressGovType(b.type),
-        bill_number: String(b.number || entry.number || ''),
+        bill_type: billType,
+        bill_number: billNumber,
         title: b.title || '',
         origin_chamber: originChamber,
         latest_action: latestAction.text || '',
         latest_action_date: latestAction.actionDate || '',
         update_date: b.updateDate || latestAction.actionDate || '',
+        policy_area: policyArea,
         interest_category: category,
-        source: 'congress.gov',
-        updated_at: new Date().toISOString(),
+        source: 'congress_gov',
+        source_id: apiUrl,
+        jurisdiction: 'federal',
+        api_url: apiUrl,
+        fetched_at: new Date().toISOString(),
       })
 
       // Be respectful of rate limits
@@ -2621,7 +2629,7 @@ async function refreshCuratedBills() {
   try {
     const { error } = await supabase
       .from('curated_bills')
-      .upsert(rows, { onConflict: 'congress,bill_type,bill_number' })
+      .upsert(rows, { onConflict: 'id' })
     if (error) throw error
   } catch (err) {
     console.error('[congress-cron] Supabase upsert error:', err.message)

@@ -3,21 +3,22 @@
 -- Populated automatically by the refreshCuratedBills() cron job in api/server.js.
 
 create table if not exists curated_bills (
-  id                 bigint generated always as identity primary key,
+  id                 text primary key,            -- e.g. "HR2711-119"
+  source             text not null default 'congress_gov',
+  source_id          text not null default '',     -- API URL used to fetch
+  jurisdiction       text not null default 'federal',
   congress           integer not null,
-  bill_type          text not null,
+  bill_type          text not null,                -- uppercase: "HR", "S", etc.
   bill_number        text not null,
   title              text not null default '',
   origin_chamber     text not null default '',
   latest_action      text not null default '',
   latest_action_date text not null default '',
   update_date        text not null default '',
+  policy_area        text not null default '',
   interest_category  text not null default '',
-  source             text not null default 'congress.gov',
-  created_at         timestamptz not null default now(),
-  updated_at         timestamptz not null default now(),
-
-  unique (congress, bill_type, bill_number)
+  api_url            text not null default '',
+  fetched_at         timestamptz not null default now()
 );
 
 create index if not exists idx_curated_bills_update_date on curated_bills (update_date desc);
