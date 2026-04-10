@@ -989,7 +989,7 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
           ...transformBillTimeline(b),
         },
       }
-      setCache(cacheKey, result)
+      setCache(billCacheKey, result)
       res.json(result)
     } catch (err) {
       console.error('LegiScan getBill error:', err.message)
