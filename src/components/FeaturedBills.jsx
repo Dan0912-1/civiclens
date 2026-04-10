@@ -123,7 +123,7 @@ export default function FeaturedBills() {
     const b = row.bill_data || {}
     if (!b.type || !b.number) return
     navigate(`/bill/${b.congress || 0}/${b.type.toLowerCase()}/${b.number}`, {
-      state: { bill: b },
+      state: { bill: b, skipPersonalization: true },
     })
   }
 

@@ -42,6 +42,7 @@ export default function BillDetail() {
   // Data passed from Results page via router state
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
+  const skipPersonalization = location.state?.skipPersonalization || false
 
   const [bill, setBill] = useState(passedBill)
   const [analysis, setAnalysis] = useState(passedAnalysis)
@@ -142,7 +143,7 @@ export default function BillDetail() {
   // so a pending Bill A request can't overwrite Bill B's analysis after
   // navigation.
   useEffect(() => {
-    if (!bill || analysis) return
+    if (!bill || analysis || skipPersonalization) return
     let cancelled = false
     // Capture the in-flight bill identity; abort if the route changes.
     const requestBillId = `${bill.type}${bill.number}-${bill.congress}`
@@ -415,7 +416,7 @@ export default function BillDetail() {
               Try again
             </button>
           </div>
-        ) : noProfile ? (
+        ) : noProfile || skipPersonalization ? (
           <div className={styles.loadingAnalysis}>
             <span>Tell us about yourself so we can personalize this bill for you.</span>
             <button
