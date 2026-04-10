@@ -31,7 +31,6 @@ export default function Results() {
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
   const [interactionSummary, setInteractionSummary] = useState(null)
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
   const prevUserRef = useRef(null)
 
@@ -107,15 +106,23 @@ export default function Results() {
   // summary loads so the interest-weighted ranking uses the user's click
   // history on the first render (otherwise new logins see generic ranking
   // until their next pull-to-refresh).
+  //
+  // Uses a cancelled flag to prevent a stale fetchBills() (triggered when
+  // profile loads first) from corrupting state after a newer fetchBills()
+  // starts (triggered when interactionSummary arrives).
   useEffect(() => {
     if (!profile) return
-    fetchBills()
+    let cancelled = false
+    fetchBills({ cancelled: () => cancelled })
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, interactionSummary])
 
   // Personalize a batch of bills in a single API call (all Claude calls run in parallel server-side).
   // Auto-retries any failed bills once to recover from transient errors before surfacing failure to the user.
-  async function personalizeBillsBatch(billsToPersonalize) {
+  // Accepts an optional `isCancelled` function; when it returns true, state updates are skipped to
+  // prevent a stale request from corrupting the current render cycle.
+  async function personalizeBillsBatch(billsToPersonalize, { isCancelled } = {}) {
     if (!billsToPersonalize.length) return
 
     // One attempt against the batch endpoint. Returns { ok: Set<billId>, failed: Bill[] }.
@@ -132,6 +139,7 @@ export default function Results() {
         if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
 
         if (data.results) {
+          if (isCancelled?.()) return { ok, failed: bills }
           setAnalyses(prev => {
             const next = { ...prev }
             for (const [billId, result] of Object.entries(data.results)) {
@@ -163,6 +171,7 @@ export default function Results() {
 
     // First attempt
     let { ok: okFirst, failed } = await attempt(billsToPersonalize)
+    if (isCancelled?.()) return
 
     // Mark successes as settled immediately so the UI can render them
     if (okFirst.size) {
@@ -180,7 +189,9 @@ export default function Results() {
         console.log(`[personalize] retrying ${failed.length} failed bill(s) client-side`)
       }
       await new Promise(r => setTimeout(r, 1500))
+      if (isCancelled?.()) return
       const second = await attempt(failed)
+      if (isCancelled?.()) return
 
       if (second.ok.size) {
         setSettledBills(prev => {
@@ -207,7 +218,8 @@ export default function Results() {
     }
   }
 
-  async function fetchBills() {
+  async function fetchBills({ cancelled } = {}) {
+    const isCancelled = cancelled ?? (() => false)
     setLoadingBills(true)
     setBillError('')
     setSettledBills(new Set())
@@ -232,7 +244,9 @@ export default function Results() {
         headers,
         body: JSON.stringify(body)
       })
+      if (isCancelled()) return
       const data = await resp.json()
+      if (isCancelled()) return
       if (data.bills) {
         setBills(data.bills)
 
@@ -253,18 +267,23 @@ export default function Results() {
         // and the user sees content; then wave 2 (and any tail) runs
         // sequentially so the server's concurrency pool isn't split between
         // waves and the first batch isn't slowed down by the second.
+        // Each wave checks cancellation before starting.
         ;(async () => {
-          if (wave1.length) await personalizeBillsBatch(wave1)
-          if (wave2.length) await personalizeBillsBatch(wave2)
-          if (wave3.length) await personalizeBillsBatch(wave3)
+          if (wave1.length && !isCancelled()) await personalizeBillsBatch(wave1, { isCancelled })
+          if (wave2.length && !isCancelled()) await personalizeBillsBatch(wave2, { isCancelled })
+          if (wave3.length && !isCancelled()) await personalizeBillsBatch(wave3, { isCancelled })
         })()
       } else {
         setBillError('Could not load bills. Please try again.')
       }
     } catch (err) {
-      setBillError('Unable to connect. Please check your internet connection and try again.')
+      if (!isCancelled()) {
+        setBillError('Unable to connect. Please check your internet connection and try again.')
+      }
     } finally {
-      setLoadingBills(false)
+      if (!isCancelled()) {
+        setLoadingBills(false)
+      }
     }
   }
 
@@ -438,8 +457,8 @@ export default function Results() {
             </div>
             {hasMore && (
               <div className={styles.loadMoreWrap}>
-                <button className={styles.loadMoreBtn} onClick={handleLoadMore} disabled={loadingMore}>
-                  {loadingMore ? 'Loading...' : `Show more bills (${allFilteredBills.length - visibleCount} remaining)`}
+                <button className={styles.loadMoreBtn} onClick={handleLoadMore}>
+                  {`Show more bills (${allFilteredBills.length - visibleCount} remaining)`}
                 </button>
               </div>
             )}
