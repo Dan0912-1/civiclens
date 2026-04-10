@@ -172,6 +172,30 @@
   box-shadow: 0 0 0 1px var(--navy);
 }
 
+.ageWarning {
+  margin-top: var(--space-md);
+  padding: var(--space-lg);
+  background: #fef3ed;
+  border: 1px solid #f0c8a8;
+  border-left: 3px solid #D97757;
+  border-radius: 1px;
+}
+
+.ageWarning p {
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin-bottom: var(--space-sm);
+}
+
+.ageWarning p:last-child { margin-bottom: 0; }
+
+.ageWarning a {
+  color: var(--amber);
+  text-decoration: underline;
+}
+
 /* Toggle */
 .toggleRow {
   display: flex;

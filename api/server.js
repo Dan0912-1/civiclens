@@ -163,7 +163,9 @@ const billDetailLimiter = rateLimit({
 
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
+const CONGRESS_BASE = 'https://api.congress.gov/v3'
 
 // ─── Global Anthropic spend cap (process-wide) ──────────────────────────────
 // Hard floor on how many Claude calls this process will make per hour. Defends
@@ -2489,6 +2491,162 @@ cron.schedule('0 11 * * 1-5', () => {
 })
 console.log('   Feed pre-warm cron: ✓ scheduled (weekdays 6:00 AM ET / 11:00 UTC)')
 
+// ─── Congress.gov featured-bills curation ───────────────────────────────────
+// Daily cron that fetches recently-updated bills from the Congress.gov API,
+// categorises them into the app's topic buckets, and upserts them into the
+// `curated_bills` Supabase table. The `/api/featured` endpoint reads that
+// table to power the homepage "Moving this week" section.
+
+const POLICY_AREA_TO_CATEGORY = {
+  'Education':                                     'education',
+  'Health':                                        'healthcare',
+  'Environmental Protection':                      'environment',
+  'Energy':                                        'environment',
+  'Public Lands and Natural Resources':             'environment',
+  'Water Resources Development':                   'environment',
+  'Animals':                                       'environment',
+  'Economics and Public Finance':                   'economy',
+  'Finance and Financial Sector':                   'economy',
+  'Commerce':                                      'economy',
+  'Labor and Employment':                          'economy',
+  'Taxation':                                      'economy',
+  'Agriculture and Food':                          'economy',
+  'Science, Technology, Communications':            'technology',
+  'Housing and Community Development':              'housing',
+  'Immigration':                                   'immigration',
+  'Civil Rights and Liberties, Minority Issues':    'civil_rights',
+  'Crime and Law Enforcement':                     'civil_rights',
+  'Native Americans':                              'civil_rights',
+  'Government Operations and Politics':             'community',
+  'Social Welfare':                                'community',
+  'Families':                                      'community',
+  'Armed Forces and National Security':             'community',
+  'International Affairs':                         'community',
+  'Transportation and Public Works':                'community',
+  'Sports and Recreation':                         'community',
+  'Congress':                                      'community',
+  'Emergency Management':                          'community',
+}
+
+// Fallback: guess category from the bill title when policyArea is missing
+function categorizeBillByTitle(title) {
+  const t = (title || '').toLowerCase()
+  if (/school|student|educat|teacher|college|universit|pell\s+grant|title\s+i/i.test(t)) return 'education'
+  if (/health|medic|drug|pharma|mental|opioid|vaccine|hospital/i.test(t)) return 'healthcare'
+  if (/climate|environment|emission|pollut|water|wildlif|conserv|energy|solar|wind|oil|gas|carbon/i.test(t)) return 'environment'
+  if (/tax|wage|econom|trade|tariff|small\s+business|labor|worker|employ|inflation|budget/i.test(t)) return 'economy'
+  if (/technolog|cyber|ai\b|artificial\s+intellig|data\s+privacy|internet|broadband|telecom/i.test(t)) return 'technology'
+  if (/hous(?:e|ing)|rent|mortgage|homeless|shelter|afford/i.test(t)) return 'housing'
+  if (/immigra|visa|asylum|border|refugee|citizen|deport|daca/i.test(t)) return 'immigration'
+  if (/civil\s+right|discrim|equal|justice|vote|voting|polic|gun|firearm/i.test(t)) return 'civil_rights'
+  return 'community'
+}
+
+// Normalise the bill type from Congress.gov's URL slug form (e.g. "hr", "s", "hjres")
+function normaliseCongressGovType(raw) {
+  if (!raw) return ''
+  return raw.toLowerCase().replace(/\./g, '')
+}
+
+async function refreshCuratedBills() {
+  if (!supabase || !CONGRESS_API_KEY) return
+  const congress = currentFederalCongress()
+  console.log(`[congress-cron] Refreshing curated bills for ${congress}th Congress...`)
+
+  // 1. Fetch the 50 most recently updated bills
+  let bills = []
+  try {
+    const listUrl = `${CONGRESS_BASE}/bill/${congress}?api_key=${CONGRESS_API_KEY}&sort=updateDate+desc&limit=50&offset=0&format=json`
+    const resp = await fetch(listUrl)
+    if (!resp.ok) throw new Error(`Congress.gov list: ${resp.status}`)
+    const data = await resp.json()
+    bills = data.bills || []
+  } catch (err) {
+    console.error('[congress-cron] Failed to fetch bill list:', err.message)
+    return
+  }
+
+  if (!bills.length) {
+    console.log('[congress-cron] No bills returned from Congress.gov')
+    return
+  }
+
+  // 2. Fetch individual bill details to get policyArea (list endpoint omits it)
+  const rows = []
+  for (const entry of bills) {
+    try {
+      // Congress.gov list gives a url like https://api.congress.gov/v3/bill/119/hr/1234
+      const detailUrl = `${entry.url}?api_key=${CONGRESS_API_KEY}&format=json`
+      const resp = await fetch(detailUrl)
+      if (!resp.ok) {
+        console.warn(`[congress-cron] Detail fetch ${resp.status} for ${entry.type || ''} ${entry.number || ''}`)
+        continue
+      }
+      const detail = await resp.json()
+      const b = detail.bill || {}
+
+      const policyArea = b.policyArea?.name || ''
+      const category = POLICY_AREA_TO_CATEGORY[policyArea] || categorizeBillByTitle(b.title)
+
+      const latestAction = b.latestAction || {}
+      const originChamber = b.originChamber || (String(b.type).toLowerCase().startsWith('s') ? 'Senate' : 'House')
+
+      rows.push({
+        congress,
+        bill_type: normaliseCongressGovType(b.type),
+        bill_number: String(b.number || entry.number || ''),
+        title: b.title || '',
+        origin_chamber: originChamber,
+        latest_action: latestAction.text || '',
+        latest_action_date: latestAction.actionDate || '',
+        update_date: b.updateDate || latestAction.actionDate || '',
+        interest_category: category,
+        source: 'congress.gov',
+        updated_at: new Date().toISOString(),
+      })
+
+      // Be respectful of rate limits
+      await new Promise(r => setTimeout(r, 200))
+    } catch (err) {
+      console.warn(`[congress-cron] Error processing bill:`, err.message)
+    }
+  }
+
+  if (!rows.length) {
+    console.log('[congress-cron] No bills to upsert')
+    return
+  }
+
+  // 3. Upsert into curated_bills
+  try {
+    const { error } = await supabase
+      .from('curated_bills')
+      .upsert(rows, { onConflict: 'congress,bill_type,bill_number' })
+    if (error) throw error
+  } catch (err) {
+    console.error('[congress-cron] Supabase upsert error:', err.message)
+    return
+  }
+
+  // 4. Clear the featured-bills cache so next request picks up fresh data
+  cache.delete('featured-bills')
+
+  // Tally categories for the log
+  const cats = {}
+  for (const r of rows) cats[r.interest_category] = (cats[r.interest_category] || 0) + 1
+  console.log(`[congress-cron] Upserted ${rows.length} bills. Categories: ${JSON.stringify(cats)}`)
+}
+
+if (supabase && CONGRESS_API_KEY) {
+  // Daily at 6:00 AM UTC — before the 8 AM bill-update cron
+  cron.schedule('0 6 * * *', () => {
+    refreshCuratedBills().catch(err => console.error('[congress-cron] Unhandled error:', err))
+  })
+  console.log('   Congress.gov cron: ✓ scheduled (daily 6:00 AM UTC)')
+} else {
+  console.log(`   Congress.gov cron: ✗ disabled (${!supabase ? 'no Supabase' : 'no CONGRESS_API_KEY'})`)
+}
+
 // ─── Bill text & CRS summary fetching ───────────────────────────────────────
 // Fetches the full legislative text from Congress.gov and strips HTML to plain text.
 // Also fetches CRS (Congressional Research Service) expert summaries when available.
@@ -3507,6 +3665,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
   console.log(`   LegiScan key: ${process.env.LEGISCAN_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
   console.log(`   Anthropic key: ${process.env.ANTHROPIC_API_KEY ? '✓ loaded' : '✗ MISSING'}`)
+  console.log(`   Congress.gov key: ${CONGRESS_API_KEY ? '✓ loaded' : '✗ not set (featured bills cron disabled)'}`)
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)

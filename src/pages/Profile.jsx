@@ -123,8 +123,10 @@ export default function Profile() {
     }))
   }
 
+  const isUnder13 = profile.grade !== '' && Number(profile.grade) < 13
+
   function canAdvance() {
-    if (step === 1) return profile.state && profile.grade
+    if (step === 1) return profile.state && profile.grade && Number(profile.grade) >= 13
     if (step === 2) return true
     if (step === 3) return profile.interests.length > 0
     return true
@@ -132,7 +134,11 @@ export default function Profile() {
 
   async function handleNext() {
     if (!canAdvance()) {
-      setError('Please fill in the required fields.')
+      if (step === 1 && isUnder13) {
+        setError('You must be 13 or older to use CapitolKey.')
+      } else {
+        setError('Please fill in the required fields.')
+      }
       return
     }
     setError('')
@@ -205,6 +211,18 @@ export default function Profile() {
                   value={profile.grade}
                   onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
                 />
+                {isUnder13 && (
+                  <div className={styles.ageWarning}>
+                    <p>
+                      CapitolKey is designed for users who are <strong>13 years of age or older</strong>,
+                      in compliance with the Children's Online Privacy Protection Act (COPPA).
+                    </p>
+                    <p>
+                      If you are under 13, you are not able to use CapitolKey at this time.
+                      See our <a href="/terms">Terms of Service</a> for more information.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
