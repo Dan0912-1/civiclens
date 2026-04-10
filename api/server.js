@@ -2575,8 +2575,9 @@ async function refreshCuratedBills() {
   const rows = []
   for (const entry of bills) {
     try {
-      // Congress.gov list gives a url like https://api.congress.gov/v3/bill/119/hr/1234
-      const detailUrl = `${entry.url}?api_key=${CONGRESS_API_KEY}&format=json`
+      // Congress.gov list URLs already include ?format=json, so append with &
+      const sep = entry.url.includes('?') ? '&' : '?'
+      const detailUrl = `${entry.url}${sep}api_key=${CONGRESS_API_KEY}`
       const resp = await fetch(detailUrl)
       if (!resp.ok) {
         console.warn(`[congress-cron] Detail fetch ${resp.status} for ${entry.type || ''} ${entry.number || ''}`)
@@ -2620,7 +2621,12 @@ async function refreshCuratedBills() {
     }
   }
 
-  if (!rows.length) {
+  // Deduplicate — Congress.gov can return the same bill twice in one page
+  const seen = new Map()
+  for (const r of rows) if (!seen.has(r.id)) seen.set(r.id, r)
+  const unique = [...seen.values()]
+
+  if (!unique.length) {
     console.log('[congress-cron] No bills to upsert')
     return
   }
@@ -2629,7 +2635,7 @@ async function refreshCuratedBills() {
   try {
     const { error } = await supabase
       .from('curated_bills')
-      .upsert(rows, { onConflict: 'id' })
+      .upsert(unique, { onConflict: 'id' })
     if (error) throw error
   } catch (err) {
     console.error('[congress-cron] Supabase upsert error:', err.message)
@@ -2641,8 +2647,8 @@ async function refreshCuratedBills() {
 
   // Tally categories for the log
   const cats = {}
-  for (const r of rows) cats[r.interest_category] = (cats[r.interest_category] || 0) + 1
-  console.log(`[congress-cron] Upserted ${rows.length} bills. Categories: ${JSON.stringify(cats)}`)
+  for (const r of unique) cats[r.interest_category] = (cats[r.interest_category] || 0) + 1
+  console.log(`[congress-cron] Upserted ${unique.length} bills (${rows.length - unique.length} dupes skipped). Categories: ${JSON.stringify(cats)}`)
 }
 
 if (supabase && CONGRESS_API_KEY) {
