@@ -275,7 +275,6 @@ export default function Search() {
                 value={inputValue}
                 onChange={e => setInputValue(e.target.value)}
                 placeholder="Search bills..."
-                autoFocus
               />
             </div>
             <button

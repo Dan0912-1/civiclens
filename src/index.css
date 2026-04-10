@@ -156,6 +156,20 @@ input, select, textarea {
   font-family: var(--font-body);
 }
 
+/* iOS WKWebView auto-zooms when an input with font-size < 16px receives focus.
+   Force 16px on mobile so tapping any form field never triggers viewport zoom.
+   !important overrides CSS-module class selectors that set smaller sizes. */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Prevent double-tap zoom on iOS; keeps single-tap fast */
+html {
+  touch-action: manipulation;
+}
+
 /* Animations */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(20px); }
