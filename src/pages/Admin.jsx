@@ -181,10 +181,10 @@ export default function Admin() {
         {/* KPI row */}
         <div className={styles.kpiRow}>
           <div className={styles.kpi}>
-            <div className={styles.kpiLabel}>Total Users</div>
-            <div className={styles.kpiValue}>{(u.total || 0).toLocaleString()}</div>
+            <div className={styles.kpiLabel}>Accounts</div>
+            <div className={styles.kpiValue}>{(u.totalAccounts || 0).toLocaleString()}</div>
             <div className={styles.kpiSub}>
-              +{u.signups?.last24h || 0} today / +{u.signups?.last7d || 0} this week
+              {u.totalProfiles || 0} profiles / +{u.signups?.last7d || 0} this week
             </div>
           </div>
           <div className={`${styles.kpi} ${styles.kpiAccent}`}>
@@ -215,7 +215,7 @@ export default function Admin() {
         {/* API Quota + Cache Performance */}
         <div className={styles.grid}>
           <div className={styles.panel}>
-            <div className={styles.panelTitle}>API Quotas</div>
+            <div className={styles.panelTitle}>API Quotas <span className={styles.kpiSub}>(since last deploy)</span></div>
 
             {/* Anthropic gauge */}
             <div className={styles.gaugeRow}>
@@ -249,7 +249,7 @@ export default function Admin() {
           </div>
 
           <div className={styles.panel}>
-            <div className={styles.panelTitle}>Cache Performance</div>
+            <div className={styles.panelTitle}>Cache Performance <span className={styles.kpiSub}>(since last deploy)</span></div>
             <div className={styles.statRow}>
               <span className={styles.statKey}>In-memory entries</span>
               <span className={styles.statVal}>{(c.inMemory || 0).toLocaleString()}</span>
@@ -345,11 +345,11 @@ export default function Admin() {
             <div className={styles.panelTitle}>Notification Adoption</div>
             <div className={styles.statRow}>
               <span className={styles.statKey}>Push enabled</span>
-              <span className={styles.statVal}>{u.pushEnabled || 0} / {u.total || 0}</span>
+              <span className={styles.statVal}>{u.pushEnabled || 0} / {u.totalProfiles || 0}</span>
             </div>
             <div className={styles.statRow}>
               <span className={styles.statKey}>Email enabled</span>
-              <span className={styles.statVal}>{u.emailEnabled || 0} / {u.total || 0}</span>
+              <span className={styles.statVal}>{u.emailEnabled || 0} / {u.totalProfiles || 0}</span>
             </div>
             <div className={styles.statRow}>
               <span className={styles.statKey}>Push tokens registered</span>

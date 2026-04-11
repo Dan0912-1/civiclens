@@ -4090,12 +4090,15 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
 
     // User stats
     if (supabase) {
-      const [profiles, bookmarks, pushTokens] = await Promise.all([
+      const [authUsers, profiles, bookmarks, pushTokens] = await Promise.all([
+        supabase.auth.admin.listUsers({ perPage: 1000 }),
         supabase.from('user_profiles').select('id, state, grade, interests, created_at, push_notifications, email_notifications', { count: 'exact' }),
         supabase.from('bookmarks').select('id', { count: 'exact' }),
         supabase.from('push_tokens').select('id, platform', { count: 'exact' }),
       ])
-      stats.users.total = profiles.count || 0
+      const allAuthUsers = authUsers?.data?.users || []
+      stats.users.totalAccounts = allAuthUsers.length
+      stats.users.totalProfiles = profiles.count || 0
       stats.users.bookmarks = bookmarks.count || 0
       stats.users.pushTokens = pushTokens.count || 0
 
@@ -4105,14 +4108,17 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
       const interestMap = {}
       let last24h = 0, last7d = 0, last30d = 0
       const now = Date.now()
+      // Count signups from auth users (more accurate than profiles)
+      for (const u of allAuthUsers) {
+        const age = now - new Date(u.created_at).getTime()
+        if (age < 86400000) last24h++
+        if (age < 604800000) last7d++
+        if (age < 2592000000) last30d++
+      }
       for (const p of (profiles.data || [])) {
         if (p.state) stateMap[p.state] = (stateMap[p.state] || 0) + 1
         if (p.grade) gradeMap[p.grade] = (gradeMap[p.grade] || 0) + 1
         for (const i of (p.interests || [])) interestMap[i] = (interestMap[i] || 0) + 1
-        const age = now - new Date(p.created_at).getTime()
-        if (age < 86400000) last24h++
-        if (age < 604800000) last7d++
-        if (age < 2592000000) last30d++
       }
       stats.users.signups = { last24h, last7d, last30d }
       stats.users.byState = Object.entries(stateMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
