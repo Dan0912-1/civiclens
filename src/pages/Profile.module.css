@@ -311,6 +311,55 @@
   margin-bottom: 4px;
 }
 
+/* Sub-interests */
+.subInterestsSection {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+.subInterestsLabel {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-sm);
+}
+.subInterestGroup {
+  margin-bottom: var(--space-md);
+}
+.subInterestCategory {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 6px;
+}
+.subInterestChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.subInterestChip {
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--white);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.subInterestChip:hover {
+  border-color: var(--navy);
+  color: var(--navy);
+}
+.subInterestChipActive {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: var(--white);
+}
+
 /* Textarea */
 .textarea {
   width: 100%;

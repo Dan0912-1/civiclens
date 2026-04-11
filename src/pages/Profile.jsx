@@ -84,6 +84,32 @@ const EMPLOYMENT_OPTIONS = [
   { value: 'full_time', label: 'Full-time' },
 ]
 
+const CAREER_OPTIONS = [
+  { value: 'healthcare',     label: 'Healthcare / Medicine' },
+  { value: 'education',      label: 'Education / Teaching' },
+  { value: 'tech',           label: 'Tech / Engineering' },
+  { value: 'business',       label: 'Business / Entrepreneurship' },
+  { value: 'arts',           label: 'Arts / Media' },
+  { value: 'law',            label: 'Law / Government' },
+  { value: 'trades',         label: 'Trades / Construction' },
+  { value: 'military',       label: 'Military / Service' },
+  { value: 'science',        label: 'Science / Research' },
+  { value: 'sports',         label: 'Sports / Athletics' },
+  { value: 'undecided',      label: 'Undecided' },
+]
+
+const SUB_INTERESTS = {
+  education:    ['Student loans', 'School safety', 'College access', 'Teacher quality', 'Special ed'],
+  environment:  ['Climate change', 'Clean water', 'Wildlife', 'Renewable energy', 'Pollution'],
+  economy:      ['Minimum wage', 'Student debt', 'Gig economy', 'Cost of living', 'Small business'],
+  healthcare:   ['Mental health', 'Drug costs', 'School health', 'Insurance access', 'Substance abuse'],
+  technology:   ['AI & algorithms', 'Data privacy', 'Social media', 'Broadband access', 'Cybersecurity'],
+  housing:      ['Rent & affordability', 'Homelessness', 'Tenant rights', 'Public housing', 'Zoning'],
+  immigration:  ['DACA & Dreamers', 'Visas', 'Asylum', 'Citizenship', 'Border policy'],
+  civil_rights: ['Voting access', 'Police reform', 'Disability rights', 'LGBTQ rights', 'Equal pay'],
+  community:    ['National service', 'Food assistance', 'Libraries', 'Rural development', 'Nonprofits'],
+}
+
 export default function Profile() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -99,6 +125,8 @@ export default function Profile() {
       employment: 'none',
       familySituation: [],
       interests: [],
+      subInterests: [],
+      career: '',
       additionalContext: '',
     }
     if (!stored) return base
@@ -119,7 +147,20 @@ export default function Profile() {
       ...prev,
       interests: prev.interests.includes(id)
         ? prev.interests.filter(i => i !== id)
-        : [...prev.interests, id]
+        : [...prev.interests, id],
+      // Remove sub-interests for deselected categories
+      subInterests: prev.interests.includes(id)
+        ? prev.subInterests.filter(si => !(SUB_INTERESTS[id] || []).includes(si))
+        : prev.subInterests,
+    }))
+  }
+
+  function toggleSubInterest(sub) {
+    setProfile(prev => ({
+      ...prev,
+      subInterests: prev.subInterests.includes(sub)
+        ? prev.subInterests.filter(s => s !== sub)
+        : [...prev.subInterests, sub]
     }))
   }
 
@@ -277,19 +318,34 @@ export default function Profile() {
               </div>
 
               <div className={styles.field}>
+                <label className={styles.label}>What career are you thinking about? <span className={styles.optional}>(optional)</span></label>
+                <div className={styles.familyGrid}>
+                  {CAREER_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`${styles.familyBtn} ${profile.career === opt.value ? styles.familyBtnActive : ''}`}
+                      onClick={() => setProfile(p => ({ ...p, career: p.career === opt.value ? '' : opt.value }))}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className={styles.field}>
                 <label className={styles.label}>Anything else relevant? <span className={styles.optional}>(optional)</span></label>
                 <textarea
                   className={styles.textarea}
                   placeholder="e.g. I'm on a school sports team, I'm applying to college, I volunteer regularly..."
                   value={profile.additionalContext}
                   onChange={e => setProfile(p => ({ ...p, additionalContext: e.target.value }))}
-                  rows={3}
+                  rows={2}
                 />
               </div>
             </div>
           )}
 
-          {/* Step 3 — Interests */}
+          {/* Step 3 — Interests + Sub-interests */}
           {step === 3 && (
             <div className={styles.stepContent}>
               <h2 className={styles.stepHeading}>What issues matter to you?</h2>
@@ -306,6 +362,36 @@ export default function Profile() {
                   </button>
                 ))}
               </div>
+
+              {/* Sub-interest chips for selected categories */}
+              {profile.interests.length > 0 && (
+                <div className={styles.subInterestsSection}>
+                  <p className={styles.subInterestsLabel}>
+                    Get more specific <span className={styles.optional}>(optional)</span>
+                  </p>
+                  {profile.interests.map(interestId => {
+                    const subs = SUB_INTERESTS[interestId]
+                    if (!subs) return null
+                    const interest = INTERESTS.find(i => i.id === interestId)
+                    return (
+                      <div key={interestId} className={styles.subInterestGroup}>
+                        <span className={styles.subInterestCategory}>{interest?.emoji} {interest?.label}</span>
+                        <div className={styles.subInterestChips}>
+                          {subs.map(sub => (
+                            <button
+                              key={sub}
+                              className={`${styles.subInterestChip} ${profile.subInterests.includes(sub) ? styles.subInterestChipActive : ''}`}
+                              onClick={() => toggleSubInterest(sub)}
+                            >
+                              {sub}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 

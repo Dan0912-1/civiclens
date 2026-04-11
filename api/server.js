@@ -306,7 +306,7 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
 
 // ─── LegiScan API metrics ──────────────────────────────────────────────────
 const lsMetrics = {
-  search: 0, getBill: 0, getBillText: 0, getMasterList: 0, getSessionList: 0,
+  search: 0, searchRaw: 0, getBill: 0, getBillText: 0, getMasterList: 0, getSessionList: 0,
   cacheHitL1: 0, cacheHitL2: 0, cacheMiss: 0,
   _lastLog: Date.now(),
 }
@@ -384,6 +384,33 @@ async function cachedLegiscanSearch(state, query, year = '2', page = '1') {
   // Store in both layers
   setCache(cacheKey, data)
   setSearchCacheToSupabase(cacheKey, data) // fire-and-forget
+  return data
+}
+
+// 3-layer cached searchRaw: returns up to 2000 results per page (vs 50 for search).
+// Uses the same caching infrastructure but with the searchRaw operation for bulk discovery.
+async function cachedLegiscanSearchRaw(state, query, year = '2', page = '1') {
+  const cacheKey = `ls-searchraw-${state}-${query.toLowerCase().trim()}-${year}-${page}`
+
+  // L1: in-memory
+  const memCached = getCache(cacheKey)
+  if (memCached) { lsMetrics.cacheHitL1++; return memCached }
+
+  // L2: Supabase persistent
+  const dbCached = await getSearchCacheFromSupabase(cacheKey)
+  if (dbCached) {
+    lsMetrics.cacheHitL2++
+    setCache(cacheKey, dbCached)
+    return dbCached
+  }
+
+  // L3: LegiScan API — searchRaw returns up to 2000 results per page
+  lsMetrics.cacheMiss++
+  if (lsMetrics.searchRaw !== undefined) lsMetrics.searchRaw++
+  const data = await legiscanRequest('searchRaw', { state, query, year, ...(page !== '1' ? { page } : {}) })
+
+  setCache(cacheKey, data)
+  setSearchCacheToSupabase(cacheKey, data)
   return data
 }
 
@@ -620,7 +647,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
   const valErrors = validateLegislationBody(req.body)
   if (valErrors.length) return res.status(400).json({ error: valErrors.join(', ') })
 
-  const { interests = [], grade, state, interactionSummary } = req.body
+  const { interests = [], grade, state, interactionSummary, subInterests = [], career = '' } = req.body
 
   // ── Optional auth: enables server-side interaction scoring ──
   const user = await getOptionalUser(req)
@@ -647,7 +674,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
     // ── 2. Build search terms: interest terms + discovery terms ──
     const searchTerms = Object.keys(effectiveTopicCounts).length > 0
-      ? buildWeightedSearchTerms(interests, effectiveTopicCounts)
+      ? buildWeightedSearchTerms(interests, effectiveTopicCounts, subInterests, career)
       : buildSearchTerms(interests)
 
     const discoveryTerms = pickDiscoveryTerms(interests)
@@ -663,30 +690,31 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       console.log(`[legislation] Feed cache hit for ${feedCacheKey} (${allBills.length} bills)`)
     } else {
       // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
-      // Interest-matched federal bills (6 terms × 10 results)
+      // Interest-matched federal bills — use searchRaw (2000 results/page vs 50)
+      // to reduce API calls by up to 40x while getting a much larger candidate pool.
       const federalFetches = searchTerms.slice(0, 6).map(term =>
-        cachedLegiscanSearch('US', term)
+        cachedLegiscanSearchRaw('US', term)
+          .then(data => {
+            if (!data.searchresult) return []
+            return Object.values(data.searchresult)
+              .filter(r => r.bill_id)
+              .slice(0, 20) // larger candidate pool from searchRaw
+              .map(hit => transformLegiScanBill(hit, term))
+          })
+          .catch(err => {
+            console.error(`LegiScan searchRaw error for US "${term}":`, err.message)
+            return []
+          })
+      )
+
+      // Discovery federal bills (3 trending terms × 10 results)
+      const discoveryFetches = discoveryTerms.map(term =>
+        cachedLegiscanSearchRaw('US', term)
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
               .filter(r => r.bill_id)
               .slice(0, 10)
-              .map(hit => transformLegiScanBill(hit, term))
-          })
-          .catch(err => {
-            console.error(`LegiScan search error for US "${term}":`, err.message)
-            return []
-          })
-      )
-
-      // Discovery federal bills (3 trending terms × 6 results)
-      const discoveryFetches = discoveryTerms.map(term =>
-        cachedLegiscanSearch('US', term)
-          .then(data => {
-            if (!data.searchresult) return []
-            return Object.values(data.searchresult)
-              .filter(r => r.bill_id)
-              .slice(0, 6)
               .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
           })
           .catch(err => {
@@ -695,18 +723,18 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
           })
       )
 
-      // State bills (6 interest terms × 6 results — need enough to pick 6 after dedup)
+      // State bills — use searchRaw for larger candidate pool
       const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
-        cachedLegiscanSearch(state, term)
+        cachedLegiscanSearchRaw(state, term)
           .then(data => {
             if (!data.searchresult) return []
             return Object.values(data.searchresult)
               .filter(r => r.bill_id)
-              .slice(0, 6)
+              .slice(0, 10)
               .map(hit => transformLegiScanStateBill(hit, term))
           })
           .catch(err => {
-            console.error(`LegiScan search error for ${state} "${term}":`, err.message)
+            console.error(`LegiScan searchRaw error for ${state} "${term}":`, err.message)
             return []
           })
       ) : []
@@ -754,36 +782,52 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       if (emergingInterests.has(bill.searchTerm)) bill._isEmerging = true
     }
 
-    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys: interests }
+    const scoringCtx = { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys: interests, topicCounts: effectiveTopicCounts, userState: state || 'US' }
 
     // ── 6. Score every bill ──
     for (const bill of unique) computeBillScore(bill, scoringCtx)
 
-    // ── 7. Pick exactly 6 federal + 6 state bills ──
+    // ── 7. Pick exactly 6 federal + 6 state bills with diversity enforcement ──
     const TARGET_PER_TYPE = 6
 
     const federalPool = unique.filter(b => !b.isStateBill)
     const statePool = unique.filter(b => b.isStateBill)
-    federalPool.sort((a, b) => b._score - a._score)
-    statePool.sort((a, b) => b._score - a._score)
 
-    const pickedFederal = federalPool.slice(0, TARGET_PER_TYPE)
-    const pickedState = statePool.slice(0, TARGET_PER_TYPE)
+    const pickedFederal = diversifiedSelect(federalPool, TARGET_PER_TYPE, popularBillIds)
+    const pickedState = diversifiedSelect(statePool, TARGET_PER_TYPE, popularBillIds)
 
     // Combine — federal first, then state (frontend separates by tab)
     const balanced = [...pickedFederal, ...pickedState]
 
-    // Clean internal fields but keep _score as `rankScore` for frontend re-ranking.
+    // Clean internal fields but keep _score as `rankScore` and recommendReason
+    // for frontend re-ranking and display.
     // Note: _isDiscovery / _isEmerging are deliberately removed BEFORE caching
     // because they're a function of this specific request's random discovery
     // pick + the current user's interaction history; baking them into a 4-hour
     // shared cache would freeze one user's discovery slate for everyone.
     for (const bill of balanced) {
       bill.rankScore = bill._score
+      // Keep recommendReason for frontend badges
       delete bill._score
       delete bill._isDiscovery
       delete bill._isEmerging
+      delete bill._topicTag
     }
+
+    // ── Diversity metrics logging ──
+    const topicSet = new Set(balanced.map(b => getBillTopic(b)).filter(t => t !== 'Other'))
+    const discoveryCount = balanced.filter(b => b.recommendReason === 'New topic for you').length
+    const topicCounts_ = {}
+    for (const b of balanced) {
+      const t = getBillTopic(b)
+      topicCounts_[t] = (topicCounts_[t] || 0) + 1
+    }
+    const total_ = balanced.length || 1
+    const entropy = -Object.values(topicCounts_).reduce((sum, c) => {
+      const p = c / total_
+      return sum + (p > 0 ? p * Math.log2(p) : 0)
+    }, 0)
+    console.log(`[diversity] topics=${topicSet.size} entropy=${entropy.toFixed(2)} discovery=${discoveryCount}/${total_} reasons=${balanced.map(b => b.recommendReason?.slice(0, 12) || '?').join(',')}`)
 
     const result = { bills: balanced }
 
@@ -796,6 +840,15 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     prefetchBillTexts(result.bills).catch(err =>
       console.error('[prefetch] Background bill text fetch error:', err.message)
     )
+
+    // Speculative pre-personalization: fire background Claude calls for top 3
+    // unseen bills so they're instant when the user taps them. Fire-and-forget.
+    if (req.body) {
+      const profile = { interests, grade, state, subInterests, career,
+        employment: req.body.employment, familySituation: req.body.familySituation,
+        additionalContext: req.body.additionalContext }
+      speculativePersonalize(result.bills.slice(0, 3), profile).catch(() => {})
+    }
 
     logLsMetrics('/api/legislation')
 
@@ -1107,7 +1160,7 @@ OUTPUT — return ONLY this JSON, nothing else:
   "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Concrete: 'your paycheck goes up $X' not 'wages may increase'.",
   "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
   "relevance": <number 1-10>,
-  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Other",
+  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Immigration" | "Community" | "Other",
   "civic_actions": [
     { "action": "Short imperative title", "how": "One sentence with a specific URL/phone/step.", "time": "5 minutes | 15 minutes | 1 hour" }
   ]
@@ -1148,6 +1201,8 @@ function normalizeProfile(profile) {
   const interests = rawInterests.filter(i => VALID_INTERESTS.includes(i))
   const state = US_STATES.includes(profile.state) ? profile.state : ''
   const grade = isValidGrade(profile.grade) ? String(profile.grade) : ''
+  const subInterests = Array.isArray(profile.subInterests) ? profile.subInterests.slice(0, 20) : []
+  const career = typeof profile.career === 'string' ? profile.career.slice(0, 50) : ''
   return {
     ...profile,
     state,
@@ -1155,6 +1210,8 @@ function normalizeProfile(profile) {
     familySituation: familyArr,
     employment,
     interests,
+    subInterests,
+    career,
     additionalContext: sanitizeAdditionalContext(profile.additionalContext),
   }
 }
@@ -1163,7 +1220,8 @@ function buildProfileHashInput(profile) {
   const norm = normalizeProfile(profile)
   const sortedInterests = (norm.interests || []).slice().sort()
   const sortedFamily = norm.familySituation.slice().sort()
-  return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${norm.additionalContext || ''}`
+  const sortedSubs = (norm.subInterests || []).slice().sort()
+  return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${sortedSubs.join(',')}-${norm.career || ''}-${norm.additionalContext || ''}`
 }
 
 // Build a trusted bill object from req.body bill + canonical LegiScan meta.
@@ -1215,12 +1273,18 @@ function buildUserPrompt(profile, bill, billContent) {
   } else {
     gradeLine = `- Grade/age: ${norm.grade}`
   }
+  const careerLabel = norm.career || 'Not specified'
+  const subInterestsLabel = (norm.subInterests && norm.subInterests.length > 0)
+    ? norm.subInterests.join(', ')
+    : 'None specified'
   return `STUDENT PROFILE:
 - State: ${norm.state}
 ${gradeLine}
 - Working: ${employmentLabel}
 - Family situation: ${familyLabel}
 - Top interests: ${(norm.interests || []).join(', ') || 'Not specified'}
+- Specific issues: ${subInterestsLabel}
+- Career direction: ${careerLabel}
 - Other context: ${norm.additionalContext || 'None provided'}
 
 BILL:
@@ -3044,6 +3108,60 @@ async function prefetchBillTexts(bills) {
   )
 }
 
+// ─── Speculative pre-personalization ─────────────────────────────────────────
+// After serving the feed, fire background Claude calls for top N bills so
+// personalization is cached before the user taps them. Respects hourly cap.
+async function speculativePersonalize(bills, profile) {
+  const norm = normalizeProfile(profile)
+  for (const bill of bills) {
+    const identity = billIdentityKey(bill)
+    const hashInput = buildProfileHashInput(norm)
+    const hash = require('crypto').createHash('md5').update(hashInput).digest('hex').slice(0, 12)
+    const cacheKey = `v8-personalize-${identity}-${hash}`
+    // Skip if already cached
+    const cached = getCache(cacheKey) || await getSupabaseCache(cacheKey)
+    if (cached) continue
+    // Check quota
+    if (!tryConsumeAnthropicQuota()) break
+    try {
+      const type = bill.type?.toLowerCase().replace(/\./g, '') || ''
+      const content = await fetchBillContent(bill.congress, type, bill.number, bill.legiscan_bill_id)
+      const billText = content?.text || ''
+      const trustedBill = buildTrustedBill(bill, null)
+      const userPrompt = buildUserPrompt(norm, trustedBill, billText)
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 700,
+          temperature: 0.4,
+          system: PERSONALIZE_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!resp.ok) continue
+      const data = await resp.json()
+      const text = data.content?.[0]?.text || ''
+      const parsed = extractJson(text)
+      if (parsed) {
+        const result = { analysis: parsed }
+        setCache(cacheKey, result)
+        setSupabaseCache(cacheKey, identity, String(norm.grade), (norm.interests || []).slice().sort(), result)
+        console.log(`[speculative] Pre-personalized ${identity}`)
+      }
+    } catch (err) {
+      console.error(`[speculative] Failed for ${bill.type}${bill.number}:`, err.message)
+    }
+    await new Promise(r => setTimeout(r, 500)) // gentle pacing
+  }
+}
+
 // ─── Deduplicate companion bills (Senate/House versions, amended versions) ──
 // Bills with very similar titles are likely companion bills or amended versions.
 // Keep the one with the most recent action date.
@@ -3160,6 +3278,69 @@ const INTEREST_MAP = {
   ],
 }
 
+// Sub-interest → specific LegiScan search terms for narrower matching
+const SUB_INTEREST_TERMS = {
+  'Student loans': ['student loan', 'student debt', 'loan forgiveness'],
+  'School safety': ['school safety', 'school shooting', 'school security'],
+  'College access': ['college tuition', 'Pell Grant', 'college affordability'],
+  'Teacher quality': ['teacher pay', 'teacher certification', 'educator'],
+  'Special ed': ['special education', 'disability education', 'IEP'],
+  'Climate change': ['climate change', 'carbon emissions', 'greenhouse gas'],
+  'Clean water': ['water quality', 'clean water', 'water pollution'],
+  'Wildlife': ['wildlife conservation', 'endangered species', 'biodiversity'],
+  'Renewable energy': ['renewable energy', 'solar energy', 'wind energy'],
+  'Pollution': ['pollution', 'air quality', 'toxic waste'],
+  'Minimum wage': ['minimum wage', 'wage increase', 'living wage'],
+  'Student debt': ['student debt', 'student loan', 'debt relief'],
+  'Gig economy': ['gig economy', 'independent contractor', 'gig worker'],
+  'Cost of living': ['cost of living', 'inflation', 'consumer price'],
+  'Small business': ['small business', 'entrepreneurship', 'SBA'],
+  'Mental health': ['mental health', 'behavioral health', 'suicide prevention'],
+  'Drug costs': ['prescription drug', 'drug pricing', 'pharmaceutical'],
+  'School health': ['student health', 'school nurse', 'school nutrition'],
+  'Insurance access': ['health insurance', 'medicaid', 'ACA'],
+  'Substance abuse': ['substance abuse', 'opioid', 'drug addiction'],
+  'AI & algorithms': ['artificial intelligence', 'algorithm', 'machine learning'],
+  'Data privacy': ['data privacy', 'privacy protection', 'personal data'],
+  'Social media': ['social media', 'online platform', 'content moderation'],
+  'Broadband access': ['broadband', 'internet access', 'digital divide'],
+  'Cybersecurity': ['cybersecurity', 'cyber attack', 'data breach'],
+  'Rent & affordability': ['affordable housing', 'rent assistance', 'rent control'],
+  'Homelessness': ['homelessness', 'homeless shelter', 'housing first'],
+  'Tenant rights': ['tenant rights', 'renter protection', 'eviction'],
+  'Public housing': ['public housing', 'housing authority', 'section 8'],
+  'Zoning': ['zoning reform', 'land use', 'housing development'],
+  'DACA & Dreamers': ['DACA', 'dreamer', 'deferred action'],
+  'Visas': ['student visa', 'work permit', 'visa program'],
+  'Asylum': ['asylum', 'refugee', 'protection status'],
+  'Citizenship': ['citizenship', 'naturalization', 'path to citizenship'],
+  'Border policy': ['border security', 'border wall', 'immigration enforcement'],
+  'Voting access': ['voting rights', 'voter registration', 'election access'],
+  'Police reform': ['police reform', 'law enforcement', 'use of force'],
+  'Disability rights': ['disability rights', 'ADA', 'accessibility'],
+  'LGBTQ rights': ['LGBTQ', 'marriage equality', 'gender identity'],
+  'Equal pay': ['equal pay', 'wage gap', 'pay equity'],
+  'National service': ['national service', 'AmeriCorps', 'volunteer'],
+  'Food assistance': ['food assistance', 'SNAP', 'school lunch'],
+  'Libraries': ['public library', 'library funding', 'library services'],
+  'Rural development': ['rural development', 'rural broadband', 'farm community'],
+  'Nonprofits': ['nonprofit', 'charitable', 'community organization'],
+}
+
+// Career → relevant search terms for bill discovery
+const CAREER_MAP = {
+  healthcare: ['nursing', 'medical school', 'healthcare workforce', 'hospital'],
+  education: ['teacher certification', 'education funding', 'school'],
+  tech: ['computer science', 'STEM', 'technology workforce', 'coding'],
+  business: ['small business', 'entrepreneurship', 'SBA', 'startup'],
+  arts: ['arts funding', 'NEA', 'creative economy', 'media'],
+  law: ['legal aid', 'judicial', 'law school', 'public defender'],
+  trades: ['apprenticeship', 'workforce training', 'vocational', 'construction'],
+  military: ['military', 'veteran', 'GI Bill', 'defense'],
+  science: ['research funding', 'NSF', 'NIH', 'STEM'],
+  sports: ['athletics', 'Title IX', 'sports safety', 'NCAA'],
+}
+
 // Map interest categories to LegiScan subject names for scoring boost.
 // When a bill's subjects match a user's interests, boost its score even
 // if the keyword search term didn't match directly.
@@ -3175,21 +3356,153 @@ const INTEREST_TO_SUBJECTS = {
   community:    ['Social Welfare', 'Agriculture and Food'],
 }
 
+// ─── Diversified bill selection ──────────────────────────────────────────────
+
+// Infer a bill's topic from cached personalization, policyArea, or title regex
+function getBillTopic(bill) {
+  if (bill._topicTag) return bill._topicTag
+  // Check cached personalization for topic_tag
+  if (bill.legiscan_bill_id) {
+    const cached = getCache(`bill-ls-${bill.legiscan_bill_id}`)
+    if (cached?.bill?.subjects?.[0]) {
+      // Map first subject to interest category
+      for (const [interest, subs] of Object.entries(INTEREST_TO_SUBJECTS)) {
+        const subName = cached.bill.subjects[0].subject_name || cached.bill.subjects[0]
+        if (subs.includes(subName)) return TAG_TO_INTEREST_REVERSE[interest] || interest
+      }
+    }
+  }
+  if (bill.policyArea) {
+    const cat = POLICY_AREA_TO_CATEGORY[bill.policyArea]
+    if (cat) {
+      const tagMap = { education: 'Education', environment: 'Environment', economy: 'Economy',
+        healthcare: 'Healthcare', technology: 'Technology', housing: 'Housing',
+        immigration: 'Immigration', civil_rights: 'Civil Rights', community: 'Community' }
+      return tagMap[cat] || 'Other'
+    }
+  }
+  return 'Other'
+}
+
+// Reverse mapping: interest key → topic tag name
+const TAG_TO_INTEREST_REVERSE = {
+  education: 'Education', environment: 'Environment', economy: 'Economy',
+  healthcare: 'Healthcare', technology: 'Technology', housing: 'Housing',
+  immigration: 'Immigration', civil_rights: 'Civil Rights', community: 'Community',
+}
+
+// Replace pure score sorting with greedy diversified selection.
+// Guarantees topic variety: 2 exploit → 2 diversity → 1 discovery → 1 fill.
+function diversifiedSelect(pool, targetCount, popularBillIds) {
+  if (pool.length <= targetCount) {
+    pool.sort((a, b) => b._score - a._score)
+    for (const bill of pool) {
+      bill._topicTag = getBillTopic(bill)
+      bill.recommendReason = bill.recommendReason || 'Matches your interests'
+    }
+    return pool
+  }
+
+  const sorted = [...pool].sort((a, b) => b._score - a._score)
+  // Pre-compute topic tags
+  for (const bill of sorted) bill._topicTag = getBillTopic(bill)
+
+  const selected = []
+  const topicsUsed = new Set()
+  const usedIds = new Set()
+
+  const pick = (bill, reason) => {
+    selected.push(bill)
+    topicsUsed.add(bill._topicTag)
+    usedIds.add(bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`)
+    bill.recommendReason = reason
+  }
+
+  // Phase 1 (slots 1-2): Top 2 by pure score — exploitation
+  for (const bill of sorted) {
+    if (selected.length >= 2) break
+    if (usedIds.has(bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`)) continue
+    pick(bill, 'Matches your interests')
+  }
+
+  // Phase 2 (slots 3-4): Next 2 with different topic tags — diversity injection
+  for (const bill of sorted) {
+    if (selected.length >= 4) break
+    const id = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+    if (usedIds.has(id)) continue
+    if (!topicsUsed.has(bill._topicTag)) {
+      const billKey = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+      const reason = popularBillIds.has(billKey) ? 'Trending among students' : 'Expanding your view'
+      pick(bill, reason)
+    }
+  }
+
+  // Phase 3 (slot 5): Highest-scoring discovery bill
+  for (const bill of sorted) {
+    if (selected.length >= 5) break
+    const id = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+    if (usedIds.has(id)) continue
+    if (bill._isDiscovery) {
+      pick(bill, 'New topic for you')
+      break
+    }
+  }
+
+  // Phase 4 (remaining): Fill from highest-scored remaining bills
+  for (const bill of sorted) {
+    if (selected.length >= targetCount) break
+    const id = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+    if (usedIds.has(id)) continue
+    const billKey = bill.legiscan_bill_id || `${bill.state}-${bill.type}${bill.number}`
+    const reason = popularBillIds.has(billKey) ? 'Trending among students' : 'Based on your activity'
+    pick(bill, reason)
+  }
+
+  return selected
+}
+
 // ─── Hybrid Interest-Discovery scoring ──────────────────────────────────────
 
 const INTERACTION_PENALTY_WEIGHTS = { view_detail: 0.2, expand_card: 0.4, bookmark: 0.8 }
 
 // Env-configurable scoring weights — tune in production without redeploying
 const SCORE_WEIGHTS = {
-  interest:   parseFloat(process.env.W_INTEREST)   || 0.35,
-  freshness:  parseFloat(process.env.W_FRESHNESS)  || 0.20,
-  serendipity:parseFloat(process.env.W_SERENDIPITY)|| 0.15,
-  penalty:    parseFloat(process.env.W_PENALTY)    || 0.15,
-  popularity: parseFloat(process.env.W_POPULARITY) || 0.15,
+  interest:      parseFloat(process.env.W_INTEREST)       || 0.25,
+  freshness:     parseFloat(process.env.W_FRESHNESS)      || 0.15,
+  serendipity:   parseFloat(process.env.W_SERENDIPITY)    || 0.07,
+  penalty:       parseFloat(process.env.W_PENALTY)        || 0.13,
+  popularity:    parseFloat(process.env.W_POPULARITY)     || 0.08,
+  stateRelevance:parseFloat(process.env.W_STATE)          || 0.12,
+  topicAffinity: parseFloat(process.env.W_TOPIC_AFFINITY) || 0.10,
+  momentum:      parseFloat(process.env.W_MOMENTUM)       || 0.10,
 }
 const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
 
-function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys }) {
+// Map bill status stages to momentum scores — further along = more impactful
+const STATUS_MOMENTUM = {
+  'Signed/Enacted':  1.0,
+  'Passed Both':     0.95,
+  'Passed Chamber':  0.85,
+  'Floor Vote':      0.80,
+  'Reported':        0.70,
+  'In Committee':    0.50,
+  'Markup':          0.50,
+  'Introduced':      0.30,
+}
+
+// Map subjects to states with heightened geographic relevance
+const STATE_SUBJECT_AFFINITY = {
+  'Agriculture and Food':                ['IA','IL','IN','NE','KS','MN','ND','SD','WI','MO','TX','AR'],
+  'Energy':                              ['TX','ND','OK','WY','NM','PA','WV','LA','CO','AK'],
+  'Public Lands and Natural Resources':  ['AK','NV','UT','ID','OR','WY','MT','AZ','CO','NM'],
+  'Armed Forces and National Security':  ['VA','TX','CA','NC','GA','FL','WA','HI','CO','MD'],
+  'Immigration':                         ['TX','CA','AZ','NM','FL','NY','IL','NJ'],
+  'Native Americans':                    ['AZ','NM','OK','SD','MT','AK','WA','MN','WI','NC'],
+  'Water Resources Development':         ['CA','AZ','CO','NV','TX','FL'],
+  'Environmental Protection':            ['CA','WA','OR','CO','VT','MA'],
+}
+
+function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys, topicCounts, userState }) {
   // InterestScore (0–1): how well does this bill match the user's interests?
   let interestScore = 0.3 // base/default
   if (interestTerms.has(bill.searchTerm)) interestScore = 1.0
@@ -3198,11 +3511,10 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
 
   // Subject-based boost: if the bill has LegiScan subjects that match the user's
   // interests, boost the interestScore even if the search term didn't match.
-  // This catches bills found via broad keywords that are actually highly relevant.
-  if (interestScore < 0.8 && bill.legiscan_bill_id && userInterestKeys?.length) {
-    const cached = getCache(`bill-ls-${bill.legiscan_bill_id}`)
-    const subjects = cached?.bill?.subjects || []
-    const subjectNames = new Set(subjects.map(s => s.subject_name || s))
+  const cached = bill.legiscan_bill_id ? getCache(`bill-ls-${bill.legiscan_bill_id}`) : null
+  const subjects = cached?.bill?.subjects || []
+  const subjectNames = new Set(subjects.map(s => s.subject_name || s))
+  if (interestScore < 0.8 && subjectNames.size > 0 && userInterestKeys?.length) {
     for (const interest of userInterestKeys) {
       const matchSubjects = INTEREST_TO_SUBJECTS[interest] || []
       if (matchSubjects.some(s => subjectNames.has(s))) {
@@ -3223,7 +3535,7 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
   if (interactions) {
     for (const { action_type, daysSince } of interactions) {
       const base = INTERACTION_PENALTY_WEIGHTS[action_type] || 0
-      const decayed = base * Math.exp(-daysSince / 14) // penalty halves every ~2 weeks
+      const decayed = base * Math.exp(-daysSince / 14)
       interactionPenalty = Math.max(interactionPenalty, decayed)
     }
   }
@@ -3234,10 +3546,48 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
   // PopularityBoost (0–1): collaborative signal from other students
   const popularityBoost = popularBillIds.has(billKey) ? 0.7 : 0
 
+  // TopicAffinityScore (0–1): boost bills matching topics user actually engages with
+  let topicAffinityScore = 0
+  if (topicCounts && Object.keys(topicCounts).length > 0) {
+    // Infer bill topic from cached personalization or policy area
+    const billTopic = bill._topicTag || bill.policyArea || null
+    if (billTopic) {
+      const totalInteractions = Object.values(topicCounts).reduce((a, b) => a + b, 0)
+      if (totalInteractions > 0) {
+        const tagCount = topicCounts[billTopic] || 0
+        topicAffinityScore = Math.min(1, (tagCount / totalInteractions) * 2)
+      }
+    }
+  }
+
+  // StateRelevance (0–1): geographic relevance based on sponsors + subject affinity
+  let stateRelevance = 0
+  if (userState && cached?.bill) {
+    const sponsors = cached.bill.sponsors || []
+    if (sponsors.length > 0 && sponsors[0].state === userState) {
+      stateRelevance = 0.5 // primary sponsor from student's state
+    } else if (sponsors.some(s => s.state === userState)) {
+      stateRelevance = 0.3 // cosponsor from student's state
+    }
+    // Subject-state affinity boost
+    for (const [subject, states] of Object.entries(STATE_SUBJECT_AFFINITY)) {
+      if (states.includes(userState) && subjectNames.has(subject)) {
+        stateRelevance = Math.min(1, stateRelevance + 0.2)
+        break
+      }
+    }
+  }
+
+  // MomentumScore (0–1): bills further in the legislative process are more impactful
+  const momentumScore = STATUS_MOMENTUM[bill.statusStage] || 0.3
+
   const total = (interestScore * SCORE_WEIGHTS.interest)
     + (freshnessScore * SCORE_WEIGHTS.freshness)
     + (serendipityBonus * SCORE_WEIGHTS.serendipity)
     + (popularityBoost * SCORE_WEIGHTS.popularity)
+    + (topicAffinityScore * SCORE_WEIGHTS.topicAffinity)
+    + (stateRelevance * SCORE_WEIGHTS.stateRelevance)
+    + (momentumScore * SCORE_WEIGHTS.momentum)
     - (interactionPenalty * SCORE_WEIGHTS.penalty)
 
   bill._score = total
@@ -3365,6 +3715,8 @@ const TAG_TO_INTEREST = {
   'Technology': 'technology',
   'Housing': 'housing',
   'Civil Rights': 'civil_rights',
+  'Immigration': 'immigration',
+  'Community': 'community',
   'Other': null,
 }
 
@@ -3409,7 +3761,7 @@ function buildSearchTerms(interests = []) {
   return unique.slice(0, 7) // increased from 5 → 7 with expanded vocabulary
 }
 
-function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
+function buildWeightedSearchTerms(interests = [], topicCounts = {}, subInterests = [], career = '') {
   const base = ['student loan', 'education funding', 'youth']
   // Only use base terms when user has no selected interests
   const terms = interests.length === 0 ? [...base] : []
@@ -3419,6 +3771,17 @@ function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   for (const [tag, count] of Object.entries(topicCounts)) {
     const key = TAG_TO_INTEREST[tag]
     if (key) interestCounts[key] = (interestCounts[key] || 0) + count
+  }
+
+  // Sub-interests: inject specific terms FIRST (highest signal, narrowest match)
+  for (const sub of subInterests) {
+    const subTerms = SUB_INTEREST_TERMS[sub]
+    if (subTerms) terms.push(subTerms[0]) // top term per sub-interest
+  }
+
+  // Career: inject career-specific terms
+  if (career && CAREER_MAP[career]) {
+    terms.push(CAREER_MAP[career][0])
   }
 
   // High-engagement interests (>5 interactions): include all terms
@@ -3450,7 +3813,7 @@ function buildWeightedSearchTerms(interests = [], topicCounts = {}) {
   const rng = seededRng(todaySeed() + unique.length)
   seededShuffle(unique, rng)
 
-  return unique.slice(0, 9) // increased from 7 → 9 with expanded vocabulary
+  return unique.slice(0, 11) // expanded from 9 → 11 for sub-interests + career
 }
 
 // ─── Auto-create bill_text_cache table if missing ──────────────────────────

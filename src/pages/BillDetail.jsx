@@ -30,6 +30,8 @@ const TAG_COLORS = {
   Technology:    'red',
   Housing:       'orange',
   'Civil Rights':'violet',
+  Immigration:   'amber',
+  Community:     'slate',
   Other:         'gray',
 }
 

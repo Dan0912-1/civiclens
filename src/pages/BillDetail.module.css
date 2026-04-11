@@ -56,6 +56,8 @@
 .tag_red    { color: var(--tag-technology); }
 .tag_orange { color: var(--tag-housing); }
 .tag_violet { color: var(--tag-civil_rights); }
+.tag_amber  { color: var(--tag-immigration); }
+.tag_slate  { color: var(--tag-community); }
 .tag_gray   { color: var(--tag-other); }
 
 .billId {

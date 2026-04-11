@@ -18,6 +18,8 @@ const TAG_COLORS = {
   Technology:   'red',
   Housing:      'orange',
   'Civil Rights':'violet',
+  Immigration:  'amber',
+  Community:    'slate',
   Other:        'gray',
 }
 
@@ -154,6 +156,9 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
             <span className={`${styles.tag} ${styles[`tag_${tagColor}`]}`}>
               {analysis.topic_tag}
             </span>
+          )}
+          {bill.recommendReason && (
+            <span className={styles.recommendReason}>{bill.recommendReason}</span>
           )}
           <span className={styles.billNum}>
             {bill.type} {bill.number}{bill.isStateBill ? ` · ${bill.state}` : ` · ${bill.congress}th Congress`}

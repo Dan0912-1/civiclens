@@ -42,6 +42,8 @@
 .tag_red   .accentLine { background: var(--tag-technology); }
 .tag_orange .accentLine { background: var(--tag-housing); }
 .tag_violet .accentLine { background: var(--tag-civil_rights); }
+.tag_amber  .accentLine { background: var(--tag-immigration); }
+.tag_slate  .accentLine { background: var(--tag-community); }
 .tag_gray  .accentLine { background: var(--tag-other); }
 
 /* Header */
@@ -82,7 +84,17 @@
 .tag_red    { color: var(--tag-technology); border-color: var(--tag-technology); }
 .tag_orange { color: var(--tag-housing); border-color: var(--tag-housing); }
 .tag_violet { color: var(--tag-civil_rights); border-color: var(--tag-civil_rights); }
+.tag_amber  { color: var(--tag-immigration); border-color: var(--tag-immigration); }
+.tag_slate  { color: var(--tag-community); border-color: var(--tag-community); }
 .tag_gray   { color: var(--tag-other); border-color: var(--border); }
+
+.recommendReason {
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
 
 .billNum {
   font-family: var(--font-mono);

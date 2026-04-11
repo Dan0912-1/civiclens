@@ -230,6 +230,8 @@ export default function Results() {
         interests: profile.interests,
         grade: profile.grade,
         state: profile.state,
+        subInterests: profile.subInterests || [],
+        career: profile.career || '',
       }
       if (interactionSummary && interactionSummary.totalInteractions > 0) {
         body.interactionSummary = interactionSummary
