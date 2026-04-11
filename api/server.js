@@ -65,7 +65,9 @@ const ALLOWED_ORIGINS = new Set([
   'https://localhost',                  // Android Capacitor app
   'http://localhost:5173',              // Vite dev server
   'http://localhost:4173',              // Vite preview
-  'https://capitolkey.vercel.app',      // Production (post-rename)
+  'https://capitolkey.org',              // Custom domain
+  'https://www.capitolkey.org',          // www variant
+  'https://capitolkey.vercel.app',       // Production (post-rename)
   'https://civiclens-six.vercel.app',   // Legacy Vercel URL — kept to honor
                                         //   old shared links and cached SW
   ...(EXTRA_ORIGIN ? [EXTRA_ORIGIN] : []),
@@ -78,7 +80,7 @@ app.use(cors({
     callback(new Error(`CORS: origin ${origin} not allowed`))
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-admin-token'],
 }))
 
 app.use(compression())
