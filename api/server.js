@@ -4072,6 +4072,150 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   res.json({ ok: true })
 })
 
+// ─── Admin Stats ────────────────────────────────────────────────────────────
+// Protected by ADMIN_SECRET env var — set this on Railway for production
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'dev-admin-secret'
+
+function requireAdmin(req, res, next) {
+  const token = req.headers['x-admin-token'] || req.query.token
+  if (token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
+  next()
+}
+
+app.get('/api/admin/stats', requireAdmin, async (req, res) => {
+  try {
+    const stats = { users: {}, bills: {}, cache: {}, api: {}, feedback: {}, interactions: {} }
+
+    // User stats
+    if (supabase) {
+      const [profiles, bookmarks, pushTokens] = await Promise.all([
+        supabase.from('user_profiles').select('id, state, grade, interests, created_at, push_notifications, email_notifications', { count: 'exact' }),
+        supabase.from('bookmarks').select('id', { count: 'exact' }),
+        supabase.from('push_tokens').select('id, platform', { count: 'exact' }),
+      ])
+      stats.users.total = profiles.count || 0
+      stats.users.bookmarks = bookmarks.count || 0
+      stats.users.pushTokens = pushTokens.count || 0
+
+      // Breakdown by state (top 10)
+      const stateMap = {}
+      const gradeMap = {}
+      const interestMap = {}
+      let last24h = 0, last7d = 0, last30d = 0
+      const now = Date.now()
+      for (const p of (profiles.data || [])) {
+        if (p.state) stateMap[p.state] = (stateMap[p.state] || 0) + 1
+        if (p.grade) gradeMap[p.grade] = (gradeMap[p.grade] || 0) + 1
+        for (const i of (p.interests || [])) interestMap[i] = (interestMap[i] || 0) + 1
+        const age = now - new Date(p.created_at).getTime()
+        if (age < 86400000) last24h++
+        if (age < 604800000) last7d++
+        if (age < 2592000000) last30d++
+      }
+      stats.users.signups = { last24h, last7d, last30d }
+      stats.users.byState = Object.entries(stateMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
+      stats.users.byGrade = Object.entries(gradeMap).sort((a, b) => b[1] - a[1])
+      stats.users.byInterest = Object.entries(interestMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
+
+      // Push/email adoption
+      const pushEnabled = (profiles.data || []).filter(p => p.push_notifications).length
+      const emailEnabled = (profiles.data || []).filter(p => p.email_notifications).length
+      stats.users.pushEnabled = pushEnabled
+      stats.users.emailEnabled = emailEnabled
+
+      // Platform breakdown
+      const platformMap = {}
+      for (const t of (pushTokens.data || [])) platformMap[t.platform] = (platformMap[t.platform] || 0) + 1
+      stats.users.platforms = platformMap
+    }
+
+    // Bill/cache stats
+    if (supabase) {
+      const [personCache, searchCache, billCache, textCache, curatedBills, billTopics, interactions] = await Promise.all([
+        supabase.from('personalization_cache').select('id', { count: 'exact' }),
+        supabase.from('search_cache').select('id', { count: 'exact' }),
+        supabase.from('bill_cache').select('id', { count: 'exact' }),
+        supabase.from('bill_text_cache').select('id', { count: 'exact' }),
+        supabase.from('curated_bills').select('id, interest_category', { count: 'exact' }),
+        supabase.from('bill_topics').select('id', { count: 'exact' }),
+        supabase.from('bill_interactions').select('action_type, topic_tag, created_at'),
+      ])
+      stats.bills.curated = curatedBills.count || 0
+      stats.bills.topics = billTopics.count || 0
+      stats.cache.personalizations = personCache.count || 0
+      stats.cache.searches = searchCache.count || 0
+      stats.cache.bills = billCache.count || 0
+      stats.cache.billTexts = textCache.count || 0
+      stats.cache.inMemory = cache.size
+
+      // Curated bill categories
+      const catMap = {}
+      for (const b of (curatedBills.data || [])) {
+        if (b.interest_category) catMap[b.interest_category] = (catMap[b.interest_category] || 0) + 1
+      }
+      stats.bills.byCategory = Object.entries(catMap).sort((a, b) => b[1] - a[1])
+
+      // Interaction breakdown
+      const actionMap = {}
+      const topicMap = {}
+      let int24h = 0, int7d = 0
+      const now = Date.now()
+      for (const i of (interactions.data || [])) {
+        actionMap[i.action_type] = (actionMap[i.action_type] || 0) + 1
+        if (i.topic_tag) topicMap[i.topic_tag] = (topicMap[i.topic_tag] || 0) + 1
+        const age = now - new Date(i.created_at).getTime()
+        if (age < 86400000) int24h++
+        if (age < 604800000) int7d++
+      }
+      stats.interactions.total = (interactions.data || []).length
+      stats.interactions.last24h = int24h
+      stats.interactions.last7d = int7d
+      stats.interactions.byAction = actionMap
+      stats.interactions.byTopic = Object.entries(topicMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
+    }
+
+    // Feedback stats
+    if (supabase) {
+      const { data: fb, count: fbCount } = await supabase
+        .from('feedback').select('type, created_at', { count: 'exact' })
+      stats.feedback.total = fbCount || 0
+      const typeMap = {}
+      for (const f of (fb || [])) typeMap[f.type] = (typeMap[f.type] || 0) + 1
+      stats.feedback.byType = typeMap
+    }
+
+    // API metrics (in-memory)
+    stats.api.legiScan = { ...lsMetrics, _lastLog: undefined }
+    stats.api.anthropicCallsThisHour = _anthropicCallLog.length
+    stats.api.anthropicHourlyCap = ANTHROPIC_HOURLY_CAP
+
+    // Server uptime
+    stats.server = {
+      uptime: Math.round(process.uptime()),
+      memoryMB: Math.round(process.memoryUsage().heapUsed / 1048576),
+      nodeVersion: process.version,
+    }
+
+    res.json(stats)
+  } catch (err) {
+    console.error('[admin/stats]', err.message)
+    res.status(500).json({ error: 'Failed to fetch stats' })
+  }
+})
+
+// Recent feedback for admin review
+app.get('/api/admin/feedback', requireAdmin, async (req, res) => {
+  if (!supabase) return res.json({ data: [] })
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200)
+  const { data, error } = await supabase
+    .from('feedback')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit)
+  if (error) return res.status(500).json({ error: error.message })
+  res.json({ data })
+})
+
 const PORT = process.env.PORT || 3001
 const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)

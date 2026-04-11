@@ -20,6 +20,7 @@ const Terms = lazy(() => import('./pages/Terms.jsx'))
 const Search = lazy(() => import('./pages/Search.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
+const Admin = lazy(() => import('./pages/Admin.jsx'))
 
 function PageLoader() {
   return (
@@ -50,6 +51,7 @@ const PAGE_TITLES = {
   '/privacy': 'Privacy Policy | CapitolKey',
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
+  '/admin': 'Admin | CapitolKey',
 }
 
 function NotFound() {
@@ -253,6 +255,7 @@ export default function App() {
           <Route path="/privacy"   element={<Privacy />} />
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
+          <Route path="/admin"     element={<Admin />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
