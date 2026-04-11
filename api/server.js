@@ -11,6 +11,7 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
+import { runDailySync, runBackfill } from './billSync.js'
 // pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
@@ -568,6 +569,89 @@ function transformLegiScanStateBill(hit, searchTerm = '') {
   }
 }
 
+// ─── Local bills DB query ─────────────────────────────────────────────────────
+// Queries the pre-populated bills table instead of hitting LegiScan at runtime.
+// Returns bills in the same shape that transformLegiScanBill/StateBill produces.
+async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searchTerms) {
+  if (!supabase) return []
+
+  try {
+    // Fetch federal bills matching user's interest topics
+    const { data: federalBills, error: fedErr } = await supabase
+      .from('bills')
+      .select('*')
+      .eq('jurisdiction', 'US')
+      .overlaps('topics', interests)
+      .order('updated_at', { ascending: false })
+      .limit(30)
+
+    if (fedErr) { console.error('[localDB] Federal query error:', fedErr.message); return [] }
+
+    // Fetch discovery bills (topics NOT in user's interests) for diversity
+    const allTopics = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
+    const discoveryTopics = allTopics.filter(t => !interests.includes(t))
+    const { data: discoveryBills } = await supabase
+      .from('bills')
+      .select('*')
+      .eq('jurisdiction', 'US')
+      .overlaps('topics', discoveryTopics.slice(0, 3))
+      .order('updated_at', { ascending: false })
+      .limit(10)
+
+    // Fetch state bills if applicable
+    let stateBills = []
+    if (userState && userState !== 'US') {
+      const { data } = await supabase
+        .from('bills')
+        .select('*')
+        .eq('jurisdiction', userState)
+        .overlaps('topics', interests)
+        .order('updated_at', { ascending: false })
+        .limit(20)
+      stateBills = data || []
+    }
+
+    // Transform DB rows into the shape scoring logic expects
+    const transform = (row, isDiscovery = false) => {
+      const isState = row.jurisdiction !== 'US'
+      const matchedTopic = (row.topics || []).find(t => interests.includes(t)) || row.topics?.[0] || ''
+      return {
+        congress: isState ? 0 : parseInt(row.session, 10) || 119,
+        type: row.bill_type,
+        number: row.bill_number,
+        title: row.title || '',
+        originChamber: row.origin_chamber || 'House',
+        latestAction: row.latest_action || 'No recent action',
+        latestActionDate: row.latest_action_date || '',
+        url: row.url || '',
+        updateDate: row.updated_at || '',
+        searchTerm: matchedTopic,
+        legiscan_bill_id: row.legiscan_bill_id || null,
+        state: row.jurisdiction,
+        isStateBill: isState,
+        statusStage: row.status_stage || 'introduced',
+        _isDiscovery: isDiscovery,
+        // Extra fields from local DB that help personalization skip API calls
+        _localText: row.full_text || null,
+        _localCrsSummary: row.crs_summary || null,
+        _localTextWordCount: row.text_word_count || 0,
+        _localTextVersion: row.text_version || null,
+      }
+    }
+
+    const results = [
+      ...(federalBills || []).map(b => transform(b)),
+      ...(discoveryBills || []).map(b => transform(b, true)),
+      ...stateBills.map(b => transform(b)),
+    ]
+
+    return results
+  } catch (err) {
+    console.error('[localDB] Query error:', err.message)
+    return []
+  }
+}
+
 // ─── Health checks ────────────────────────────────────────────────────────────
 // Railway's proxy verifies GET / to confirm the service is up
 app.get('/', (req, res) => {
@@ -722,19 +806,27 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       allBills = cachedFeed.bills.map(b => ({ ...b }))
       console.log(`[legislation] Feed cache hit for ${feedCacheKey} (${allBills.length} bills)`)
     } else {
-      // Dedup: if another request for the same feed is already fetching from
-      // LegiScan, share its result instead of firing duplicate API calls.
+      // ── 3b. Try local bills DB first (populated by daily sync cron) ──
+      // Falls back to LegiScan if DB is empty (during initial backfill period).
       allBills = await dedup(`feed-${feedCacheKey}`, async () => {
-        // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
-        // Interest-matched federal bills — use searchRaw (2000 results/page vs 50)
-        // to reduce API calls by up to 40x while getting a much larger candidate pool.
+        if (supabase) {
+          const localBills = await fetchBillsFromLocalDB(interests, state, discoveryTerms, searchTerms)
+          if (localBills.length >= 5) {
+            console.log(`[legislation] Local DB hit: ${localBills.length} bills for ${feedCacheKey}`)
+            return localBills
+          }
+          // Fewer than 5 bills = DB not yet populated, fall through to LegiScan
+          console.log(`[legislation] Local DB only has ${localBills.length} bills, falling back to LegiScan`)
+        }
+
+        // ── Fallback: Fetch from LegiScan (used during backfill period) ──
         const federalFetches = searchTerms.slice(0, 6).map(term =>
           cachedLegiscanSearchRaw('US', term)
             .then(data => {
               if (!data.searchresult) return []
               return Object.values(data.searchresult)
                 .filter(r => r.bill_id)
-                .slice(0, 20) // larger candidate pool from searchRaw
+                .slice(0, 20)
                 .map(hit => transformLegiScanBill(hit, term))
             })
             .catch(err => {
@@ -743,7 +835,6 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
             })
         )
 
-        // Discovery federal bills (3 trending terms × 10 results)
         const discoveryFetches = discoveryTerms.map(term =>
           cachedLegiscanSearchRaw('US', term)
             .then(data => {
@@ -759,7 +850,6 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
             })
         )
 
-        // State bills — use searchRaw for larger candidate pool
         const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
           cachedLegiscanSearchRaw(state, term)
             .then(data => {
@@ -2593,9 +2683,34 @@ if (supabase) {
   cron.schedule('0 8 * * *', () => {
     checkBillUpdates().catch(err => console.error('[cron] Unhandled error:', err))
   })
-  console.log('   Bill-update cron: \u2713 scheduled (daily 8:00 AM UTC)')
+  console.log('   Bill-update cron: ✓ scheduled (daily 8:00 AM UTC)')
+
+  // ── Bill sync cron: populate local bills DB from Congress.gov + Open States ──
+  // Runs at 5:00 AM UTC (before bill-update and before school hours)
+  const OPENSTATES_KEY = process.env.OPENSTATES_API_KEY
+  if (CONGRESS_API_KEY || OPENSTATES_KEY) {
+    cron.schedule('0 5 * * *', () => {
+      runDailySync(supabase, {
+        congressApiKey: CONGRESS_API_KEY,
+        openStatesApiKey: OPENSTATES_KEY,
+        legiscanApiKey: LEGISCAN_KEY,
+      }).catch(err => console.error('[bill-sync] Unhandled cron error:', err))
+    })
+    console.log('   Bill sync cron: ✓ scheduled (daily 5:00 AM UTC)')
+
+    // On startup: check if backfill is needed (bills table empty)
+    setTimeout(() => {
+      runBackfill(supabase, {
+        congressApiKey: CONGRESS_API_KEY,
+        openStatesApiKey: OPENSTATES_KEY,
+        legiscanApiKey: LEGISCAN_KEY,
+      }).catch(err => console.error('[backfill] Startup check error:', err))
+    }, 5000) // Delay 5s to let server finish starting
+  } else {
+    console.log('   Bill sync cron: ✗ disabled (no CONGRESS_API_KEY or OPENSTATES_API_KEY)')
+  }
 } else {
-  console.log('   Bill-update cron: \u2717 disabled (no Supabase)')
+  console.log('   Bill-update cron: ✗ disabled (no Supabase)')
 }
 
 // ─── Pre-warm feed cache ────────────────────────────────────────────────────
