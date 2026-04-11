@@ -100,6 +100,12 @@
   border-color: var(--navy);
 }
 
+.googleBtn:disabled,
+.appleBtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .divider {
   display: flex;
   align-items: center;

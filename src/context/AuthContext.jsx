@@ -51,15 +51,19 @@ export function AuthProvider({ children }) {
       setLoading(false)
     })
 
-    // Clean up OAuth hash fragments immediately on page load (before auth state fires)
-    if (window.location.hash.includes('access_token') || window.location.search.includes('access_token')) {
+    // Clean up OAuth fragments from URL (hash tokens for implicit flow, code for PKCE flow)
+    function hasOAuthParams() {
+      return window.location.hash.includes('access_token')
+        || window.location.search.includes('access_token')
+        || window.location.search.includes('code=')
+    }
+    if (hasOAuthParams()) {
       window.history.replaceState(null, '', window.location.pathname)
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
-      // Clean up any remaining OAuth hash fragments from URL
-      if (window.location.hash.includes('access_token') || window.location.search.includes('access_token')) {
+      if (hasOAuthParams()) {
         window.history.replaceState(null, '', window.location.pathname)
       }
     })
@@ -89,23 +93,28 @@ export function AuthProvider({ children }) {
   async function signInWithGoogle() {
     if (!supabase) return { error: { message: 'Auth not configured' } }
 
-    if (isNative) {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: 'com.danieljacius.capitolkey://auth-callback',
-          skipBrowserRedirect: true,
-        },
-      })
-      if (error) return { error }
-      if (data?.url) await Browser.open({ url: data.url })
-      return { error: null }
-    }
+    try {
+      if (isNative) {
+        const { data, error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: 'com.danieljacius.capitolkey://auth-callback',
+            skipBrowserRedirect: true,
+          },
+        })
+        if (error) return { error }
+        if (data?.url) await Browser.open({ url: data.url })
+        return { error: null }
+      }
 
-    return supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.origin },
-    })
+      return await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      })
+    } catch (err) {
+      console.error('[Google OAuth] Failed:', err)
+      return { error: { message: err?.message || 'Google sign-in failed. Please try again.' } }
+    }
   }
 
   async function signInWithApple() {
