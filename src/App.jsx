@@ -1,5 +1,5 @@
 import { useEffect, useState, Suspense, lazy } from 'react'
-import { Routes, Route, useLocation, useNavigate } from 'react-router-dom'
+import { Routes, Route, useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
@@ -38,6 +38,33 @@ function PageLoader() {
   )
 }
 
+const PAGE_TITLES = {
+  '/': 'CapitolKey — Legislation That Affects You',
+  '/profile': 'Set Up Your Feed | CapitolKey',
+  '/results': 'Your Legislation | CapitolKey',
+  '/search': 'Search Bills | CapitolKey',
+  '/about': 'How It Works | CapitolKey',
+  '/contact': 'Contact | CapitolKey',
+  '/support': 'Contact | CapitolKey',
+  '/bookmarks': 'Saved Bills | CapitolKey',
+  '/privacy': 'Privacy Policy | CapitolKey',
+  '/terms': 'Terms of Service | CapitolKey',
+  '/settings': 'Settings | CapitolKey',
+}
+
+function NotFound() {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      minHeight: 'calc(100vh - 64px)', background: 'var(--cream)', textAlign: 'center', padding: '2rem',
+    }}>
+      <h1 style={{ fontFamily: 'var(--font-display)', fontSize: '2rem', color: 'var(--navy)', marginBottom: '0.5rem' }}>Page not found</h1>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>The page you're looking for doesn't exist.</p>
+      <Link to="/" style={{ color: 'var(--amber)', fontWeight: 600, textDecoration: 'underline' }}>Go home</Link>
+    </div>
+  )
+}
+
 export default function App() {
   const { user, loading } = useAuth()
   const { pathname } = useLocation()
@@ -48,6 +75,15 @@ export default function App() {
 
   // Inject navigate into push notification handler so it uses SPA routing
   useEffect(() => { setPushNavigate(navigate) }, [navigate])
+
+  // Scroll to top on route change
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
+
+  // Dynamic page title per route
+  useEffect(() => {
+    const base = pathname.split('/').slice(0, 2).join('/')
+    document.title = PAGE_TITLES[base] || PAGE_TITLES[pathname] || 'CapitolKey'
+  }, [pathname])
 
   // Hide splash screen with a brief branded moment + smooth haptic wave
   useEffect(() => {
@@ -161,7 +197,7 @@ export default function App() {
             <div style="position:fixed;inset:0;z-index:99999;background:var(--navy);color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:2rem;">
               <h2 style="font-family:var(--font-display);font-size:1.5rem;margin-bottom:1rem;">Update Required</h2>
               <p style="color:rgba(255,255,255,0.7);margin-bottom:1.5rem;max-width:300px;">A new version of CapitolKey is available. Please update to continue.</p>
-              <a href="https://apps.apple.com/app/capitolkey/id0000000000" style="background:var(--amber);color:var(--navy);padding:0.75rem 2rem;border-radius:12px;font-weight:700;text-decoration:none;">Update Now</a>
+              <a href="https://apps.apple.com/app/capitolkey/id6743539498" style="background:var(--amber);color:var(--navy);padding:0.75rem 2rem;border-radius:12px;font-weight:700;text-decoration:none;">Update Now</a>
             </div>`
           document.body.appendChild(el)
         }
@@ -217,6 +253,7 @@ export default function App() {
           <Route path="/privacy"   element={<Privacy />} />
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
     </>

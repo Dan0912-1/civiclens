@@ -54,6 +54,7 @@ export default function BillDetail() {
   const [noProfile, setNoProfile] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
+  const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [shareMsg, setShareMsg] = useState('')
 
   // Reset per-bill state whenever the route params change so navigating from
@@ -66,6 +67,8 @@ export default function BillDetail() {
     setError('')
     setPersonalizationError(false)
     setNoProfile(false)
+    setShareMsg('')
+    setBookmarkBusy(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -329,6 +332,7 @@ export default function BillDetail() {
                 <button
                   className={styles.historyToggle}
                   onClick={() => setHistoryOpen(o => !o)}
+                  aria-expanded={historyOpen}
                 >
                   {historyOpen ? 'Hide history ↑' : `Show full history (${detail.history.length}) ↓`}
                 </button>
@@ -410,7 +414,7 @@ export default function BillDetail() {
                           '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--amber);text-decoration:underline">$1</a>'
                         )
                       }} />
-                      <span className={styles.actionTime}>~{a.time}</span>
+                      {a.time && <span className={styles.actionTime}>~{a.time}</span>}
                     </div>
                   ))}
                 </div>
@@ -498,15 +502,20 @@ export default function BillDetail() {
             {user && (
               <button
                 className={`${styles.footerBtn} ${bookmarked ? styles.footerBtnActive : ''}`}
+                disabled={bookmarkBusy}
                 onClick={async () => {
-                  const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
-                  if (bookmarked) {
-                    await removeBookmark(user.id, bId)
-                    setBookmarked(false)
-                  } else {
-                    await addBookmark(user.id, bId, { ...bill, analysis })
-                    setBookmarked(true)
-                  }
+                  if (bookmarkBusy) return
+                  setBookmarkBusy(true)
+                  try {
+                    const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
+                    if (bookmarked) {
+                      await removeBookmark(user.id, bId)
+                      setBookmarked(false)
+                    } else {
+                      await addBookmark(user.id, bId, { ...bill, analysis })
+                      setBookmarked(true)
+                    }
+                  } finally { setBookmarkBusy(false) }
                 }}
               >
                 {bookmarked ? '★ Saved' : '☆ Save'}

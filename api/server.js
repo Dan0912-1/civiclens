@@ -2333,6 +2333,7 @@ async function checkBillUpdates() {
       const { subject, html } = billUpdateEmail(
         user.user_metadata?.full_name || user.user_metadata?.name || '',
         changes,
+        FRONTEND_URL,
       )
 
       await resend.emails.send({
@@ -3176,7 +3177,7 @@ const INTEREST_TO_SUBJECTS = {
 
 // ─── Hybrid Interest-Discovery scoring ──────────────────────────────────────
 
-const INTERACTION_PENALTY_WEIGHTS = { view_detail: 0.8, expand_card: 0.4, bookmark: 0.2 }
+const INTERACTION_PENALTY_WEIGHTS = { view_detail: 0.2, expand_card: 0.4, bookmark: 0.8 }
 
 // Env-configurable scoring weights — tune in production without redeploying
 const SCORE_WEIGHTS = {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import FeaturedBills from '../components/FeaturedBills'
 import styles from './Home.module.css'
 
@@ -55,10 +55,9 @@ export default function Home() {
 
   function handleSearch(e) {
     e.preventDefault()
-    if (searchQuery.trim()) {
-      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`)
-    } else {
-      navigate('/search')
+    const q = searchQuery.trim()
+    if (q) {
+      navigate(`/search?q=${encodeURIComponent(q)}`)
     }
   }
 
@@ -265,10 +264,10 @@ export default function Home() {
       {/* Footer */}
       <footer className={styles.footer}>
         <span>&copy; {new Date().getFullYear()} CapitolKey</span>
-        <button onClick={() => navigate('/privacy')}>Privacy Policy</button>
-        <button onClick={() => navigate('/terms')}>Terms of Service</button>
-        <button onClick={() => navigate('/about')}>About</button>
-        <button onClick={() => navigate('/contact')}>Contact</button>
+        <Link to="/privacy">Privacy Policy</Link>
+        <Link to="/terms">Terms of Service</Link>
+        <Link to="/about">About</Link>
+        <Link to="/contact">Contact</Link>
       </footer>
 
     </main>

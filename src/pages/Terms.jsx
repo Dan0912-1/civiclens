@@ -1,5 +1,6 @@
 import styles from './About.module.css'
 
+/* Terms shares About's stylesheet — both are legal text pages with identical layout */
 export default function Terms() {
   return (
     <main className={styles.page}>

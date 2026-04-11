@@ -29,8 +29,8 @@
 }
 
 .hamburger {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -138,19 +138,6 @@
   flex-shrink: 0;
 }
 
-.link {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: color 0.2s;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-family: var(--font-body);
-}
-
-.link:hover, .active { color: var(--navy); }
-
 .signIn {
   color: rgba(255,255,255,0.7);
   font-size: 0.7rem;
@@ -192,16 +179,20 @@
 }
 
 .link {
-  color: rgba(255,255,255,0.75) !important;
+  color: rgba(255,255,255,0.75);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: color 0.2s;
 }
 
 .link:hover, .active {
-  color: var(--amber) !important;
+  color: var(--amber);
 }
 
 .userPill {

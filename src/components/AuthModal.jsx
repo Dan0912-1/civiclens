@@ -70,8 +70,11 @@ export default function AuthModal({ isOpen, onClose }) {
     setError('')
     setLoading(true)
 
+    const trimmedEmail = email.trim()
+    const trimmedPassword = password
+
     if (mode === 'signin') {
-      const { error } = await signInWithEmail(email, password)
+      const { error } = await signInWithEmail(trimmedEmail, trimmedPassword)
       if (error) {
         setError(friendlyError(error.message))
         setLoading(false)
@@ -79,7 +82,7 @@ export default function AuthModal({ isOpen, onClose }) {
         handleClose()
       }
     } else {
-      const { error } = await signUpWithEmail(email, password)
+      const { error } = await signUpWithEmail(trimmedEmail, trimmedPassword)
       if (error) {
         setError(friendlyError(error.message))
         setLoading(false)
@@ -91,8 +94,8 @@ export default function AuthModal({ isOpen, onClose }) {
   }
 
   return (
-    <div className={styles.overlay} onClick={handleClose}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()}>
+    <div className={styles.overlay} onClick={handleClose} onKeyDown={e => { if (e.key === 'Escape') handleClose() }}>
+      <div className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className={styles.closeBtn} onClick={handleClose} aria-label="Close">
           &times;
         </button>
@@ -180,6 +183,7 @@ export default function AuthModal({ isOpen, onClose }) {
                 className={styles.input}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
+                autoComplete="email"
                 required
               />
               <input
@@ -188,6 +192,7 @@ export default function AuthModal({ isOpen, onClose }) {
                 className={styles.input}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
+                autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                 required
                 minLength={6}
               />

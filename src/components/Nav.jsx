@@ -28,8 +28,17 @@ export default function Nav() {
         setMenuOpen(false)
       }
     }
-    if (menuOpen) document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
+    function handleEscape(e) {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClick)
+      document.addEventListener('keydown', handleEscape)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [menuOpen])
 
   function handleNav(path) {
@@ -92,7 +101,7 @@ export default function Nav() {
 
           {/* Logo */}
           <button className={styles.logo} onClick={() => navigate('/')}>
-            <img src={logoSrc} alt="" className={styles.logoIcon} />
+            <img src={logoSrc} alt="CapitolKey home" className={styles.logoIcon} />
             <span className={styles.logoText}>CapitolKey</span>
           </button>
 

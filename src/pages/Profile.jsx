@@ -212,6 +212,7 @@ export default function Profile() {
                   placeholder="Enter your age"
                   min={13}
                   max={99}
+                  step={1}
                   value={profile.grade}
                   onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
                 />
@@ -312,7 +313,7 @@ export default function Profile() {
 
           <div className={styles.navRow}>
             {step > 1 && (
-              <button className={styles.backBtn} onClick={() => setStep(s => s - 1)}>
+              <button className={styles.backBtn} onClick={() => { setStep(s => s - 1); setError('') }}>
                 ← Back
               </button>
             )}

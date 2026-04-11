@@ -86,8 +86,8 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
   // Render via portal so a `transform` on any ancestor (e.g. BillCard's
   // staggered-entry animation) doesn't break position:fixed on the overlay.
   return createPortal(
-    <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()}>
+    <div className={styles.overlay} onClick={onClose} onKeyDown={e => { if (e.key === 'Escape') onClose() }}>
+      <div className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className={styles.closeBtn} onClick={onClose} aria-label="Close">×</button>
 
         <h2 className={styles.heading}>Share your take</h2>

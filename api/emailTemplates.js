@@ -15,7 +15,7 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;')
 }
 
-export function billUpdateEmail(userName, changedBills) {
+export function billUpdateEmail(userName, changedBills, frontendUrl = 'https://capitolkey.vercel.app') {
   const safeName = escapeHtml(userName)
   const billRows = changedBills.map(b => {
     const milestoneBadge = b.milestone
@@ -73,7 +73,7 @@ export function billUpdateEmail(userName, changedBills) {
         </table>
 
         <p style="color:#374151;font-size:15px;margin:20px 0 0">
-          <a href="https://capitolkey.vercel.app/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
+          <a href="${frontendUrl}/bookmarks" style="color:#2563eb;text-decoration:none;font-weight:600">View your saved bills &rarr;</a>
         </p>
       </div>
 
@@ -81,7 +81,7 @@ export function billUpdateEmail(userName, changedBills) {
       <div style="padding:16px 24px;background:#f9fafb;border-top:1px solid #e5e7eb">
         <p style="color:#9ca3af;font-size:12px;margin:0">
           You're receiving this because you have email notifications enabled on CapitolKey.
-          To stop these emails, turn off notifications in your <a href="https://capitolkey.vercel.app/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
+          To stop these emails, turn off notifications in your <a href="${frontendUrl}/bookmarks" style="color:#9ca3af">Saved Bills</a> page.
         </p>
       </div>
 

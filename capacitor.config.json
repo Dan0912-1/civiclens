@@ -23,7 +23,7 @@
     }
   },
   "deepLinks": {
-    "associatedDomains": ["capitolkey.vercel.app"],
+    "associatedDomains": ["applinks:capitolkey.vercel.app"],
     "pathPrefix": ["/bill/"]
   }
 }
