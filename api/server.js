@@ -194,8 +194,39 @@ function tryConsumeAnthropicQuota() {
   const cutoff = now - 60 * 60 * 1000
   while (_anthropicCallLog.length && _anthropicCallLog[0] < cutoff) _anthropicCallLog.shift()
   if (_anthropicCallLog.length >= ANTHROPIC_HOURLY_CAP) return false
-  _anthropicCallLog.push(now)
+  // Don't consume yet — call recordAnthropicSuccess() after a successful response
   return true
+}
+function recordAnthropicSuccess() {
+  _anthropicCallLog.push(Date.now())
+}
+
+// ─── Claude circuit breaker ────────────────────────────────────────────────
+// When Claude returns 429, set a shared backoff so all requests fast-fail
+// instead of each retrying independently (thundering herd).
+let _claudeBackoffUntil = 0
+function isClaudeBackedOff() {
+  return Date.now() < _claudeBackoffUntil
+}
+function setClaudeBackoff(retryAfterHeader) {
+  const seconds = parseInt(retryAfterHeader, 10) || 10
+  const until = Date.now() + seconds * 1000
+  if (until > _claudeBackoffUntil) {
+    _claudeBackoffUntil = until
+    console.log(`[circuit-breaker] Claude backoff set for ${seconds}s (until ${new Date(until).toISOString()})`)
+  }
+}
+
+// ─── In-flight request deduplication ───────────────────────────────────────
+// Prevents cache stampede: if N requests ask for the same cacheKey
+// simultaneously, only one triggers the expensive work (Claude/LegiScan).
+// The rest await the same Promise.
+const _inFlight = new Map()
+function dedup(key, fn) {
+  if (_inFlight.has(key)) return _inFlight.get(key)
+  const promise = fn().finally(() => _inFlight.delete(key))
+  _inFlight.set(key, promise)
+  return promise
 }
 
 // Warn loudly at startup if core API keys are missing. We DON'T hard-exit
@@ -691,64 +722,70 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       allBills = cachedFeed.bills.map(b => ({ ...b }))
       console.log(`[legislation] Feed cache hit for ${feedCacheKey} (${allBills.length} bills)`)
     } else {
-      // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
-      // Interest-matched federal bills — use searchRaw (2000 results/page vs 50)
-      // to reduce API calls by up to 40x while getting a much larger candidate pool.
-      const federalFetches = searchTerms.slice(0, 6).map(term =>
-        cachedLegiscanSearchRaw('US', term)
-          .then(data => {
-            if (!data.searchresult) return []
-            return Object.values(data.searchresult)
-              .filter(r => r.bill_id)
-              .slice(0, 20) // larger candidate pool from searchRaw
-              .map(hit => transformLegiScanBill(hit, term))
-          })
-          .catch(err => {
-            console.error(`LegiScan searchRaw error for US "${term}":`, err.message)
-            return []
-          })
-      )
+      // Dedup: if another request for the same feed is already fetching from
+      // LegiScan, share its result instead of firing duplicate API calls.
+      allBills = await dedup(`feed-${feedCacheKey}`, async () => {
+        // ── 3b. Fetch from LegiScan: interest terms + discovery terms ──
+        // Interest-matched federal bills — use searchRaw (2000 results/page vs 50)
+        // to reduce API calls by up to 40x while getting a much larger candidate pool.
+        const federalFetches = searchTerms.slice(0, 6).map(term =>
+          cachedLegiscanSearchRaw('US', term)
+            .then(data => {
+              if (!data.searchresult) return []
+              return Object.values(data.searchresult)
+                .filter(r => r.bill_id)
+                .slice(0, 20) // larger candidate pool from searchRaw
+                .map(hit => transformLegiScanBill(hit, term))
+            })
+            .catch(err => {
+              console.error(`LegiScan searchRaw error for US "${term}":`, err.message)
+              return []
+            })
+        )
 
-      // Discovery federal bills (3 trending terms × 10 results)
-      const discoveryFetches = discoveryTerms.map(term =>
-        cachedLegiscanSearchRaw('US', term)
-          .then(data => {
-            if (!data.searchresult) return []
-            return Object.values(data.searchresult)
-              .filter(r => r.bill_id)
-              .slice(0, 10)
-              .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
-          })
-          .catch(err => {
-            console.error(`LegiScan discovery search error "${term}":`, err.message)
-            return []
-          })
-      )
+        // Discovery federal bills (3 trending terms × 10 results)
+        const discoveryFetches = discoveryTerms.map(term =>
+          cachedLegiscanSearchRaw('US', term)
+            .then(data => {
+              if (!data.searchresult) return []
+              return Object.values(data.searchresult)
+                .filter(r => r.bill_id)
+                .slice(0, 10)
+                .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
+            })
+            .catch(err => {
+              console.error(`LegiScan discovery search error "${term}":`, err.message)
+              return []
+            })
+        )
 
-      // State bills — use searchRaw for larger candidate pool
-      const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
-        cachedLegiscanSearchRaw(state, term)
-          .then(data => {
-            if (!data.searchresult) return []
-            return Object.values(data.searchresult)
-              .filter(r => r.bill_id)
-              .slice(0, 10)
-              .map(hit => transformLegiScanStateBill(hit, term))
-          })
-          .catch(err => {
-            console.error(`LegiScan searchRaw error for ${state} "${term}":`, err.message)
-            return []
-          })
-      ) : []
+        // State bills — use searchRaw for larger candidate pool
+        const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
+          cachedLegiscanSearchRaw(state, term)
+            .then(data => {
+              if (!data.searchresult) return []
+              return Object.values(data.searchresult)
+                .filter(r => r.bill_id)
+                .slice(0, 10)
+                .map(hit => transformLegiScanStateBill(hit, term))
+            })
+            .catch(err => {
+              console.error(`LegiScan searchRaw error for ${state} "${term}":`, err.message)
+              return []
+            })
+        ) : []
 
-      const [federalResults, discoveryResults, stateResults] = await Promise.all([
-        Promise.all(federalFetches),
-        Promise.all(discoveryFetches),
-        Promise.all(stateFetches),
-      ])
-      for (const bills of federalResults) allBills.push(...bills)
-      for (const bills of discoveryResults) allBills.push(...bills)
-      for (const bills of stateResults) allBills.push(...bills)
+        const [federalResults, discoveryResults, stateResults] = await Promise.all([
+          Promise.all(federalFetches),
+          Promise.all(discoveryFetches),
+          Promise.all(stateFetches),
+        ])
+        const bills = []
+        for (const b of federalResults) bills.push(...b)
+        for (const b of discoveryResults) bills.push(...b)
+        for (const b of stateResults) bills.push(...b)
+        return bills
+      })
     }
 
     // ── 4. Deduplicate (keep newest version) ──
@@ -1327,99 +1364,133 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const cached = (await getSupabaseCache(cacheKey)) || getCache(cacheKey)
   if (cached) return res.json(cached)
 
-  // Fetch full bill content for accurate personalization
-  const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
-  const billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
-  const { billContent, sources } = buildBillContent(billData)
-  // Build a TRUSTED bill object using canonical metadata from LegiScan when
-  // available. This is the C1 fix — req.body.bill.title is no longer the
-  // source of truth for the prompt or for what we cache.
-  const trustedBill = buildTrustedBill(bill, billData?.meta)
-  console.log(`[personalize] ${identity}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
-
-  const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
-  const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
-
-  // Wall-clock cap so a long retry storm can't pin a request open while the
-  // client has already given up — prevents Claude tokens being burned for a
-  // response we'll never deliver.
-  const requestStart = Date.now()
-  const REQUEST_BUDGET_MS = 45000
-  let clientGone = false
-  req.on('close', () => { clientGone = true })
-
-  const MAX_RETRIES = 4
-  const billLabel = identity
-  let lastError = null
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (clientGone) return
-    if (Date.now() - requestStart > REQUEST_BUDGET_MS) {
-      lastError = lastError || 'request budget exceeded'
-      break
-    }
-    if (!tryConsumeAnthropicQuota()) {
-      return res.status(503).json({ error: 'Service temporarily at capacity, please try again shortly', retryable: true })
-    }
-    try {
-      const remaining = REQUEST_BUDGET_MS - (Date.now() - requestStart)
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01'
-        },
-        signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 700,
-          temperature: 0.4,
-          system: systemPrompt,
-          messages: [
-            { role: 'user', content: userPrompt }
-          ]
-        })
-      })
-
-      // Auth errors are not transient — fail immediately
-      if (resp.status === 401 || resp.status === 403) {
-        throw new Error(`Anthropic auth error: ${resp.status}`)
-      }
-
-      // Retry on rate limit or server error
-      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
-        const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-        lastError = `HTTP ${resp.status}`
-        console.log(`[personalize] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-        await new Promise(r => setTimeout(r, delay))
-        continue
-      }
-
-      const data = await resp.json()
-
-      if (!data.content?.[0]?.text) {
-        throw new Error(data.error?.message || 'No response from Claude')
-      }
-
-      const parsed = extractJson(data.content[0].text)
-      parsed.sources = sources
-      const result = { analysis: parsed }
-      await setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, result)
-      setCache(cacheKey, result)
-      return res.json(result)
-    } catch (err) {
-      lastError = err.message
-      if (attempt < MAX_RETRIES) {
-        const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-        console.log(`[personalize] ${err.name || 'Error'} for ${billLabel} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-        await new Promise(r => setTimeout(r, delay))
-        continue
-      }
-      console.error(`[personalize] Failed for ${billLabel} after ${MAX_RETRIES} retries:`, err.message)
-    }
+  // Circuit breaker: fast-fail if Claude is in backoff
+  if (isClaudeBackedOff()) {
+    const retryAfter = Math.ceil((_claudeBackoffUntil - Date.now()) / 1000)
+    return res.status(503).json({ error: 'Claude API temporarily unavailable, please try again shortly', retryable: true, retryAfter })
   }
-  if (clientGone) return
-  res.status(502).json({ error: 'Personalization failed', detail: lastError, retryable: true })
+
+  // Deduplicate: if another request is already personalizing this exact
+  // bill+profile combo, piggyback on its result instead of firing a
+  // duplicate Claude call.
+  try {
+    const result = await dedup(cacheKey, async () => {
+      // Fetch full bill content for accurate personalization
+      const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
+      const billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
+      const { billContent, sources } = buildBillContent(billData)
+      // Build a TRUSTED bill object using canonical metadata from LegiScan when
+      // available. This is the C1 fix — req.body.bill.title is no longer the
+      // source of truth for the prompt or for what we cache.
+      const trustedBill = buildTrustedBill(bill, billData?.meta)
+      console.log(`[personalize] ${identity}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
+
+      const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
+      const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
+
+      // Wall-clock cap so a long retry storm can't pin a request open while the
+      // client has already given up — prevents Claude tokens being burned for a
+      // response we'll never deliver.
+      const requestStart = Date.now()
+      const REQUEST_BUDGET_MS = 45000
+
+      const MAX_RETRIES = 4
+      const billLabel = identity
+      let lastError = null
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (Date.now() - requestStart > REQUEST_BUDGET_MS) {
+          lastError = lastError || 'request budget exceeded'
+          break
+        }
+        if (isClaudeBackedOff()) {
+          lastError = 'Claude circuit breaker open'
+          break
+        }
+        if (!tryConsumeAnthropicQuota()) {
+          throw Object.assign(new Error('Service temporarily at capacity'), { statusCode: 503 })
+        }
+        try {
+          const remaining = REQUEST_BUDGET_MS - (Date.now() - requestStart)
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': ANTHROPIC_KEY,
+              'anthropic-version': '2023-06-01'
+            },
+            signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 700,
+              temperature: 0.4,
+              system: systemPrompt,
+              messages: [
+                { role: 'user', content: userPrompt }
+              ]
+            })
+          })
+
+          // Auth errors are not transient — fail immediately
+          if (resp.status === 401 || resp.status === 403) {
+            throw new Error(`Anthropic auth error: ${resp.status}`)
+          }
+
+          // Rate limit — set circuit breaker and retry
+          if (resp.status === 429) {
+            setClaudeBackoff(resp.headers.get('retry-after'))
+            if (attempt < MAX_RETRIES) {
+              const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+              lastError = 'HTTP 429'
+              await new Promise(r => setTimeout(r, delay))
+              continue
+            }
+          }
+
+          // Server error — retry without circuit breaker
+          if (resp.status >= 500 && attempt < MAX_RETRIES) {
+            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+            lastError = `HTTP ${resp.status}`
+            console.log(`[personalize] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+            await new Promise(r => setTimeout(r, delay))
+            continue
+          }
+
+          const data = await resp.json()
+
+          if (!data.content?.[0]?.text) {
+            throw new Error(data.error?.message || 'No response from Claude')
+          }
+
+          // Only count successful calls against quota
+          recordAnthropicSuccess()
+
+          const parsed = extractJson(data.content[0].text)
+          parsed.sources = sources
+          const personalizeResult = { analysis: parsed }
+          setCache(cacheKey, personalizeResult)
+          // Non-blocking Supabase write — L1 cache already set
+          setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, personalizeResult)
+            .catch(err => console.error('[cache] bg Supabase write failed:', err.message))
+          return personalizeResult
+        } catch (err) {
+          lastError = err.message
+          if (err.statusCode) throw err // re-throw capacity errors
+          if (attempt < MAX_RETRIES) {
+            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+            console.log(`[personalize] ${err.name || 'Error'} for ${billLabel} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+            await new Promise(r => setTimeout(r, delay))
+            continue
+          }
+          console.error(`[personalize] Failed for ${billLabel} after ${MAX_RETRIES} retries:`, err.message)
+        }
+      }
+      throw Object.assign(new Error(lastError || 'Personalization failed'), { statusCode: 502 })
+    })
+    return res.json(result)
+  } catch (err) {
+    const status = err.statusCode || 502
+    return res.status(status).json({ error: err.message, retryable: true })
+  }
 })
 
 // ─── Batch personalization endpoint ─────────────────────────────────────────
@@ -1545,6 +1616,9 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       if (Date.now() - batchStart > BATCH_BUDGET_MS) {
         return { billId, error: lastError || 'batch budget exceeded' }
       }
+      if (isClaudeBackedOff()) {
+        return { billId, error: 'Claude circuit breaker open' }
+      }
       if (!tryConsumeAnthropicQuota()) {
         return { billId, error: 'service capacity' }
       }
@@ -1574,8 +1648,19 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
           throw new Error(`Anthropic auth error: ${resp.status}`)
         }
 
-        // Retry on rate limit or server error
-        if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
+        // Rate limit — set circuit breaker and retry
+        if (resp.status === 429) {
+          setClaudeBackoff(resp.headers.get('retry-after'))
+          if (attempt < MAX_RETRIES) {
+            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
+            lastError = 'HTTP 429'
+            await new Promise(r => setTimeout(r, delay))
+            continue
+          }
+        }
+
+        // Server error — retry
+        if (resp.status >= 500 && attempt < MAX_RETRIES) {
           const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
           lastError = `HTTP ${resp.status}`
           console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
@@ -1588,12 +1673,17 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
           throw new Error(data.error?.message || 'No response from Claude')
         }
 
+        // Only count successful calls against quota
+        recordAnthropicSuccess()
+
         const parsed = extractJson(data.content[0].text)
         parsed.sources = sources
         const result = { analysis: parsed }
 
         setCache(cacheKey, result)
-        await setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+        // Non-blocking Supabase write
+        setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+          .catch(err => console.error('[cache] bg batch Supabase write failed:', err.message))
 
         return { billId, result }
       } catch (err) {
@@ -1623,7 +1713,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       const i = cursor++
       if (i >= billsWithText.length) return
       try {
-        settled[i] = { status: 'fulfilled', value: await personalizeOneBill(billsWithText[i]) }
+        // Dedup: if another request/batch is already personalizing this bill+profile, share the result
+        const item = billsWithText[i]
+        const dedupResult = await dedup(item.cacheKey, () => personalizeOneBill(item))
+        settled[i] = { status: 'fulfilled', value: dedupResult }
       } catch (reason) {
         settled[i] = { status: 'rejected', reason }
       }
