@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { saveProfile, loadProfile } from '../lib/userProfile'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
@@ -46,25 +47,39 @@ export function AuthProvider({ children }) {
       return
     }
 
+    // Let Supabase process OAuth params FIRST (code= for PKCE, access_token for implicit)
+    // Do NOT strip URL params before getSession — Supabase needs them to exchange the code
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       setLoading(false)
+      // Clean up OAuth params from URL AFTER session is established
+      cleanOAuthParams()
     })
 
-    // Clean up OAuth fragments from URL (hash tokens for implicit flow, code for PKCE flow)
-    function hasOAuthParams() {
-      return window.location.hash.includes('access_token')
+    function cleanOAuthParams() {
+      const hasParams = window.location.hash.includes('access_token')
         || window.location.search.includes('access_token')
         || window.location.search.includes('code=')
-    }
-    if (hasOAuthParams()) {
-      window.history.replaceState(null, '', window.location.pathname)
+      if (hasParams) {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user ?? null)
-      if (hasOAuthParams()) {
-        window.history.replaceState(null, '', window.location.pathname)
+      cleanOAuthParams()
+
+      // Auto-create profile row for new OAuth sign-ups so they don't appear "profileless"
+      if (event === 'SIGNED_IN' && session?.user) {
+        const existing = await loadProfile(session.user.id)
+        if (!existing) {
+          // Seed an empty profile — user can fill details later on /profile
+          const meta = session.user.user_metadata || {}
+          await saveProfile(session.user.id, {
+            name: meta.full_name || meta.name || '',
+            email: meta.email || session.user.email || '',
+          })
+        }
       }
     })
 
