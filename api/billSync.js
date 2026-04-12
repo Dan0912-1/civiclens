@@ -334,137 +334,55 @@ async function syncCongressGov(supabase, congressApiKey, options = {}) {
 }
 
 // ─── Open States sync ──────────────────────────────────────────────────────
-// 1,000 calls/day, 40/min. GraphQL API — one call returns many bills.
+// 1,000 calls/day, 40/min. REST API v3 — paginated GET /bills endpoint.
 
-const OPENSTATES_ENDPOINT = 'https://v3.openstates.org/graphql'
+const OPENSTATES_BASE = 'https://v3.openstates.org'
 
-// Map of state codes to Open States jurisdiction IDs
-const STATE_JURISDICTIONS = {
-  AL: 'ocd-jurisdiction/country:us/state:al/government',
-  AK: 'ocd-jurisdiction/country:us/state:ak/government',
-  AZ: 'ocd-jurisdiction/country:us/state:az/government',
-  AR: 'ocd-jurisdiction/country:us/state:ar/government',
-  CA: 'ocd-jurisdiction/country:us/state:ca/government',
-  CO: 'ocd-jurisdiction/country:us/state:co/government',
-  CT: 'ocd-jurisdiction/country:us/state:ct/government',
-  DE: 'ocd-jurisdiction/country:us/state:de/government',
-  FL: 'ocd-jurisdiction/country:us/state:fl/government',
-  GA: 'ocd-jurisdiction/country:us/state:ga/government',
-  HI: 'ocd-jurisdiction/country:us/state:hi/government',
-  ID: 'ocd-jurisdiction/country:us/state:id/government',
-  IL: 'ocd-jurisdiction/country:us/state:il/government',
-  IN: 'ocd-jurisdiction/country:us/state:in/government',
-  IA: 'ocd-jurisdiction/country:us/state:ia/government',
-  KS: 'ocd-jurisdiction/country:us/state:ks/government',
-  KY: 'ocd-jurisdiction/country:us/state:ky/government',
-  LA: 'ocd-jurisdiction/country:us/state:la/government',
-  ME: 'ocd-jurisdiction/country:us/state:me/government',
-  MD: 'ocd-jurisdiction/country:us/state:md/government',
-  MA: 'ocd-jurisdiction/country:us/state:ma/government',
-  MI: 'ocd-jurisdiction/country:us/state:mi/government',
-  MN: 'ocd-jurisdiction/country:us/state:mn/government',
-  MS: 'ocd-jurisdiction/country:us/state:ms/government',
-  MO: 'ocd-jurisdiction/country:us/state:mo/government',
-  MT: 'ocd-jurisdiction/country:us/state:mt/government',
-  NE: 'ocd-jurisdiction/country:us/state:ne/government',
-  NV: 'ocd-jurisdiction/country:us/state:nv/government',
-  NH: 'ocd-jurisdiction/country:us/state:nh/government',
-  NJ: 'ocd-jurisdiction/country:us/state:nj/government',
-  NM: 'ocd-jurisdiction/country:us/state:nm/government',
-  NY: 'ocd-jurisdiction/country:us/state:ny/government',
-  NC: 'ocd-jurisdiction/country:us/state:nc/government',
-  ND: 'ocd-jurisdiction/country:us/state:nd/government',
-  OH: 'ocd-jurisdiction/country:us/state:oh/government',
-  OK: 'ocd-jurisdiction/country:us/state:ok/government',
-  OR: 'ocd-jurisdiction/country:us/state:or/government',
-  PA: 'ocd-jurisdiction/country:us/state:pa/government',
-  RI: 'ocd-jurisdiction/country:us/state:ri/government',
-  SC: 'ocd-jurisdiction/country:us/state:sc/government',
-  SD: 'ocd-jurisdiction/country:us/state:sd/government',
-  TN: 'ocd-jurisdiction/country:us/state:tn/government',
-  TX: 'ocd-jurisdiction/country:us/state:tx/government',
-  UT: 'ocd-jurisdiction/country:us/state:ut/government',
-  VT: 'ocd-jurisdiction/country:us/state:vt/government',
-  VA: 'ocd-jurisdiction/country:us/state:va/government',
-  WA: 'ocd-jurisdiction/country:us/state:wa/government',
-  WV: 'ocd-jurisdiction/country:us/state:wv/government',
-  WI: 'ocd-jurisdiction/country:us/state:wi/government',
-  WY: 'ocd-jurisdiction/country:us/state:wy/government',
-  DC: 'ocd-jurisdiction/country:us/district:dc/government',
+// Map of state codes to state names (Open States v3 uses full names for jurisdiction param)
+const STATE_NAMES = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas',
+  CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware',
+  FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho',
+  IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas',
+  KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi',
+  MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada',
+  NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+  NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma',
+  OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah',
+  VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia',
+  WI: 'Wisconsin', WY: 'Wyoming', DC: 'District of Columbia',
 }
 
 async function syncOpenStates(supabase, apiKey, options = {}) {
   const { since, states, onProgress } = options
-  const sinceDate = since || new Date(Date.now() - 86400000).toISOString().slice(0, 19)
-  const statesToSync = states || Object.keys(STATE_JURISDICTIONS)
+  const sinceDate = since || new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+  const statesToSync = states || Object.keys(STATE_NAMES)
   let totalSynced = 0
   let totalCalls = 0
 
   console.log(`[sync:openstates] Starting state sync for ${statesToSync.length} states since ${sinceDate}`)
 
   for (const stateCode of statesToSync) {
-    const jurisdiction = STATE_JURISDICTIONS[stateCode]
-    if (!jurisdiction) continue
+    const stateName = STATE_NAMES[stateCode]
+    if (!stateName) continue
 
     try {
-      // GraphQL query: fetch bills updated since last sync
-      const query = `
-        query($jurisdiction: String!, $updatedSince: DateTime, $cursor: String) {
-          bills(
-            jurisdiction: $jurisdiction
-            updatedSince: $updatedSince
-            first: 100
-            after: $cursor
-          ) {
-            edges {
-              node {
-                id
-                identifier
-                title
-                subject
-                classification
-                updatedAt
-                createdAt
-                openstatesUrl
-                latestAction {
-                  description
-                  date
-                }
-                fromOrganization {
-                  name
-                }
-                legislativeSession {
-                  identifier
-                }
-                sponsorships {
-                  name
-                  primary
-                }
-              }
-            }
-            pageInfo {
-              hasNextPage
-              endCursor
-            }
-          }
-        }
-      `
-
-      let cursor = null
+      let page = 1
       let hasMore = true
 
       while (hasMore) {
-        const resp = await fetch(OPENSTATES_ENDPOINT, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-KEY': apiKey,
-          },
-          body: JSON.stringify({
-            query,
-            variables: { jurisdiction, updatedSince: sinceDate, cursor }
-          })
+        const params = new URLSearchParams({
+          jurisdiction: stateName,
+          updated_since: sinceDate,
+          per_page: '20',
+          page: String(page),
+          include: 'sponsorships',
+          apikey: apiKey,
         })
+
+        const resp = await fetch(`${OPENSTATES_BASE}/bills?${params}`)
         totalCalls++
 
         if (!resp.ok) {
@@ -473,23 +391,18 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
           break
         }
 
-        const result = await resp.json()
-        if (result.errors) {
-          console.error(`[sync:openstates] GraphQL errors for ${stateCode}:`, result.errors[0]?.message)
-          break
-        }
+        const data = await resp.json()
+        const bills = data.results || []
+        const pagination = data.pagination || {}
 
-        const edges = result.data?.bills?.edges || []
-        const pageInfo = result.data?.bills?.pageInfo || {}
-
-        for (const { node: bill } of edges) {
-          // Parse bill identifier (e.g., "HB 1234" → type "hb", number 1234)
+        for (const bill of bills) {
+          // Parse bill identifier (e.g., "HB 1234", "SB 42", "AB 2447")
           const match = bill.identifier?.match(/^([A-Z]+)\s*(\d+)$/i)
           if (!match) continue
 
           const billType = match[1].toLowerCase()
           const billNumber = parseInt(match[2], 10)
-          const session = bill.legislativeSession?.identifier || ''
+          const session = bill.session || ''
           const subjects = bill.subject || []
           const sponsors = (bill.sponsorships || []).map(s => s.name)
 
@@ -500,17 +413,17 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
             bill_type: billType,
             bill_number: billNumber,
             title: bill.title || '',
-            status: bill.latestAction?.description || '',
-            status_stage: normalizeStatus(bill.classification?.[0] || '', bill.latestAction?.description),
-            latest_action: bill.latestAction?.description || null,
-            latest_action_date: bill.latestAction?.date || null,
-            origin_chamber: bill.fromOrganization?.name?.includes('Senate') ? 'Senate' : 'House',
-            url: bill.openstatesUrl || null,
+            status: bill.latest_action_description || '',
+            status_stage: normalizeStatus(bill.classification?.[0] || '', bill.latest_action_description),
+            latest_action: bill.latest_action_description || null,
+            latest_action_date: bill.latest_action_date || null,
+            origin_chamber: bill.from_organization?.classification === 'upper' ? 'Senate' : 'House',
+            url: bill.openstates_url || null,
             subjects,
             topics: classifyTopics(subjects, bill.title),
             sponsors,
             source: 'openstates',
-            updated_at: bill.updatedAt || new Date().toISOString(),
+            updated_at: bill.updated_at || new Date().toISOString(),
             synced_at: new Date().toISOString(),
           }
 
@@ -519,7 +432,6 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
             .upsert(row, { onConflict: 'openstates_id' })
 
           if (error) {
-            // May be a conflict on the composite unique — try update
             if (error.code === '23505') {
               await supabase
                 .from('bills')
@@ -536,8 +448,8 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
           }
         }
 
-        hasMore = pageInfo.hasNextPage
-        cursor = pageInfo.endCursor
+        hasMore = page < pagination.max_page
+        page++
 
         // Rate limit: stay well under 40/min (1.5s between calls)
         await sleep(1500)
@@ -769,5 +681,5 @@ export {
   syncLegiScanTexts,
   classifyTopics,
   normalizeStatus,
-  STATE_JURISDICTIONS,
+  STATE_NAMES,
 }
