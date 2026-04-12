@@ -1,0 +1,395 @@
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { supabase } from '../lib/supabase'
+import {
+  getClassroomDetail, getAssignments, removeAssignment,
+  getClassroomStats, exportClassroomCsv, regenerateCode,
+  updateClassroom, leaveClassroom
+} from '../lib/classroom'
+import AssignBillModal from '../components/AssignBillModal.jsx'
+import styles from './ClassroomDetail.module.css'
+
+export default function ClassroomDetail() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const [classroom, setClassroom] = useState(null)
+  const [assignments, setAssignments] = useState([])
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState('assignments')
+  const [showAssign, setShowAssign] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
+  const [token, setToken] = useState(null)
+
+  useEffect(() => {
+    if (!user) { navigate('/'); return }
+    loadData()
+  }, [user, id])
+
+  async function getToken() {
+    const session = await supabase?.auth.getSession()
+    const t = session?.data?.session?.access_token
+    setToken(t)
+    return t
+  }
+
+  async function loadData() {
+    setLoading(true)
+    const t = await getToken()
+    if (!t) { setLoading(false); return }
+
+    const [cr, a] = await Promise.all([
+      getClassroomDetail(t, id),
+      getAssignments(t, id),
+    ])
+    setClassroom(cr)
+    setAssignments(a)
+    setLoading(false)
+
+    // Load stats in background for teachers
+    if (cr?.role === 'teacher') {
+      const s = await getClassroomStats(t, id)
+      setStats(s)
+    }
+  }
+
+  async function handleRemoveAssignment(assignmentId) {
+    const t = await getToken()
+    if (!t) return
+    await removeAssignment(t, id, assignmentId)
+    setAssignments(prev => prev.filter(a => a.id !== assignmentId))
+  }
+
+  async function handleExport() {
+    const t = await getToken()
+    if (!t) return
+    try {
+      const blob = await exportClassroomCsv(t, id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {}
+  }
+
+  async function handleRegenerateCode() {
+    const t = await getToken()
+    if (!t) return
+    try {
+      const newCode = await regenerateCode(t, id)
+      setClassroom(prev => ({ ...prev, join_code: newCode }))
+    } catch {}
+  }
+
+  async function handleArchive() {
+    const t = await getToken()
+    if (!t) return
+    await updateClassroom(t, id, { archived: !classroom.archived })
+    setClassroom(prev => ({ ...prev, archived: !prev.archived }))
+  }
+
+  async function handleLeave() {
+    const t = await getToken()
+    if (!t) return
+    await leaveClassroom(t, id)
+    navigate('/classroom')
+  }
+
+  async function copyCode() {
+    try {
+      await navigator.clipboard.writeText(classroom.join_code)
+      setCodeCopied(true)
+      setTimeout(() => setCodeCopied(false), 2000)
+    } catch {}
+  }
+
+  function handleAssigned() {
+    setShowAssign(false)
+    loadData()
+  }
+
+  if (loading) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.loading}>
+          <div className={styles.spinner} />
+          <span>Loading...</span>
+        </div>
+      </main>
+    )
+  }
+
+  if (!classroom) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.container}>
+          <p className={styles.error}>Classroom not found</p>
+          <button className={styles.back} onClick={() => navigate('/classroom')}>Back to Classrooms</button>
+        </div>
+      </main>
+    )
+  }
+
+  const isTeacher = classroom.role === 'teacher'
+
+  return (
+    <main className={styles.page}>
+      <div className={styles.container}>
+
+        {/* Header */}
+        <button className={styles.back} onClick={() => navigate('/classroom')}>Back</button>
+        <div className={styles.header}>
+          <div>
+            <h1>{classroom.name}</h1>
+            {classroom.archived && <span className={styles.archiveBadge}>Archived</span>}
+          </div>
+          {isTeacher && (
+            <div className={styles.headerMeta}>
+              <div className={styles.codeBlock}>
+                <span className={styles.codeLabel}>Join code</span>
+                <span className={styles.code} onClick={copyCode}>
+                  {classroom.join_code}
+                </span>
+                <span className={styles.copyHint}>{codeCopied ? 'Copied' : 'Click to copy'}</span>
+              </div>
+              <span className={styles.studentCount}>
+                {classroom.studentCount} student{classroom.studentCount !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Tabs */}
+        <div className={styles.tabs}>
+          <button
+            className={`${styles.tab} ${tab === 'assignments' ? styles.tabActive : ''}`}
+            onClick={() => setTab('assignments')}
+          >
+            Assignments
+          </button>
+          {isTeacher && (
+            <button
+              className={`${styles.tab} ${tab === 'dashboard' ? styles.tabActive : ''}`}
+              onClick={() => setTab('dashboard')}
+            >
+              Dashboard
+            </button>
+          )}
+          {isTeacher && (
+            <button
+              className={`${styles.tab} ${tab === 'settings' ? styles.tabActive : ''}`}
+              onClick={() => setTab('settings')}
+            >
+              Settings
+            </button>
+          )}
+        </div>
+
+        {/* Assignments tab */}
+        {tab === 'assignments' && (
+          <div className={styles.tabContent}>
+            {isTeacher && (
+              <button className={styles.btnPrimary} onClick={() => setShowAssign(true)}>
+                Assign a Bill
+              </button>
+            )}
+
+            {assignments.length === 0 ? (
+              <p className={styles.emptyState}>
+                {isTeacher ? 'No assignments yet. Assign a bill to get started.' : 'No assignments yet.'}
+              </p>
+            ) : (
+              <div className={styles.assignmentList}>
+                {assignments.map(a => (
+                  <div key={a.id} className={styles.assignmentCard}>
+                    <div className={styles.assignmentTop}>
+                      <button
+                        className={styles.assignmentTitle}
+                        onClick={() => {
+                          const bd = a.bill_data || {}
+                          const congress = bd.congress
+                          const type = (bd.type || bd.bill_type || '').toLowerCase()
+                          const number = bd.number || bd.bill_number
+                          if (congress && type && number) {
+                            navigate(`/bill/${congress}/${type}/${number}`, {
+                              state: { assignment: a.id, classroom: id }
+                            })
+                          }
+                        }}
+                      >
+                        <span className={styles.billNum}>
+                          {a.bill_data?.type || a.bill_data?.bill_type} {a.bill_data?.number || a.bill_data?.bill_number}
+                        </span>
+                        {(a.bill_data?.title || a.bill_id).slice(0, 100)}
+                      </button>
+                      {a.completed && <span className={styles.completedBadge}>Completed</span>}
+                    </div>
+
+                    {a.instructions && (
+                      <p className={styles.assignmentInstructions}>{a.instructions}</p>
+                    )}
+
+                    <div className={styles.assignmentMeta}>
+                      {a.due_date && (
+                        <span className={styles.dueDate}>
+                          Due {new Date(a.due_date + 'T00:00').toLocaleDateString()}
+                        </span>
+                      )}
+                      {isTeacher && typeof a.completions === 'number' && (
+                        <span className={styles.completionCount}>
+                          {a.completions}/{a.totalStudents} completed
+                        </span>
+                      )}
+                      {isTeacher && (
+                        <button
+                          className={styles.removeBtn}
+                          onClick={() => handleRemoveAssignment(a.id)}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+
+                    {isTeacher && a.totalStudents > 0 && (
+                      <div className={styles.progressBar}>
+                        <div
+                          className={styles.progressFill}
+                          style={{ width: `${Math.round((a.completions / a.totalStudents) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Dashboard tab (teacher only) */}
+        {tab === 'dashboard' && isTeacher && (
+          <div className={styles.tabContent}>
+            {!stats ? (
+              <div className={styles.loading}>
+                <div className={styles.spinner} />
+                <span>Loading stats...</span>
+              </div>
+            ) : (
+              <>
+                <div className={styles.kpiRow}>
+                  <div className={styles.kpi}>
+                    <div className={styles.kpiLabel}>Students</div>
+                    <div className={styles.kpiValue}>{stats.totalStudents}</div>
+                  </div>
+                  <div className={styles.kpi}>
+                    <div className={styles.kpiLabel}>Active This Week</div>
+                    <div className={styles.kpiValue}>{stats.activeThisWeek}</div>
+                  </div>
+                  <div className={styles.kpi}>
+                    <div className={styles.kpiLabel}>Assignments</div>
+                    <div className={styles.kpiValue}>{(stats.assignments || []).length}</div>
+                  </div>
+                </div>
+
+                {/* Per-assignment completion */}
+                {(stats.assignments || []).length > 0 && (
+                  <div className={styles.panel}>
+                    <div className={styles.panelTitle}>Assignment Completion</div>
+                    {stats.assignments.map(a => {
+                      const pct = a.totalStudents > 0 ? Math.round((a.completions / a.totalStudents) * 100) : 0
+                      return (
+                        <div key={a.id} className={styles.statAssignment}>
+                          <div className={styles.statAssignmentHeader}>
+                            <span className={styles.statAssignmentTitle}>
+                              {(a.title || a.billId).slice(0, 60)}
+                            </span>
+                            <span className={styles.statAssignmentPct}>{pct}%</span>
+                          </div>
+                          <div className={styles.progressBar}>
+                            <div className={styles.progressFill} style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className={styles.statAssignmentMeta}>
+                            {a.completions}/{a.totalStudents} completed
+                            {a.avgTimeSec && ` · Avg ${Math.round(a.avgTimeSec / 60)} min`}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* Topic engagement */}
+                {(stats.topicEngagement || []).length > 0 && (
+                  <div className={styles.panel}>
+                    <div className={styles.panelTitle}>Topic Engagement</div>
+                    {stats.topicEngagement.map(([topic, count]) => (
+                      <div key={topic} className={styles.topicRow}>
+                        <span className={styles.topicName}>{topic}</span>
+                        <div className={styles.topicBar}>
+                          <div
+                            className={styles.topicFill}
+                            style={{ width: `${(count / stats.topicEngagement[0][1]) * 100}%` }}
+                          />
+                        </div>
+                        <span className={styles.topicCount}>{count}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button className={styles.exportBtn} onClick={handleExport}>
+                  Export CSV Report
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Settings tab (teacher only) */}
+        {tab === 'settings' && isTeacher && (
+          <div className={styles.tabContent}>
+            <div className={styles.panel}>
+              <div className={styles.panelTitle}>Class Settings</div>
+              <div className={styles.settingRow}>
+                <span>Join Code</span>
+                <div className={styles.settingActions}>
+                  <span className={styles.code}>{classroom.join_code}</span>
+                  <button className={styles.linkBtn} onClick={handleRegenerateCode}>
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+              <div className={styles.settingRow}>
+                <span>Status</span>
+                <button className={styles.linkBtn} onClick={handleArchive}>
+                  {classroom.archived ? 'Unarchive' : 'Archive'} Class
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Student: leave option */}
+        {!isTeacher && (
+          <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+            <button className={styles.linkBtn} onClick={handleLeave} style={{ color: 'var(--status-failed)' }}>
+              Leave this classroom
+            </button>
+          </div>
+        )}
+
+      </div>
+
+      {showAssign && (
+        <AssignBillModal
+          classroomId={id}
+          onClose={() => setShowAssign(false)}
+          onAssigned={handleAssigned}
+        />
+      )}
+    </main>
+  )
+}

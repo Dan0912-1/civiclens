@@ -1,0 +1,216 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 25, 41, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-lg);
+}
+
+.modal {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: 32px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--navy);
+  margin-bottom: var(--space-lg);
+}
+
+.searchRow {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.searchInput {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--navy);
+}
+
+.searchInput:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: var(--shadow-amber);
+}
+
+.searchBtn {
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 16px;
+  border-radius: 1px;
+}
+
+.searchBtn:hover:not(:disabled) { background: var(--navy-light); }
+.searchBtn:disabled { opacity: 0.5; }
+
+.resultsList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border-light);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.resultItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--white);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.resultItem:hover { background: var(--cream); }
+
+.resultBillNum {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.resultTitle {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.noResults {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  text-align: center;
+  padding: var(--space-lg);
+  font-style: italic;
+}
+
+.assignForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.selectedBill {
+  background: var(--cream);
+  padding: 14px;
+  border-radius: 1px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.changeBtn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 0.72rem;
+  color: var(--amber);
+  text-decoration: underline;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.textarea {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  resize: vertical;
+  color: var(--navy);
+}
+
+.textarea:focus { outline: none; border-color: var(--amber); }
+
+.dateInput {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  color: var(--navy);
+  max-width: 200px;
+}
+
+.dateInput:focus { outline: none; border-color: var(--amber); }
+
+.actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+  margin-top: var(--space-sm);
+}
+
+.btnCancel {
+  background: var(--white);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+}
+
+.btnAssign {
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 20px;
+  border-radius: 1px;
+}
+
+.btnAssign:hover:not(:disabled) { background: var(--navy-light); }
+.btnAssign:disabled { opacity: 0.5; }
+
+.error {
+  color: var(--status-failed);
+  font-size: 0.82rem;
+  margin-top: var(--space-sm);
+}

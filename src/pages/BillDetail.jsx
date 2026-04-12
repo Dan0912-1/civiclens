@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
+import { markComplete } from '../lib/classroom'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -46,6 +47,8 @@ export default function BillDetail() {
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
   const skipPersonalization = location.state?.skipPersonalization || false
+  const assignmentId = location.state?.assignment || null
+  const assignmentClassroomId = location.state?.classroom || null
 
   const [bill, setBill] = useState(passedBill)
   const [analysis, setAnalysis] = useState(passedAnalysis)
@@ -58,6 +61,8 @@ export default function BillDetail() {
   const [bookmarked, setBookmarked] = useState(false)
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [shareMsg, setShareMsg] = useState('')
+  const [assignmentCompleted, setAssignmentCompleted] = useState(false)
+  const assignmentTimerRef = useRef(null)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -105,6 +110,25 @@ export default function BillDetail() {
       setBookmarked(bms.some(b => b.bill_id === bId))
     })
   }, [user, bill, congress, type, number])
+
+  // Assignment completion: start timer when page loads with assignment context
+  useEffect(() => {
+    if (!assignmentId || !assignmentClassroomId || !user) return
+    assignmentTimerRef.current = Date.now()
+    return () => { assignmentTimerRef.current = null }
+  }, [assignmentId, assignmentClassroomId, user])
+
+  async function handleMarkComplete() {
+    if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted) return
+    const session = await supabase?.auth.getSession()
+    const token = session?.data?.session?.access_token
+    if (!token) return
+    const elapsed = assignmentTimerRef.current ? Math.round((Date.now() - assignmentTimerRef.current) / 1000) : null
+    try {
+      await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
+      setAssignmentCompleted(true)
+    } catch {}
+  }
 
   // Fetch bill detail when route params change. Guarded by a cancelled flag
   // so that if the user navigates away (or to a different bill) mid-fetch we
@@ -279,6 +303,19 @@ export default function BillDetail() {
         <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
           ← Back to results
         </button>
+
+        {assignmentId && (
+          <div className={styles.assignmentBanner}>
+            <span className={styles.assignmentBannerText}>
+              {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
+            </span>
+            {!assignmentCompleted && (
+              <button className={styles.markCompleteBtn} onClick={handleMarkComplete}>
+                Mark as Read
+              </button>
+            )}
+          </div>
+        )}
 
         <div className={styles.header}>
           <div className={styles.headerMeta}>

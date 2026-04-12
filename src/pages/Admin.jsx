@@ -146,6 +146,7 @@ export default function Admin() {
   const bills = stats.bills || {}
   const fb = stats.feedback || {}
   const ls = api.legiScan || {}
+  const cl = stats.classrooms || {}
 
   const anthropicPct = api.anthropicHourlyCap > 0
     ? Math.round((api.anthropicCallsThisHour / api.anthropicHourlyCap) * 100) : 0
@@ -209,6 +210,18 @@ export default function Admin() {
             <div className={styles.kpiSub}>
               {Object.entries(fb.byType || {}).map(([t, n]) => `${t}: ${n}`).join(', ') || 'none'}
             </div>
+          </div>
+          <div className={`${styles.kpi} ${styles.kpiAccent}`}>
+            <div className={styles.kpiLabel}>Classrooms</div>
+            <div className={styles.kpiValue}>{(cl.totalClassrooms || 0).toLocaleString()}</div>
+            <div className={styles.kpiSub}>
+              {cl.totalTeachers || 0} teachers / {cl.totalStudents || 0} students
+            </div>
+          </div>
+          <div className={styles.kpi}>
+            <div className={styles.kpiLabel}>Assignments</div>
+            <div className={styles.kpiValue}>{(cl.totalAssignments || 0).toLocaleString()}</div>
+            <div className={styles.kpiSub}>{cl.totalCompletions || 0} completions</div>
           </div>
         </div>
 

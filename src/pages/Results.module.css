@@ -273,3 +273,89 @@
   color: var(--navy);
   text-decoration: underline;
 }
+
+/* Classroom assignments section */
+.assignmentsSection {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 1px;
+  padding: 16px 20px;
+  margin-bottom: var(--space-lg);
+}
+
+.assignmentsHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 12px;
+}
+
+.assignmentsLabel {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.assignmentsCount {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--white);
+  background: var(--amber);
+  padding: 1px 7px;
+  border-radius: 8px;
+}
+
+.assignmentsList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border-light);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.assignmentItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--cream);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.assignmentItem:hover { background: var(--white); }
+
+.assignmentBillNum {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.assignmentTitle {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.assignmentClass {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.assignmentDue {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-secondary);
+}

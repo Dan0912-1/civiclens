@@ -5,6 +5,7 @@ import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } f
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
+import { getMyClassrooms, getAssignments } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
@@ -100,6 +101,28 @@ export default function Results() {
   useEffect(() => {
     if (!user) return
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
+  }, [user])
+
+  // Load pending classroom assignments for students
+  const [pendingAssignments, setPendingAssignments] = useState([])
+  useEffect(() => {
+    if (!user) return
+    async function loadAssignments() {
+      const session = await supabase?.auth.getSession()
+      const token = session?.data?.session?.access_token
+      if (!token) return
+      const classrooms = await getMyClassrooms(token)
+      const studentClasses = classrooms.filter(c => c.role === 'student')
+      const allAssignments = []
+      for (const cls of studentClasses) {
+        const assignments = await getAssignments(token, cls.id)
+        for (const a of assignments) {
+          if (!a.completed) allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.id })
+        }
+      }
+      setPendingAssignments(allAssignments)
+    }
+    loadAssignments()
   }, [user])
 
   // Fetch bills when profile is ready. Also re-fetch once the interaction
@@ -377,6 +400,50 @@ export default function Results() {
             ← Edit my profile
           </button>
         </div>
+
+        {/* Classroom assignments */}
+        {pendingAssignments.length > 0 && (
+          <div className={styles.assignmentsSection}>
+            <div className={styles.assignmentsHeader}>
+              <span className={styles.assignmentsLabel}>Assigned to You</span>
+              <span className={styles.assignmentsCount}>{pendingAssignments.length}</span>
+            </div>
+            <div className={styles.assignmentsList}>
+              {pendingAssignments.map(a => {
+                const bd = a.bill_data || {}
+                const congress = bd.congress
+                const billType = (bd.type || bd.bill_type || '').toLowerCase()
+                const billNum = bd.number || bd.bill_number
+                return (
+                  <button
+                    key={a.id}
+                    className={styles.assignmentItem}
+                    onClick={() => {
+                      if (congress && billType && billNum) {
+                        navigate(`/bill/${congress}/${billType}/${billNum}`, {
+                          state: { assignment: a.id, classroom: a.classroomId }
+                        })
+                      }
+                    }}
+                  >
+                    <span className={styles.assignmentBillNum}>
+                      {bd.type || bd.bill_type} {bd.number || bd.bill_number}
+                    </span>
+                    <span className={styles.assignmentTitle}>
+                      {(bd.title || a.bill_id).slice(0, 80)}
+                    </span>
+                    <span className={styles.assignmentClass}>{a.classroomName}</span>
+                    {a.due_date && (
+                      <span className={styles.assignmentDue}>
+                        Due {new Date(a.due_date + 'T00:00').toLocaleDateString()}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Federal / State tab switcher */}
         <div className={styles.tabBar}>

@@ -4268,6 +4268,582 @@ app.get('/api/featured', featuredLimiter, async (req, res) => {
   }
 })
 
+// ─── Classroom system ────────────────────────────────────────────────────────
+// Teacher-created classes with join codes, bill assignments, and aggregate stats.
+// Privacy: teacher endpoints return ONLY aggregate data — never per-student details.
+
+const classroomLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: userOrIpKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many classroom requests — please slow down.' },
+})
+
+const JOIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no 0/O, 1/I/L
+function generateJoinCode() {
+  const bytes = crypto.randomBytes(6)
+  let code = ''
+  for (let i = 0; i < 6; i++) code += JOIN_CODE_CHARS[bytes[i] % JOIN_CODE_CHARS.length]
+  return code
+}
+
+async function requireClassroomTeacher(req, classroomId) {
+  const user = await requireAuth(req)
+  if (!supabase) throw new Error('Service unavailable')
+  const { data: classroom } = await supabase
+    .from('classrooms').select('id, owner_id').eq('id', classroomId).single()
+  if (!classroom) throw new Error('Not found')
+  if (classroom.owner_id === user.id) return user
+  const { data: membership } = await supabase
+    .from('classroom_members').select('role')
+    .eq('classroom_id', classroomId).eq('user_id', user.id).eq('role', 'teacher').single()
+  if (!membership) throw new Error('Forbidden')
+  return user
+}
+
+async function requireClassroomMember(req, classroomId) {
+  const user = await requireAuth(req)
+  if (!supabase) throw new Error('Service unavailable')
+  const { data: membership } = await supabase
+    .from('classroom_members').select('role')
+    .eq('classroom_id', classroomId).eq('user_id', user.id).single()
+  if (!membership) throw new Error('Forbidden')
+  return { ...user, classroomRole: membership.role }
+}
+
+// Create classroom
+app.post('/api/classroom', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const name = (req.body.name || '').trim()
+    if (!name || name.length > 100) return res.status(400).json({ error: 'Name is required (max 100 chars)' })
+
+    let join_code
+    for (let i = 0; i < 5; i++) {
+      join_code = generateJoinCode()
+      const { data: existing } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+      if (!existing) break
+      if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code — please retry' })
+    }
+
+    const { data: classroom, error } = await supabase.from('classrooms')
+      .insert({ owner_id: user.id, name, join_code })
+      .select('id, name, join_code, created_at')
+      .single()
+    if (error) throw error
+
+    // Add owner as teacher member
+    await supabase.from('classroom_members')
+      .insert({ classroom_id: classroom.id, user_id: user.id, role: 'teacher' })
+
+    res.json({ classroom })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] create error:', err.message)
+    res.status(500).json({ error: 'Failed to create classroom' })
+  }
+})
+
+// List my classrooms (as teacher or student)
+app.get('/api/classroom', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+
+    const { data: memberships } = await supabase.from('classroom_members')
+      .select('classroom_id, role').eq('user_id', user.id)
+    if (!memberships || memberships.length === 0) return res.json({ classrooms: [] })
+
+    const ids = memberships.map(m => m.classroom_id)
+    const roleMap = Object.fromEntries(memberships.map(m => [m.classroom_id, m.role]))
+
+    const { data: classrooms } = await supabase.from('classrooms')
+      .select('id, owner_id, name, join_code, archived, created_at')
+      .in('id', ids)
+      .order('created_at', { ascending: false })
+
+    // Get member counts
+    const { data: memberCounts } = await supabase.from('classroom_members')
+      .select('classroom_id').in('classroom_id', ids).eq('role', 'student')
+
+    const countMap = {}
+    for (const m of (memberCounts || [])) {
+      countMap[m.classroom_id] = (countMap[m.classroom_id] || 0) + 1
+    }
+
+    // Get assignment counts
+    const { data: assignmentCounts } = await supabase.from('classroom_assignments')
+      .select('classroom_id').in('classroom_id', ids)
+    const assignMap = {}
+    for (const a of (assignmentCounts || [])) {
+      assignMap[a.classroom_id] = (assignMap[a.classroom_id] || 0) + 1
+    }
+
+    const result = (classrooms || []).map(c => ({
+      ...c,
+      role: roleMap[c.id],
+      studentCount: countMap[c.id] || 0,
+      assignmentCount: assignMap[c.id] || 0,
+    }))
+
+    res.json({ classrooms: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] list error:', err.message)
+    res.status(500).json({ error: 'Failed to list classrooms' })
+  }
+})
+
+// Get classroom detail
+app.get('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, owner_id, name, join_code, archived, created_at')
+      .eq('id', req.params.id).single()
+    if (!classroom) return res.status(404).json({ error: 'Classroom not found' })
+
+    const { data: members } = await supabase.from('classroom_members')
+      .select('role').eq('classroom_id', req.params.id).eq('role', 'student')
+
+    res.json({ classroom: { ...classroom, role: user.classroomRole, studentCount: (members || []).length } })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] detail error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch classroom' })
+  }
+})
+
+// Update classroom (name, archive)
+app.put('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    const updates = {}
+    if (typeof req.body.name === 'string') {
+      const name = req.body.name.trim()
+      if (!name || name.length > 100) return res.status(400).json({ error: 'Name must be 1-100 chars' })
+      updates.name = name
+    }
+    if (typeof req.body.archived === 'boolean') updates.archived = req.body.archived
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' })
+
+    updates.updated_at = new Date().toISOString()
+    const { data, error } = await supabase.from('classrooms')
+      .update(updates).eq('id', req.params.id).select('id, name, archived, updated_at').single()
+    if (error) throw error
+    res.json({ classroom: data })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] update error:', err.message)
+    res.status(500).json({ error: 'Failed to update classroom' })
+  }
+})
+
+// Delete classroom (owner only)
+app.delete('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('owner_id').eq('id', req.params.id).single()
+    if (!classroom) return res.status(404).json({ error: 'Classroom not found' })
+    if (classroom.owner_id !== user.id) return res.status(403).json({ error: 'Only the classroom owner can delete it' })
+
+    await supabase.from('classrooms').delete().eq('id', req.params.id)
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] delete error:', err.message)
+    res.status(500).json({ error: 'Failed to delete classroom' })
+  }
+})
+
+// Regenerate join code
+app.post('/api/classroom/:id/regenerate-code', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    let join_code
+    for (let i = 0; i < 5; i++) {
+      join_code = generateJoinCode()
+      const { data: existing } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+      if (!existing) break
+      if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code' })
+    }
+    await supabase.from('classrooms').update({ join_code, updated_at: new Date().toISOString() }).eq('id', req.params.id)
+    res.json({ join_code })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] regenerate-code error:', err.message)
+    res.status(500).json({ error: 'Failed to regenerate code' })
+  }
+})
+
+// Join classroom by code
+app.post('/api/classroom/join', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const code = (req.body.code || '').trim().toUpperCase()
+    if (code.length !== 6) return res.status(400).json({ error: 'Join code must be 6 characters' })
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, name, archived').eq('join_code', code).single()
+    if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
+    if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer accepting new members' })
+
+    const { data: existing } = await supabase.from('classroom_members')
+      .select('id').eq('classroom_id', classroom.id).eq('user_id', user.id).single()
+    if (existing) return res.status(409).json({ error: 'You are already a member of this classroom' })
+
+    await supabase.from('classroom_members')
+      .insert({ classroom_id: classroom.id, user_id: user.id, role: 'student' })
+
+    res.json({ classroom: { id: classroom.id, name: classroom.name } })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] join error:', err.message)
+    res.status(500).json({ error: 'Failed to join classroom' })
+  }
+})
+
+// Leave classroom (student)
+app.delete('/api/classroom/:id/leave', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    await supabase.from('classroom_members')
+      .delete().eq('classroom_id', req.params.id).eq('user_id', user.id).eq('role', 'student')
+    res.json({ left: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] leave error:', err.message)
+    res.status(500).json({ error: 'Failed to leave classroom' })
+  }
+})
+
+// List members (teacher only — names only, no interaction data)
+app.get('/api/classroom/:id/members', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    const { data: members } = await supabase.from('classroom_members')
+      .select('user_id, role, joined_at').eq('classroom_id', req.params.id)
+      .order('joined_at', { ascending: true })
+
+    // Fetch display names from auth (no interaction data)
+    const userIds = (members || []).map(m => m.user_id)
+    const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    const nameMap = {}
+    for (const u of (users || [])) {
+      if (userIds.includes(u.id)) {
+        nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
+      }
+    }
+
+    const result = (members || []).map(m => ({
+      id: m.user_id,
+      name: nameMap[m.user_id] || 'Student',
+      role: m.role,
+      joinedAt: m.joined_at,
+    }))
+
+    res.json({ members: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] members error:', err.message)
+    res.status(500).json({ error: 'Failed to list members' })
+  }
+})
+
+// Create assignment
+app.post('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomTeacher(req, req.params.id)
+    const { billId, billData, instructions, dueDate } = req.body || {}
+    if (!billId || typeof billId !== 'string' || billId.length > 80) {
+      return res.status(400).json({ error: 'Valid bill_id is required' })
+    }
+
+    // Check for duplicate assignment
+    const { data: existing } = await supabase.from('classroom_assignments')
+      .select('id').eq('classroom_id', req.params.id).eq('bill_id', billId).single()
+    if (existing) return res.status(409).json({ error: 'This bill is already assigned to this classroom' })
+
+    const row = {
+      classroom_id: req.params.id,
+      bill_id: billId,
+      bill_data: billData || {},
+      assigned_by: user.id,
+    }
+    if (instructions && typeof instructions === 'string') row.instructions = instructions.slice(0, 500)
+    if (dueDate) row.due_date = dueDate
+
+    const { data: assignment, error } = await supabase.from('classroom_assignments')
+      .insert(row).select('id, bill_id, bill_data, instructions, due_date, created_at').single()
+    if (error) throw error
+
+    res.json({ assignment })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] create assignment error:', err.message)
+    res.status(500).json({ error: 'Failed to create assignment' })
+  }
+})
+
+// Delete assignment
+app.delete('/api/classroom/:id/assignments/:assignmentId', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    await supabase.from('classroom_assignments')
+      .delete().eq('id', req.params.assignmentId).eq('classroom_id', req.params.id)
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] delete assignment error:', err.message)
+    res.status(500).json({ error: 'Failed to delete assignment' })
+  }
+})
+
+// List assignments (member — includes completion status for the current user)
+app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    // Check which assignments the current user has completed
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completedSet = new Set()
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id').eq('user_id', user.id).in('assignment_id', assignmentIds)
+      completedSet = new Set((completions || []).map(c => c.assignment_id))
+    }
+
+    // For teachers, also get aggregate completion counts
+    let completionCounts = {}
+    let totalStudents = 0
+    if (user.classroomRole === 'teacher' && assignmentIds.length > 0) {
+      const { data: members } = await supabase.from('classroom_members')
+        .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
+      totalStudents = (members || []).length
+
+      const { data: allCompletions } = await supabase.from('assignment_completions')
+        .select('assignment_id').in('assignment_id', assignmentIds)
+      for (const c of (allCompletions || [])) {
+        completionCounts[c.assignment_id] = (completionCounts[c.assignment_id] || 0) + 1
+      }
+    }
+
+    const result = (assignments || []).map(a => ({
+      ...a,
+      completed: completedSet.has(a.id),
+      ...(user.classroomRole === 'teacher' ? {
+        completions: completionCounts[a.id] || 0,
+        totalStudents,
+      } : {}),
+    }))
+
+    res.json({ assignments: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] list assignments error:', err.message)
+    res.status(500).json({ error: 'Failed to list assignments' })
+  }
+})
+
+// Mark assignment complete (student)
+app.post('/api/classroom/:id/assignments/:assignmentId/complete', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    if (user.classroomRole !== 'student') return res.status(403).json({ error: 'Only students can mark assignments complete' })
+
+    // Verify assignment belongs to this classroom
+    const { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id').eq('id', req.params.assignmentId).eq('classroom_id', req.params.id).single()
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' })
+
+    let timeSpent = null
+    if (typeof req.body.timeSpentSec === 'number') {
+      timeSpent = Math.min(3600, Math.round(req.body.timeSpentSec / 30) * 30) // round to 30s, cap 1hr
+    }
+
+    await supabase.from('assignment_completions')
+      .upsert({
+        assignment_id: req.params.assignmentId,
+        user_id: user.id,
+        time_spent_sec: timeSpent,
+        completed_at: new Date().toISOString(),
+      }, { onConflict: 'assignment_id,user_id' })
+
+    res.json({ completed: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] complete error:', err.message)
+    res.status(500).json({ error: 'Failed to mark assignment complete' })
+  }
+})
+
+// Aggregate stats (teacher only — PRIVACY: no per-student data ever returned)
+app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    // Total students
+    const { data: students } = await supabase.from('classroom_members')
+      .select('user_id').eq('classroom_id', req.params.id).eq('role', 'student')
+    const totalStudents = (students || []).length
+    const studentIds = (students || []).map(s => s.user_id)
+
+    // Assignments with aggregate completion counts
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completionMap = {}
+    let timeMap = {}
+    let activeThisWeek = new Set()
+
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, user_id, time_spent_sec, completed_at')
+        .in('assignment_id', assignmentIds)
+
+      const weekAgo = Date.now() - 7 * 86400000
+      for (const c of (completions || [])) {
+        completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
+        if (c.time_spent_sec) {
+          if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
+          timeMap[c.assignment_id].push(c.time_spent_sec)
+        }
+        if (new Date(c.completed_at).getTime() > weekAgo) activeThisWeek.add(c.user_id)
+      }
+    }
+
+    // Topic engagement — aggregate only, scoped to classroom students
+    let topicEngagement = {}
+    if (studentIds.length > 0) {
+      const { data: interactions } = await supabase.from('bill_interactions')
+        .select('topic_tag').in('user_id', studentIds)
+      for (const i of (interactions || [])) {
+        if (i.topic_tag) topicEngagement[i.topic_tag] = (topicEngagement[i.topic_tag] || 0) + 1
+      }
+    }
+
+    // Weekly activity (last 8 weeks)
+    const weeklyActivity = []
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('completed_at').in('assignment_id', assignmentIds)
+      const weekBuckets = {}
+      for (const c of (completions || [])) {
+        const d = new Date(c.completed_at)
+        const weekStart = new Date(d)
+        weekStart.setDate(d.getDate() - d.getDay())
+        const key = weekStart.toISOString().slice(0, 10)
+        weekBuckets[key] = (weekBuckets[key] || 0) + 1
+      }
+      const sorted = Object.entries(weekBuckets).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8)
+      for (const [week, count] of sorted) weeklyActivity.push({ week, completions: count })
+    }
+
+    const assignmentStats = (assignments || []).map(a => {
+      const times = timeMap[a.id] || []
+      const avgTime = times.length > 0 ? Math.round(times.reduce((s, t) => s + t, 0) / times.length) : null
+      return {
+        id: a.id,
+        billId: a.bill_id,
+        title: a.bill_data?.title || a.bill_id,
+        dueDate: a.due_date,
+        completions: completionMap[a.id] || 0,
+        totalStudents,
+        avgTimeSec: avgTime,
+      }
+    })
+
+    res.json({
+      totalStudents,
+      activeThisWeek: activeThisWeek.size,
+      assignments: assignmentStats,
+      topicEngagement: Object.entries(topicEngagement).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      weeklyActivity,
+    })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] stats error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch classroom stats' })
+  }
+})
+
+// Export CSV (teacher only — aggregate data)
+app.get('/api/classroom/:id/export', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    const { data: students } = await supabase.from('classroom_members')
+      .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
+    const totalStudents = (students || []).length
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('name').eq('id', req.params.id).single()
+
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: true })
+
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completionMap = {}
+    let timeMap = {}
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, time_spent_sec').in('assignment_id', assignmentIds)
+      for (const c of (completions || [])) {
+        completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
+        if (c.time_spent_sec) {
+          if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
+          timeMap[c.assignment_id].push(c.time_spent_sec)
+        }
+      }
+    }
+
+    let csv = 'Assignment,Bill ID,Due Date,Completions,Total Students,Completion %,Avg Time (min)\n'
+    for (const a of (assignments || [])) {
+      const comp = completionMap[a.id] || 0
+      const pct = totalStudents > 0 ? Math.round((comp / totalStudents) * 100) : 0
+      const times = timeMap[a.id] || []
+      const avgMin = times.length > 0 ? (times.reduce((s, t) => s + t, 0) / times.length / 60).toFixed(1) : 'N/A'
+      const title = (a.bill_data?.title || a.bill_id).replace(/"/g, '""')
+      csv += `"${title}",${a.bill_id},${a.due_date || 'N/A'},${comp},${totalStudents},${pct}%,${avgMin}\n`
+    }
+
+    const filename = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
+    res.setHeader('Content-Type', 'text/csv')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(csv)
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] export error:', err.message)
+    res.status(500).json({ error: 'Failed to export' })
+  }
+})
+
 // ─── Feedback endpoint ───────────────────────────────────────────────────────
 app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   const { name, email, type, message } = req.body || {}
@@ -4352,7 +4928,7 @@ function requireAdmin(req, res, next) {
 
 app.get('/api/admin/stats', requireAdmin, async (req, res) => {
   try {
-    const stats = { users: {}, bills: {}, cache: {}, api: {}, feedback: {}, interactions: {} }
+    const stats = { users: {}, bills: {}, cache: {}, api: {}, feedback: {}, interactions: {}, classrooms: {} }
 
     // User stats
     if (supabase) {
@@ -4456,6 +5032,25 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
       const typeMap = {}
       for (const f of (fb || [])) typeMap[f.type] = (typeMap[f.type] || 0) + 1
       stats.feedback.byType = typeMap
+    }
+
+    // Classroom stats
+    if (supabase) {
+      const [classroomsRes, membersRes, assignmentsRes, completionsRes] = await Promise.all([
+        supabase.from('classrooms').select('id', { count: 'exact' }),
+        supabase.from('classroom_members').select('role', { count: 'exact' }),
+        supabase.from('classroom_assignments').select('id', { count: 'exact' }),
+        supabase.from('assignment_completions').select('id', { count: 'exact' }),
+      ])
+      const studentCount = (membersRes.data || []).filter(m => m.role === 'student').length
+      const teacherCount = (membersRes.data || []).filter(m => m.role === 'teacher').length
+      stats.classrooms = {
+        totalClassrooms: classroomsRes.count || 0,
+        totalStudents: studentCount,
+        totalTeachers: teacherCount,
+        totalAssignments: assignmentsRes.count || 0,
+        totalCompletions: completionsRes.count || 0,
+      }
     }
 
     // API metrics (in-memory)

@@ -21,6 +21,9 @@ const Search = lazy(() => import('./pages/Search.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
+const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
+const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
+const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
 
 function PageLoader() {
   return (
@@ -52,6 +55,8 @@ const PAGE_TITLES = {
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
   '/admin': 'Admin | CapitolKey',
+  '/classroom': 'Classrooms | CapitolKey',
+  '/classroom/join': 'Join Classroom | CapitolKey',
 }
 
 function NotFound() {
@@ -255,7 +260,10 @@ export default function App() {
           <Route path="/privacy"   element={<Privacy />} />
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
-          <Route path="/admin"     element={<Admin />} />
+          <Route path="/admin"          element={<Admin />} />
+          <Route path="/classroom"       element={<TeacherDashboard />} />
+          <Route path="/classroom/join"  element={<JoinClassroom />} />
+          <Route path="/classroom/:id"   element={<ClassroomDetail />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
