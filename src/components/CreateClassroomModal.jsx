@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import { createClassroom } from '../lib/classroom'
 import styles from './CreateClassroomModal.module.css'
 
@@ -17,8 +17,8 @@ export default function CreateClassroomModal({ onClose, onCreated }) {
     setLoading(true)
     setError('')
     try {
-      const session = await supabase?.auth.getSession()
-      const token = session?.data?.session?.access_token
+      const session = await getSessionSafe()
+      const token = session?.access_token
       if (!token) { setError('Please sign in'); setLoading(false); return }
       await createClassroom(token, name.trim(), requireName)
       onCreated()

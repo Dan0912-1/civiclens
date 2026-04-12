@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getJoinedClassrooms } from '../lib/classroom'
 import CreateClassroomModal from '../components/CreateClassroomModal.jsx'
 import styles from './TeacherDashboard.module.css'
@@ -27,13 +27,10 @@ export default function TeacherDashboard() {
     setAnonClassrooms(localJoined)
 
     // Load server-side classrooms for logged-in users
-    if (user && supabase) {
+    if (user) {
       try {
-        const session = await Promise.race([
-          supabase.auth.getSession(),
-          new Promise(r => setTimeout(() => r({ data: { session: null } }), 3000)),
-        ])
-        const token = session?.data?.session?.access_token
+        const session = await getSessionSafe()
+        const token = session?.access_token
         if (token) {
           const data = await getMyClassrooms(token)
           setClassrooms(data)

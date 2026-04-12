@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import { joinClassroom, peekClassroom, addJoinedClassroom } from '../lib/classroom'
 import styles from './JoinClassroom.module.css'
 
@@ -27,8 +27,8 @@ export default function JoinClassroom() {
     setError('')
     try {
       if (user) {
-        const session = await supabase?.auth.getSession()
-        const token = session?.data?.session?.access_token
+        const session = await getSessionSafe()
+        const token = session?.access_token
         if (!token) { setError('Please sign in first'); setLoading(false); return }
         await joinClassroom(token, trimmed)
         navigate('/classroom')

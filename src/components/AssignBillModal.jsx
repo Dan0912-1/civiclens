@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { createAssignment } from '../lib/classroom'
 import styles from './AssignBillModal.module.css'
@@ -42,8 +42,8 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
     setAssigning(true)
     setError('')
     try {
-      const session = await supabase?.auth.getSession()
-      const token = session?.data?.session?.access_token
+      const session = await getSessionSafe()
+      const token = session?.access_token
       if (!token) { setError('Please sign in'); setAssigning(false); return }
 
       const billId = makeBillId(selected)

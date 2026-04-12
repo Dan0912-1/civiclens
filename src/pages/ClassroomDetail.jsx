@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import {
   getClassroomDetail, getAssignments, removeAssignment,
   getClassroomStats, exportClassroomCsv, regenerateCode,
@@ -29,13 +29,9 @@ export default function ClassroomDetail() {
   }, [user, id])
 
   async function getToken() {
-    if (!supabase) return null
     try {
-      const session = await Promise.race([
-        supabase.auth.getSession(),
-        new Promise(r => setTimeout(() => r({ data: { session: null } }), 3000)),
-      ])
-      const t = session?.data?.session?.access_token
+      const session = await getSessionSafe()
+      const t = session?.access_token || null
       setToken(t)
       return t
     } catch { return null }
