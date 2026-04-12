@@ -14,7 +14,7 @@
   border: 1px solid var(--border);
   border-radius: 1px;
   padding: 32px;
-  max-width: 560px;
+  max-width: 600px;
   width: 100%;
   max-height: 80vh;
   overflow-y: auto;
@@ -27,10 +27,12 @@
   margin-bottom: var(--space-lg);
 }
 
+/* ─── Search bar ──────────────────────────────────────────────────────────── */
+
 .searchRow {
   display: flex;
   gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
 }
 
 .searchInput {
@@ -64,6 +66,144 @@
 .searchBtn:hover:not(:disabled) { background: var(--navy-light); }
 .searchBtn:disabled { opacity: 0.5; }
 
+/* ─── Filter section ──────────────────────────────────────────────────────── */
+
+.filterSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-md);
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.tabGroup {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.tab {
+  padding: 6px 14px;
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--white);
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.tab:hover { background: var(--cream); }
+
+.tabActive {
+  background: var(--navy);
+  color: var(--white);
+}
+
+.tabActive:hover { background: var(--navy-light); }
+
+.stateSelect {
+  padding: 6px 10px;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  color: var(--navy);
+  background: var(--white);
+  max-width: 180px;
+}
+
+.stateSelect:focus {
+  outline: none;
+  border-color: var(--amber);
+}
+
+.chamberRow {
+  display: flex;
+  gap: 4px;
+}
+
+.chamberPill {
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--white);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chamberPill:hover { border-color: var(--amber); color: var(--navy); }
+
+.chamberActive {
+  background: var(--amber);
+  color: var(--navy);
+  border-color: var(--amber);
+}
+
+/* ─── Topic chips ─────────────────────────────────────────────────────────── */
+
+.chipSection {
+  margin-bottom: var(--space-md);
+}
+
+.chipLabel {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 12px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--cream);
+  color: var(--navy);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chip:hover {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--navy);
+}
+
+/* ─── Results list ────────────────────────────────────────────────────────── */
+
 .resultsList {
   display: flex;
   flex-direction: column;
@@ -72,6 +212,8 @@
   border: 1px solid var(--border);
   border-radius: 1px;
   overflow: hidden;
+  max-height: 340px;
+  overflow-y: auto;
 }
 
 .resultItem {
@@ -87,6 +229,13 @@
 
 .resultItem:hover { background: var(--cream); }
 
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
 .resultBillNum {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -94,6 +243,38 @@
   color: var(--amber);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.resultMeta {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 1px;
+  background: var(--cream);
+  color: var(--text-muted);
+  border: 1px solid var(--border-light);
+}
+
+.badgeChamber {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 1px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 
 .resultTitle {
@@ -109,6 +290,8 @@
   padding: var(--space-lg);
   font-style: italic;
 }
+
+/* ─── Assignment form (step 2) ────────────────────────────────────────────── */
 
 .assignForm {
   display: flex;
