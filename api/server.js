@@ -11,7 +11,7 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
-import { runDailySync, runBackfill } from './billSync.js'
+import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts } from './billSync.js'
 // pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
@@ -1467,7 +1467,34 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
     const result = await dedup(cacheKey, async () => {
       // Fetch full bill content for accurate personalization
       const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
-      const billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
+      let billData
+      if (bill.isStateBill && bill._localText) {
+        // State bill with text already from local DB (passed via frontend)
+        billData = { text: bill._localText, wordCount: bill._localTextWordCount || 0, version: bill._localTextVersion || 'local', crsSummary: bill._localCrsSummary || null, crsVersion: '' }
+      } else if (bill.isStateBill && !bill._localText) {
+        // State bill missing text — try on-demand fetch from Open States
+        let stateText = null
+        if (supabase) {
+          const { data: dbBill } = await supabase
+            .from('bills')
+            .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text')
+            .eq('jurisdiction', bill.state)
+            .eq('bill_type', billType)
+            .eq('bill_number', bill.number)
+            .limit(1)
+            .single()
+          if (dbBill?.full_text) {
+            stateText = dbBill.full_text
+          } else if (dbBill?.openstates_id) {
+            stateText = await fetchBillText(supabase, dbBill)
+          }
+        }
+        billData = stateText
+          ? { text: stateText, wordCount: stateText.split(/\s+/).length, version: 'openstates_html', crsSummary: null, crsVersion: '' }
+          : { text: null, wordCount: 0, version: '', crsSummary: null, crsVersion: '' }
+      } else {
+        billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
+      }
       const { billContent, sources } = buildBillContent(billData)
       // Build a TRUSTED bill object using canonical metadata from LegiScan when
       // available. This is the C1 fix — req.body.bill.title is no longer the
@@ -1677,7 +1704,35 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       return { ...b, billData }
     }
 
-    // Fetch from LegiScan
+    // State bills: use local text or fetch from Open States
+    if (b.bill.isStateBill && b.bill._localText) {
+      const billData = { text: b.bill._localText, wordCount: b.bill._localTextWordCount || 0, version: b.bill._localTextVersion || 'local', crsSummary: b.bill._localCrsSummary || null, crsVersion: '' }
+      return { ...b, billData }
+    }
+    if (b.bill.isStateBill && !b.bill._localText && supabase) {
+      const { data: dbBill } = await supabase
+        .from('bills')
+        .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text')
+        .eq('jurisdiction', b.bill.state)
+        .eq('bill_type', b.billType)
+        .eq('bill_number', b.bill.number)
+        .limit(1)
+        .single()
+      if (dbBill?.full_text) {
+        const billData = { text: dbBill.full_text, wordCount: dbBill.full_text.split(/\s+/).length, version: 'local', crsSummary: null, crsVersion: '' }
+        return { ...b, billData }
+      }
+      if (dbBill?.openstates_id) {
+        const text = await fetchBillText(supabase, dbBill)
+        if (text) {
+          const billData = { text, wordCount: text.split(/\s+/).length, version: 'openstates_html', crsSummary: null, crsVersion: '' }
+          return { ...b, billData }
+        }
+      }
+      return { ...b, billData: { text: null, wordCount: 0, version: '', crsSummary: null, crsVersion: '' } }
+    }
+
+    // Federal bills: fetch from LegiScan
     const billData = await fetchBillContent(b.bill.congress, b.billType, b.bill.number, b.bill.legiscan_bill_id)
     return { ...b, billData }
   })
@@ -3279,13 +3334,16 @@ function buildBillContent(billData) {
   }
 
   if (billData.text) {
+    const sourceLabel = billData.version?.includes('openstates') || billData.version === 'scraped_html'
+      ? 'state legislature website'
+      : billData.version === 'local' ? 'local database' : 'LegiScan'
     if (billData.wordCount <= BILL_TEXT_WORD_LIMIT) {
       billContent += `FULL BILL TEXT (${billData.version}):\n${billData.text}\n`
-      sources.push('full bill text via LegiScan')
+      sources.push(`full bill text via ${sourceLabel}`)
     } else {
       const truncated = billData.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
       billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billData.wordCount.toLocaleString()}, ${billData.version}):\n${truncated}\n`
-      sources.push('bill text via LegiScan')
+      sources.push(`bill text via ${sourceLabel}`)
     }
   }
 

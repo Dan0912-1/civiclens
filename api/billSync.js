@@ -629,6 +629,24 @@ async function runDailySync(supabase, config) {
     }
   }
 
+  // Phase 4: State backfill (spread over ~12 days)
+  if (openStatesApiKey) {
+    try {
+      results.stateBackfill = await runStateBackfill(supabase, openStatesApiKey)
+    } catch (err) {
+      console.error('[sync] State backfill failed:', err.message)
+      results.stateBackfill = { error: err.message }
+    }
+
+    // Phase 5: Fetch text for state bills that are missing it
+    try {
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 30 })
+    } catch (err) {
+      console.error('[sync] State text backfill failed:', err.message)
+      results.stateTexts = { error: err.message }
+    }
+  }
+
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   console.log('[sync] ═══════════════════════════════════════════════')
   console.log(`[sync] Complete in ${elapsed}s:`, JSON.stringify(results))
@@ -669,6 +687,355 @@ async function runBackfill(supabase, config) {
   }
 }
 
+// ─── On-demand bill text fetching (Open States → legislature HTML) ────────
+// For state bills missing full_text. Fetches version links from Open States,
+// then scrapes the legislature HTML page to extract bill text.
+
+async function fetchBillText(supabase, bill) {
+  if (!bill || bill.source !== 'openstates' || bill.full_text) return bill.full_text || null
+  if (!bill.openstates_id) return null
+
+  const apiKey = process.env.OPENSTATES_API_KEY
+  if (!apiKey) {
+    console.warn('[fetchBillText] No OPENSTATES_API_KEY configured')
+    return null
+  }
+
+  try {
+    // Step 1: Query Open States for bill versions using the OCD bill ID
+    const billId = encodeURIComponent(bill.openstates_id)
+    const url = `${OPENSTATES_BASE}/bills/${billId}?include=versions&apikey=${apiKey}`
+    console.log(`[fetchBillText] Fetching versions for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`)
+
+    const resp = await fetch(url)
+    if (!resp.ok) {
+      console.error(`[fetchBillText] Open States API error: ${resp.status}`)
+      return null
+    }
+
+    const data = await resp.json()
+    const versions = data.versions || []
+    if (!versions.length) {
+      console.log(`[fetchBillText] No versions available for ${bill.openstates_id}`)
+      return null
+    }
+
+    // Step 2: Find the latest version with an HTML link
+    // Versions are usually ordered chronologically; take the last one (most recent)
+    let htmlUrl = null
+    for (let i = versions.length - 1; i >= 0; i--) {
+      const version = versions[i]
+      const links = version.links || []
+      // Prefer text/html over application/pdf
+      const htmlLink = links.find(l =>
+        l.media_type === 'text/html' ||
+        (l.url && !l.url.endsWith('.pdf') && !l.media_type?.includes('pdf'))
+      )
+      if (htmlLink?.url) {
+        htmlUrl = htmlLink.url
+        break
+      }
+    }
+
+    if (!htmlUrl) {
+      console.log(`[fetchBillText] No HTML version found for ${bill.openstates_id} (PDF-only or no links)`)
+      return null
+    }
+
+    // Step 3: Fetch the HTML page from the state legislature site (free, no API cost)
+    console.log(`[fetchBillText] Scraping text from: ${htmlUrl}`)
+    const htmlResp = await fetch(htmlUrl, {
+      headers: {
+        'User-Agent': 'CapitolKey/1.0 (civic education platform)',
+        'Accept': 'text/html',
+      },
+      signal: AbortSignal.timeout(15000),
+    })
+
+    if (!htmlResp.ok) {
+      console.error(`[fetchBillText] Legislature site error: ${htmlResp.status} for ${htmlUrl}`)
+      return null
+    }
+
+    const html = await htmlResp.text()
+
+    // Step 4: Extract text from HTML
+    const fullText = extractTextFromHtml(html)
+    if (!fullText || fullText.length < 100) {
+      console.log(`[fetchBillText] Extracted text too short (${fullText?.length || 0} chars), skipping`)
+      return null
+    }
+
+    const wordCount = fullText.split(/\s+/).length
+    console.log(`[fetchBillText] Extracted ${wordCount} words for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`)
+
+    // Step 5: Save to Supabase
+    if (supabase && bill.id) {
+      const { error } = await supabase
+        .from('bills')
+        .update({
+          full_text: fullText,
+          text_word_count: wordCount,
+          text_version: 'scraped_html',
+          synced_at: new Date().toISOString(),
+        })
+        .eq('id', bill.id)
+
+      if (error) {
+        console.error(`[fetchBillText] Supabase update error:`, error.message)
+      }
+    }
+
+    return fullText
+  } catch (err) {
+    console.error(`[fetchBillText] Error for ${bill.openstates_id}:`, err.message)
+    return null
+  }
+}
+
+/**
+ * Strips HTML tags and extracts readable text from a legislature page.
+ * Uses balanced-div extraction to handle nested containers (e.g., California's
+ * leginfo.legislature.ca.gov which nests bill text inside div#bill_all).
+ */
+function extractTextFromHtml(html) {
+  // Remove script and style blocks entirely
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+
+  // Try to extract from known content containers using balanced-div parsing
+  // These IDs/classes are common across state legislature sites
+  const containerIds = ['bill_all', 'bill_text', 'billTextContainer', 'billtext', 'bill-text', 'content_main', 'legislation']
+  const containerClasses = ['bill-content', 'bill-text', 'legislation-text', 'billText']
+
+  let extracted = null
+
+  // Try ID-based containers first
+  for (const id of containerIds) {
+    const marker = text.indexOf(`id="${id}"`)
+    if (marker === -1) continue
+    const section = extractBalancedDiv(text, marker)
+    if (section && section.length > 500) {
+      extracted = section
+      break
+    }
+  }
+
+  // Try class-based containers
+  if (!extracted) {
+    for (const cls of containerClasses) {
+      const marker = text.indexOf(`class="${cls}"`) !== -1
+        ? text.indexOf(`class="${cls}"`)
+        : text.indexOf(cls)
+      if (marker === -1 || !text.slice(marker - 50, marker).includes('<div')) continue
+      const section = extractBalancedDiv(text, marker)
+      if (section && section.length > 500) {
+        extracted = section
+        break
+      }
+    }
+  }
+
+  // Try <article> or <main> tags
+  if (!extracted) {
+    const articleMatch = text.match(/<article[^>]*>([\s\S]*)<\/article>/i)
+    if (articleMatch && articleMatch[1].length > 500) extracted = articleMatch[1]
+  }
+  if (!extracted) {
+    const mainMatch = text.match(/<main[^>]*>([\s\S]*)<\/main>/i)
+    if (mainMatch && mainMatch[1].length > 500) extracted = mainMatch[1]
+  }
+
+  if (extracted) text = extracted
+
+  // Strip all remaining HTML tags
+  text = text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+
+  // Decode HTML entities
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
+    .replace(/&#\d+;/g, '')
+
+  // Normalize whitespace
+  text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+
+  return text
+}
+
+/**
+ * Extracts content from a balanced div starting near the given marker position.
+ * Handles arbitrarily nested divs by counting open/close tags.
+ */
+function extractBalancedDiv(html, markerIndex) {
+  // Find the opening <div that contains this marker
+  let start = html.lastIndexOf('<div', markerIndex)
+  if (start === -1) return null
+
+  let depth = 0
+  let i = start
+  while (i < html.length) {
+    if (html.slice(i, i + 4).toLowerCase() === '<div') {
+      depth++
+      i += 4
+    } else if (html.slice(i, i + 6).toLowerCase() === '</div>') {
+      depth--
+      if (depth === 0) {
+        return html.slice(start, i + 6)
+      }
+      i += 6
+    } else {
+      i++
+    }
+  }
+  // If unbalanced, return what we have from start to end
+  return html.slice(start)
+}
+
+// ─── State backfill queue ────────────────────────────────────────────────────
+// Automatically backfills 30 days of state bills over ~12 days, respecting
+// the Open States 1,000/day limit. Called after daily sync completes.
+
+async function runStateBackfill(supabase, apiKey, dailyCallBudget = 800) {
+  if (!supabase || !apiKey) return { synced: 0, calls: 0, statesCompleted: [] }
+
+  console.log(`[backfill] Starting state backfill with budget of ${dailyCallBudget} calls`)
+
+  // Determine which states need backfill:
+  // A state needs backfill if it has no bills older than 7 days
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString()
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+
+  // Get the oldest bill date per state
+  const { data: stateStats, error: statsError } = await supabase
+    .from('bills')
+    .select('jurisdiction')
+    .eq('source', 'openstates')
+    .lt('updated_at', sevenDaysAgo)
+    .limit(1)
+
+  // Get all states that have bills in our DB
+  const { data: existingStates } = await supabase
+    .from('bills')
+    .select('jurisdiction')
+    .eq('source', 'openstates')
+
+  const statesWithOldBills = new Set((stateStats || []).map(r => r.jurisdiction))
+  const statesInDb = new Set((existingStates || []).map(r => r.jurisdiction))
+
+  // States that need backfill = all 51 states minus those that already have old bills
+  const allStates = Object.keys(STATE_NAMES)
+  const statesNeedingBackfill = allStates.filter(s => !statesWithOldBills.has(s))
+
+  if (!statesNeedingBackfill.length) {
+    console.log('[backfill] All states have historical bills, no backfill needed')
+    return { synced: 0, calls: 0, statesCompleted: [] }
+  }
+
+  // Sort: states already in DB first (we know they work), then alphabetical
+  statesNeedingBackfill.sort((a, b) => {
+    const aInDb = statesInDb.has(a) ? 0 : 1
+    const bInDb = statesInDb.has(b) ? 0 : 1
+    if (aInDb !== bInDb) return aInDb - bInDb
+    return a.localeCompare(b)
+  })
+
+  console.log(`[backfill] ${statesNeedingBackfill.length} states need backfill: ${statesNeedingBackfill.slice(0, 10).join(', ')}...`)
+
+  let totalSynced = 0
+  let totalCalls = 0
+  const statesCompleted = []
+
+  for (const stateCode of statesNeedingBackfill) {
+    if (totalCalls >= dailyCallBudget) {
+      console.log(`[backfill] Daily budget exhausted (${totalCalls}/${dailyCallBudget} calls). Stopping.`)
+      break
+    }
+
+    const remainingBudget = dailyCallBudget - totalCalls
+
+    try {
+      console.log(`[backfill] Backfilling ${stateCode} (${STATE_NAMES[stateCode]}), ~${remainingBudget} calls remaining`)
+
+      const result = await syncOpenStates(supabase, apiKey, {
+        since: thirtyDaysAgo,
+        states: [stateCode],
+      })
+
+      totalSynced += result.synced
+      totalCalls += result.calls
+      statesCompleted.push(stateCode)
+
+      console.log(`[backfill] ${stateCode}: synced ${result.synced} bills in ${result.calls} calls`)
+    } catch (err) {
+      console.error(`[backfill] Error backfilling ${stateCode}:`, err.message)
+    }
+  }
+
+  console.log(`[backfill] Done: ${statesCompleted.length} states completed, ${totalSynced} bills synced, ${totalCalls} API calls`)
+  return { synced: totalSynced, calls: totalCalls, statesCompleted }
+}
+
+// ─── Batch text fetch for state bills ────────────────────────────────────────
+// Fetches full_text for state bills that don't have it. Runs after daily sync.
+// Limited by Open States API quota.
+
+async function backfillStateTexts(supabase, apiKey, options = {}) {
+  const { limit: maxBills = 50 } = options
+  if (!supabase || !apiKey) return { synced: 0, calls: 0 }
+
+  // Find state bills without full_text
+  const { data: needText } = await supabase
+    .from('bills')
+    .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source')
+    .eq('source', 'openstates')
+    .is('full_text', null)
+    .not('openstates_id', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(maxBills)
+
+  if (!needText?.length) {
+    console.log('[backfill:text] No state bills need text fetching')
+    return { synced: 0, calls: 0 }
+  }
+
+  console.log(`[backfill:text] Fetching text for ${needText.length} state bills`)
+  let synced = 0
+  let calls = 0
+
+  for (const bill of needText) {
+    try {
+      const text = await fetchBillText(supabase, bill)
+      calls++ // Each fetchBillText uses 1 Open States API call
+      if (text) synced++
+      // Rate limit: 1.5s between calls (Open States limit is 40/min)
+      await sleep(1500)
+    } catch (err) {
+      console.error(`[backfill:text] Error for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}:`, err.message)
+    }
+  }
+
+  console.log(`[backfill:text] Done: ${synced}/${needText.length} texts fetched, ${calls} API calls`)
+  return { synced, calls }
+}
+
 // ─── Utilities ─────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
@@ -679,6 +1046,10 @@ export {
   syncCongressGov,
   syncOpenStates,
   syncLegiScanTexts,
+  fetchBillText,
+  runStateBackfill,
+  backfillStateTexts,
+  extractTextFromHtml,
   classifyTopics,
   normalizeStatus,
   STATE_NAMES,
