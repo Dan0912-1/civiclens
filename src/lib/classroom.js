@@ -18,11 +18,11 @@ export async function getMyClassrooms(token) {
   } catch { return [] }
 }
 
-export async function createClassroom(token, name) {
+export async function createClassroom(token, name, requireName = false) {
   const resp = await fetch(`${API}/api/classroom`, {
     method: 'POST',
     headers: await authHeaders(token),
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, requireName }),
   })
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}))
@@ -143,4 +143,36 @@ export async function exportClassroomCsv(token, id) {
   const resp = await fetch(`${API}/api/classroom/${id}/export`, { headers: await authHeaders(token) })
   if (!resp.ok) throw new Error('Failed to export')
   return resp.blob()
+}
+
+// Public (no auth) — peek at classroom by code
+export async function peekClassroom(code) {
+  const resp = await fetch(`${API}/api/classroom/peek/${encodeURIComponent(code.toUpperCase())}`)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.error || 'Invalid code')
+  }
+  return resp.json()
+}
+
+// Session storage helpers for anonymous classroom access
+const JOINED_KEY = 'ck_joined_classrooms'
+
+export function getJoinedClassrooms() {
+  try {
+    return JSON.parse(sessionStorage.getItem(JOINED_KEY) || '[]')
+  } catch { return [] }
+}
+
+export function addJoinedClassroom(code, name, classroomId, studentName) {
+  const joined = getJoinedClassrooms().filter(c => c.code !== code)
+  const entry = { code, name, classroomId, joinedAt: new Date().toISOString() }
+  if (studentName) entry.studentName = studentName
+  joined.push(entry)
+  sessionStorage.setItem(JOINED_KEY, JSON.stringify(joined))
+}
+
+export function removeJoinedClassroom(code) {
+  const joined = getJoinedClassrooms().filter(c => c.code !== code)
+  sessionStorage.setItem(JOINED_KEY, JSON.stringify(joined))
 }

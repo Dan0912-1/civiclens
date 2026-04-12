@@ -4330,8 +4330,8 @@ app.post('/api/classroom', classroomLimiter, async (req, res) => {
     }
 
     const { data: classroom, error } = await supabase.from('classrooms')
-      .insert({ owner_id: user.id, name, join_code })
-      .select('id, name, join_code, created_at')
+      .insert({ owner_id: user.id, name, join_code, require_name: !!req.body.requireName })
+      .select('id, name, join_code, require_name, created_at')
       .single()
     if (error) throw error
 
@@ -4509,6 +4509,33 @@ app.post('/api/classroom/join', classroomLimiter, async (req, res) => {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     console.error('[classroom] join error:', err.message)
     res.status(500).json({ error: 'Failed to join classroom' })
+  }
+})
+
+// Public: peek at classroom by code (no auth — for anonymous students)
+app.get('/api/classroom/peek/:code', classroomLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const code = (req.params.code || '').trim().toUpperCase()
+    if (code.length !== 6) return res.status(400).json({ error: 'Invalid code' })
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, name, archived, require_name').eq('join_code', code).single()
+    if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
+    if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer active' })
+
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at')
+      .eq('classroom_id', classroom.id)
+      .order('created_at', { ascending: false })
+
+    res.json({
+      classroom: { id: classroom.id, name: classroom.name, requireName: !!classroom.require_name },
+      assignments: assignments || [],
+    })
+  } catch (err) {
+    console.error('[classroom] peek error:', err.message)
+    res.status(500).json({ error: 'Failed to load classroom' })
   }
 })
 

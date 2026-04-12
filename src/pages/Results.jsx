@@ -5,7 +5,7 @@ import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } f
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
-import { getMyClassrooms, getAssignments } from '../lib/classroom'
+import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
@@ -103,23 +103,39 @@ export default function Results() {
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
   }, [user])
 
-  // Load pending classroom assignments for students
+  // Load pending classroom assignments for students (logged-in or anonymous)
   const [pendingAssignments, setPendingAssignments] = useState([])
   useEffect(() => {
-    if (!user) return
     async function loadAssignments() {
-      const session = await supabase?.auth.getSession()
-      const token = session?.data?.session?.access_token
-      if (!token) return
-      const classrooms = await getMyClassrooms(token)
-      const studentClasses = classrooms.filter(c => c.role === 'student')
       const allAssignments = []
-      for (const cls of studentClasses) {
-        const assignments = await getAssignments(token, cls.id)
-        for (const a of assignments) {
-          if (!a.completed) allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.id })
+
+      // Logged-in: fetch from server
+      if (user) {
+        const session = await supabase?.auth.getSession()
+        const token = session?.data?.session?.access_token
+        if (token) {
+          const classrooms = await getMyClassrooms(token)
+          const studentClasses = classrooms.filter(c => c.role === 'student')
+          for (const cls of studentClasses) {
+            const assignments = await getAssignments(token, cls.id)
+            for (const a of assignments) {
+              if (!a.completed) allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.id })
+            }
+          }
         }
       }
+
+      // Anonymous: fetch from sessionStorage codes via peek
+      const localJoined = getJoinedClassrooms()
+      for (const cls of localJoined) {
+        try {
+          const data = await peekClassroom(cls.code)
+          for (const a of (data.assignments || [])) {
+            allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.classroomId })
+          }
+        } catch {}
+      }
+
       setPendingAssignments(allAssignments)
     }
     loadAssignments()

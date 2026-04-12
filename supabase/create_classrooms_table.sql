@@ -4,7 +4,8 @@ create table if not exists classrooms (
   owner_id    uuid not null references auth.users(id) on delete cascade,
   name        text not null check (char_length(name) between 1 and 100),
   join_code   text not null unique check (char_length(join_code) = 6),
-  archived    boolean not null default false,
+  archived      boolean not null default false,
+  require_name  boolean not null default false,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );

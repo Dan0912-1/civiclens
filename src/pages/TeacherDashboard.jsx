@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../lib/supabase'
-import { getMyClassrooms } from '../lib/classroom'
+import { getMyClassrooms, getJoinedClassrooms } from '../lib/classroom'
 import CreateClassroomModal from '../components/CreateClassroomModal.jsx'
 import styles from './TeacherDashboard.module.css'
 
@@ -10,22 +10,30 @@ export default function TeacherDashboard() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [classrooms, setClassrooms] = useState([])
+  const [anonClassrooms, setAnonClassrooms] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [codeCopied, setCodeCopied] = useState(null)
 
   useEffect(() => {
-    if (!user) { navigate('/'); return }
     loadClassrooms()
   }, [user])
 
   async function loadClassrooms() {
     setLoading(true)
-    const session = await supabase?.auth.getSession()
-    const token = session?.data?.session?.access_token
-    if (token) {
-      const data = await getMyClassrooms(token)
-      setClassrooms(data)
+
+    // Load anonymous joined classrooms from sessionStorage
+    const localJoined = getJoinedClassrooms()
+    setAnonClassrooms(localJoined)
+
+    // Load server-side classrooms for logged-in users
+    if (user) {
+      const session = await supabase?.auth.getSession()
+      const token = session?.data?.session?.access_token
+      if (token) {
+        const data = await getMyClassrooms(token)
+        setClassrooms(data)
+      }
     }
     setLoading(false)
   }
@@ -45,6 +53,7 @@ export default function TeacherDashboard() {
 
   const teacherClasses = classrooms.filter(c => c.role === 'teacher')
   const studentClasses = classrooms.filter(c => c.role === 'student')
+  const hasAnything = classrooms.length > 0 || anonClassrooms.length > 0
 
   if (loading) {
     return (
@@ -64,23 +73,22 @@ export default function TeacherDashboard() {
         <div className={styles.header}>
           <h1>Classrooms</h1>
           <div className={styles.actions}>
-            <button className={styles.btnPrimary} onClick={() => setShowCreate(true)}>
-              Create Class
-            </button>
+            {user && (
+              <button className={styles.btnPrimary} onClick={() => setShowCreate(true)}>
+                Create Class
+              </button>
+            )}
             <button className={styles.btnSecondary} onClick={() => navigate('/classroom/join')}>
               Join a Class
             </button>
           </div>
         </div>
 
-        {classrooms.length === 0 && (
+        {!hasAnything && (
           <div className={styles.empty}>
             <h2>Welcome to Classrooms</h2>
-            <p>Create a classroom to assign bills to your students and track engagement, or join a class with a code from your teacher.</p>
+            <p>Join a class with a code from your teacher to see assigned bills. Teachers can sign in to create classes and track engagement.</p>
             <div className={styles.emptyActions}>
-              <button className={styles.btnPrimary} onClick={() => setShowCreate(true)}>
-                Create Your First Class
-              </button>
               <button className={styles.btnSecondary} onClick={() => navigate('/classroom/join')}>
                 Join with Code
               </button>
@@ -139,6 +147,29 @@ export default function TeacherDashboard() {
                   </div>
                   <div className={styles.cardStats}>
                     <span>{c.assignmentCount} assignment{c.assignmentCount !== 1 ? 's' : ''}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Anonymous joined classrooms (via code, no account) */}
+        {anonClassrooms.length > 0 && studentClasses.length === 0 && (
+          <section>
+            <h2 className={styles.sectionTitle}>Your Classes</h2>
+            <div className={styles.grid}>
+              {anonClassrooms.map(c => (
+                <button
+                  key={c.code}
+                  className={styles.card}
+                  onClick={() => navigate(`/classroom/view/${c.code}`)}
+                >
+                  <div className={styles.cardTop}>
+                    <span className={styles.cardName}>{c.name}</span>
+                  </div>
+                  <div className={styles.cardStats}>
+                    <span>Joined via code</span>
                   </div>
                 </button>
               ))}

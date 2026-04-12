@@ -24,6 +24,7 @@ const Admin = lazy(() => import('./pages/Admin.jsx'))
 const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
 const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
 const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
+const ClassroomView = lazy(() => import('./pages/ClassroomView.jsx'))
 
 function PageLoader() {
   return (
@@ -263,7 +264,8 @@ export default function App() {
           <Route path="/admin"          element={<Admin />} />
           <Route path="/classroom"       element={<TeacherDashboard />} />
           <Route path="/classroom/join"  element={<JoinClassroom />} />
-          <Route path="/classroom/:id"   element={<ClassroomDetail />} />
+          <Route path="/classroom/:id"       element={<ClassroomDetail />} />
+          <Route path="/classroom/view/:code" element={<ClassroomView />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
