@@ -29,10 +29,16 @@ export default function ClassroomDetail() {
   }, [user, id])
 
   async function getToken() {
-    const session = await supabase?.auth.getSession()
-    const t = session?.data?.session?.access_token
-    setToken(t)
-    return t
+    if (!supabase) return null
+    try {
+      const session = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise(r => setTimeout(() => r({ data: { session: null } }), 3000)),
+      ])
+      const t = session?.data?.session?.access_token
+      setToken(t)
+      return t
+    } catch { return null }
   }
 
   async function loadData() {

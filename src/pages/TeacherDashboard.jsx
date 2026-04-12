@@ -27,13 +27,18 @@ export default function TeacherDashboard() {
     setAnonClassrooms(localJoined)
 
     // Load server-side classrooms for logged-in users
-    if (user) {
-      const session = await supabase?.auth.getSession()
-      const token = session?.data?.session?.access_token
-      if (token) {
-        const data = await getMyClassrooms(token)
-        setClassrooms(data)
-      }
+    if (user && supabase) {
+      try {
+        const session = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise(r => setTimeout(() => r({ data: { session: null } }), 3000)),
+        ])
+        const token = session?.data?.session?.access_token
+        if (token) {
+          const data = await getMyClassrooms(token)
+          setClassrooms(data)
+        }
+      } catch {}
     }
     setLoading(false)
   }
