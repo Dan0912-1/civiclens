@@ -12,17 +12,28 @@ export const supabase = url && anonKey ? createClient(url, anonKey, {
   },
 }) : null
 
-// getSession() can hang for 5+ seconds due to orphaned auth locks.
-// This helper races it against a 3-second timeout so callers never block.
+// getSession() can hang for 5+ seconds due to orphaned Supabase auth locks.
+// This helper tries getSession() with a 2s timeout, then falls back to reading
+// the token directly from localStorage (bypassing the lock entirely).
 export async function getSessionSafe() {
   if (!supabase) return null
   try {
     const result = await Promise.race([
       supabase.auth.getSession(),
-      new Promise(r => setTimeout(() => r({ data: { session: null } }), 3000)),
+      new Promise(r => setTimeout(() => r(null), 2000)),
     ])
-    return result?.data?.session || null
-  } catch {
-    return null
-  }
+    if (result?.data?.session) return result.data.session
+  } catch {}
+
+  // Fallback: read token directly from localStorage (bypass lock)
+  try {
+    const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
+    if (key) {
+      const parsed = JSON.parse(localStorage.getItem(key))
+      if (parsed?.access_token) return parsed
+      if (parsed?.currentSession?.access_token) return parsed.currentSession
+    }
+  } catch {}
+
+  return null
 }
