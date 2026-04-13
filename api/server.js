@@ -86,7 +86,7 @@ app.use(cors({
 
 app.use(compression())
 
-// 64KB body cap — large enough for batch personalize (20 bills) but tight
+// 2MB body cap — large enough for batch personalize (20 bills) but tight
 // enough to bound abuse. Default is 100kb; an explicit value documents intent.
 app.use(express.json({ limit: '2mb' }))
 
@@ -278,6 +278,7 @@ function releaseLLMSlot() {
  */
 async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
   await acquireLLMSlot()
+  let recursed = false
   try {
   // ── Groq path ──
   if (_useGroqFallback) {
@@ -332,6 +333,8 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
   // Credit exhaustion / auth failure → switch to Groq and retry once
   if (resp.status === 402 || resp.status === 401 || resp.status === 403) {
     activateGroqFallback(`Anthropic HTTP ${resp.status}`)
+    recursed = true
+    releaseLLMSlot()
     return callLLM({ system, userPrompt, maxTokens, temperature, timeoutMs })
   }
 
@@ -360,7 +363,7 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
     provider: 'haiku'
   }
   } finally {
-    releaseLLMSlot()
+    if (!recursed) releaseLLMSlot()
   }
 }
 
@@ -1129,7 +1132,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
   } catch (err) {
     console.error('Legislation fetch error:', err)
-    res.status(500).json({ error: 'Failed to fetch legislation', detail: err.message })
+    res.status(500).json({ error: 'Failed to fetch legislation' })
   }
 })
 
@@ -1223,7 +1226,7 @@ app.get('/api/search', legislationLimiter, async (req, res) => {
 
   } catch (err) {
     console.error('Search error:', err)
-    res.status(500).json({ error: 'Search failed', detail: err.message })
+    res.status(500).json({ error: 'Search failed' })
   }
 })
 
@@ -4617,9 +4620,10 @@ app.get('/api/classroom/:id/members', classroomLimiter, async (req, res) => {
 
     // Fetch display names from auth (no interaction data)
     const userIds = (members || []).map(m => m.user_id)
-    const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    if (usersData.users.length >= 1000) { const page2 = await supabase.auth.admin.listUsers({ perPage: 1000, page: 2 }); if (page2.data?.users) usersData.users.push(...page2.data.users) }
     const nameMap = {}
-    for (const u of (users || [])) {
+    for (const u of (usersData.users || [])) {
       if (userIds.includes(u.id)) {
         nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
       }
@@ -4884,8 +4888,9 @@ app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => 
     // Fetch display names
     const nameMap = {}
     if (studentIds.length > 0) {
-      const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
-      for (const u of (users || [])) {
+      const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+      if (usersData.users.length >= 1000) { const page2 = await supabase.auth.admin.listUsers({ perPage: 1000, page: 2 }); if (page2.data?.users) usersData.users.push(...page2.data.users) }
+      for (const u of (usersData.users || [])) {
         if (studentIds.includes(u.id)) {
           nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
         }
@@ -4977,14 +4982,20 @@ app.get('/api/classroom/:id/export', classroomLimiter, async (req, res) => {
       }
     }
 
+    const sanitizeCSV = (val) => {
+      const s = String(val)
+      if (/^[=+\-@\t\r]/.test(s)) return "'" + s
+      return s
+    }
+
     let csv = 'Assignment,Bill ID,Due Date,Completions,Total Students,Completion %,Avg Time (min)\n'
     for (const a of (assignments || [])) {
       const comp = completionMap[a.id] || 0
       const pct = totalStudents > 0 ? Math.round((comp / totalStudents) * 100) : 0
       const times = timeMap[a.id] || []
       const avgMin = times.length > 0 ? (times.reduce((s, t) => s + t, 0) / times.length / 60).toFixed(1) : 'N/A'
-      const title = (a.bill_data?.title || a.bill_id).replace(/"/g, '""')
-      csv += `"${title}",${a.bill_id},${a.due_date || 'N/A'},${comp},${totalStudents},${pct}%,${avgMin}\n`
+      const title = sanitizeCSV((a.bill_data?.title || a.bill_id).replace(/"/g, '""'))
+      csv += `"${title}",${sanitizeCSV(a.bill_id)},${sanitizeCSV(a.due_date || 'N/A')},${comp},${totalStudents},${pct}%,${avgMin}\n`
     }
 
     const filename = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
@@ -5081,7 +5092,7 @@ if (!ADMIN_SECRET && process.env.NODE_ENV === 'production') {
 
 function requireAdmin(req, res, next) {
   const token = req.headers['x-admin-token']
-  if (!ADMIN_SECRET || token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
+  if (!ADMIN_SECRET || !token || Buffer.byteLength(token) !== Buffer.byteLength(ADMIN_SECRET) || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(ADMIN_SECRET))) return res.status(403).json({ error: 'Forbidden' })
   next()
 }
 
@@ -5147,7 +5158,7 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
         supabase.from('bill_text_cache').select('id', { count: 'exact' }),
         supabase.from('curated_bills').select('id, interest_category', { count: 'exact' }),
         supabase.from('bill_topics').select('id', { count: 'exact' }),
-        supabase.from('bill_interactions').select('action_type, topic_tag, created_at'),
+        supabase.from('bill_interactions').select('action_type, topic_tag, created_at').limit(50000),
       ])
       stats.bills.curated = curatedBills.count || 0
       stats.bills.topics = billTopics.count || 0
@@ -5240,7 +5251,7 @@ app.get('/api/admin/feedback', requireAdmin, async (req, res) => {
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit)
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) return res.status(500).json({ error: 'Internal server error' })
   res.json({ data })
 })
 

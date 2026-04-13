@@ -46,7 +46,7 @@ export default function Bookmarks() {
     getBookmarks(user.id).then(bm => {
       setBookmarks(bm)
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
     // Load notification preferences
     if (supabase) {
       supabase.auth.getSession().then(({ data: { session } }) => {
@@ -84,10 +84,15 @@ export default function Bookmarks() {
 
   async function handleRemove(billId) {
     if (!user) return
-    setBookmarks(prev => prev.filter(b => b.bill_id !== billId))
+    const prev = bookmarks
+    setBookmarks(b => b.filter(bm => bm.bill_id !== billId))
     const ok = await removeBookmark(user.id, billId)
-    if (ok) showToast('Bookmark removed')
-    else showToast('Could not remove bookmark', 'error')
+    if (ok) {
+      showToast('Bookmark removed')
+    } else {
+      setBookmarks(prev) // rollback on failure
+      showToast('Could not remove bookmark', 'error')
+    }
   }
 
   if (authLoading || loading) {

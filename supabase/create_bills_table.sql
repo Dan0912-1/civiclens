@@ -65,6 +65,10 @@ CREATE INDEX IF NOT EXISTS idx_bills_jurisdiction_updated
 CREATE INDEX IF NOT EXISTS idx_bills_missing_text
   ON bills(source, synced_at) WHERE full_text IS NULL;
 
+-- Row Level Security: public read, service-role only write
+ALTER TABLE bills ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public read access" ON bills FOR SELECT USING (true);
+
 -- For sync: find bills by source ID
 CREATE INDEX IF NOT EXISTS idx_bills_legiscan_id
   ON bills(legiscan_bill_id) WHERE legiscan_bill_id IS NOT NULL;

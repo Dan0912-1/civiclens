@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { createAssignment } from '../lib/classroom'
@@ -61,6 +61,30 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
   const [chamberFilter, setChamberFilter] = useState('All')
 
   const searchInputRef = useRef(null)
+  const modalRef = useRef(null)
+  const abortRef = useRef(null)
+
+  // Focus trap + Escape key
+  useEffect(() => {
+    const modal = modalRef.current
+    if (!modal) return
+    const focusableSelector = 'a[href], button:not([disabled]), textarea, input:not([disabled]), select, [tabindex]:not([tabindex="-1"])'
+    const getFocusable = () => Array.from(modal.querySelectorAll(focusableSelector))
+    const focusable = getFocusable()
+    if (focusable.length) focusable[0].focus()
+
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') { onClose(); return }
+      if (e.key !== 'Tab') return
+      const els = getFocusable()
+      if (!els.length) return
+      const first = els[0], last = els[els.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    modal.addEventListener('keydown', handleKeyDown)
+    return () => modal.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   async function doSearch(q, jurisdiction, stateCode) {
     const trimmed = (q || query).trim()
@@ -69,12 +93,17 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
     setError('')
     setHasSearched(true)
     try {
+      // Abort previous search to prevent stale results overwriting current
+      if (abortRef.current) abortRef.current.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
       const stateParam = jurisdiction === 'state' ? (stateCode || selectedState || 'US') : 'US'
-      const resp = await fetch(`${API}/api/search?q=${encodeURIComponent(trimmed)}&state=${stateParam}`)
+      const resp = await fetch(`${API}/api/search?q=${encodeURIComponent(trimmed)}&state=${stateParam}`, { signal: controller.signal })
       if (!resp.ok) throw new Error('Search failed')
       const data = await resp.json()
       setResults(data.results || data.bills || [])
     } catch (err) {
+      if (err.name === 'AbortError') return // superseded by newer search
       setError(err.message)
     }
     setSearching(false)
@@ -145,7 +174,7 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
 
   return (
     <div className={styles.overlay} onClick={onClose}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()}>
+      <div ref={modalRef} className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Assign a Bill">
         <h2>Assign a Bill</h2>
 
         {!selected ? (

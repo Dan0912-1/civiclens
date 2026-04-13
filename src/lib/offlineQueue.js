@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, getSessionSafe } from './supabase'
 
 const STORAGE_KEY = 'ck_offline_queue'
 const MAX_QUEUE_SIZE = 50
@@ -24,11 +24,14 @@ function writeQueue(queue) {
  */
 export function enqueue(url, method, body, headers = {}) {
   const queue = readQueue()
+  // Strip Authorization header — tokens expire and should not be persisted.
+  // Fresh tokens are obtained at replay time via getSessionSafe().
+  const { Authorization, authorization, ...safeHeaders } = headers
   queue.push({
     url,
     method,
     body: typeof body === 'string' ? body : JSON.stringify(body),
-    headers,
+    headers: safeHeaders,
     timestamp: Date.now(),
   })
   // Drop oldest items if over max size
@@ -96,12 +99,17 @@ export async function flush() {
         break
       }
 
-      // Standard fetch replay
+      // Standard fetch replay — obtain fresh auth token
+      const session = await getSessionSafe()
+      const authHeader = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {}
       const resp = await fetch(item.url, {
         method: item.method,
         headers: {
           'Content-Type': 'application/json',
           ...item.headers,
+          ...authHeader,
         },
         body: item.body,
       })

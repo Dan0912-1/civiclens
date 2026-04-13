@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
+import { resetPushState } from '../lib/pushNotifications'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
@@ -256,6 +257,12 @@ export function AuthProvider({ children }) {
   async function handleSignOut() {
     if (!supabase) return
     await supabase.auth.signOut()
+    // Clear all app-specific storage to prevent data leakage between users
+    sessionStorage.removeItem('civicProfile')
+    sessionStorage.removeItem('civicInteractions')
+    sessionStorage.removeItem('ck_joined_classrooms')
+    localStorage.removeItem('ck_offline_queue')
+    resetPushState()
   }
 
   return (

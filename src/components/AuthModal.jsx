@@ -31,6 +31,7 @@ export default function AuthModal({ isOpen, onClose }) {
     if (focusable.length) focusable[0].focus()
 
     function handleKeyDown(e) {
+      if (e.key === 'Escape') { handleClose(); return }
       if (e.key !== 'Tab') return
       const els = getFocusable()
       if (!els.length) return
@@ -120,23 +121,29 @@ export default function AuthModal({ isOpen, onClose }) {
     const trimmedEmail = email.trim()
     const trimmedPassword = password
 
-    if (mode === 'signin') {
-      const { error } = await signInWithEmail(trimmedEmail, trimmedPassword)
-      if (error) {
-        setError(friendlyError(error.message))
-        setLoading(false)
+    try {
+      if (mode === 'signin') {
+        const { error } = await signInWithEmail(trimmedEmail, trimmedPassword)
+        if (error) {
+          setError(friendlyError(error.message))
+          setLoading(false)
+        } else {
+          handleClose()
+        }
       } else {
-        handleClose()
+        const { error } = await signUpWithEmail(trimmedEmail, trimmedPassword)
+        if (error) {
+          setError(friendlyError(error.message))
+          setLoading(false)
+        } else {
+          setSignupSuccess(true)
+          setLoading(false)
+        }
       }
-    } else {
-      const { error } = await signUpWithEmail(trimmedEmail, trimmedPassword)
-      if (error) {
-        setError(friendlyError(error.message))
-        setLoading(false)
-      } else {
-        setSignupSuccess(true)
-        setLoading(false)
-      }
+    } catch (err) {
+      console.error('[Auth] Submit error:', err)
+      setError(friendlyError(err?.message))
+      setLoading(false)
     }
   }
 

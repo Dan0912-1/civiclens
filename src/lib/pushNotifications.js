@@ -64,10 +64,13 @@ export async function initPushNotifications(userId, token) {
     // Navigate using React Router to preserve SPA state
     const url = notification.notification?.data?.url
     const target = url || '/bookmarks'
+    // Validate: only allow known internal paths to prevent open redirect
+    const SAFE_PREFIXES = ['/bill/', '/bookmarks', '/results', '/search', '/classroom']
+    const isSafe = SAFE_PREFIXES.some(p => target.startsWith(p)) || target === '/'
+    if (!isSafe) return // reject suspicious deep links
     if (_navigate) {
       _navigate(target)
     } else {
-      // Fallback if navigate not yet injected
       window.location.pathname = target
     }
   })
@@ -78,20 +81,26 @@ export async function initPushNotifications(userId, token) {
 }
 
 export async function teardownPushNotifications(token, deviceToken) {
-  if (!deviceToken || !token) return
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
     await PushNotifications.removeAllListeners()
-    await fetch(`${getApiBase()}/api/push/register`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ token: deviceToken }),
-    })
+    if (deviceToken && token) {
+      await fetch(`${getApiBase()}/api/push/register`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ token: deviceToken }),
+      })
+    }
   } catch {
     // non-fatal
   }
+  registered = false
+}
+
+// Reset listener state on sign-out (even without device token)
+export function resetPushState() {
   registered = false
 }

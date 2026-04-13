@@ -26,12 +26,19 @@ export async function getSessionSafe() {
   } catch {}
 
   // Fallback: read token directly from localStorage (bypass lock)
+  // Check expires_at to avoid returning stale/expired tokens
   try {
     const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
     if (key) {
       const parsed = JSON.parse(localStorage.getItem(key))
-      if (parsed?.access_token) return parsed
-      if (parsed?.currentSession?.access_token) return parsed.currentSession
+      const session = parsed?.access_token ? parsed : parsed?.currentSession
+      if (session?.access_token) {
+        // Reject expired tokens (expires_at is Unix seconds)
+        if (session.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
+          return null // token expired — force re-auth
+        }
+        return session
+      }
     }
   } catch {}
 

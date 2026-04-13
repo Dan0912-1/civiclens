@@ -28,7 +28,7 @@ export default defineConfig({
           },
           {
             urlPattern: /\/api\/personalize/,
-            handler: 'CacheFirst',
+            handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'personalize-cache',
               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 },

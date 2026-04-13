@@ -7,6 +7,7 @@ import { getApiBase } from './lib/api'
 import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
 import OfflineScreen from './components/OfflineScreen.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 // Lazy-loaded pages — reduces initial bundle size
 const Home = lazy(() => import('./pages/Home.jsx'))
@@ -92,7 +93,7 @@ export default function App() {
   // Dynamic page title per route
   useEffect(() => {
     const base = pathname.split('/').slice(0, 2).join('/')
-    document.title = PAGE_TITLES[base] || PAGE_TITLES[pathname] || 'CapitolKey'
+    document.title = PAGE_TITLES[pathname] || PAGE_TITLES[base] || 'CapitolKey'
   }, [pathname])
 
   // Hide splash screen with a brief branded moment + smooth haptic wave
@@ -142,7 +143,7 @@ export default function App() {
         })
       })
       .catch(() => {})
-  }, [pathname])
+  }, []) // style never varies — run once
 
   // Haptic feedback when pulling past the top of screen (iOS overscroll)
   // Uses touch events because WKWebView never fires scroll events during rubber-band
@@ -234,9 +235,13 @@ export default function App() {
         const listener = App.addListener('appUrlOpen', (event) => {
           const url = new URL(event.url)
           const path = url.pathname
-          // Match /bill/:congress/:type/:number
+          // Validate /bill/:congress/:type/:number — congress is numeric, type is alpha, number is numeric
           if (path.startsWith('/bill/')) {
-            navigate(path)
+            const parts = path.split('/')
+            const congress = parts[2], type = parts[3], number = parts[4]
+            if (/^\d+$/.test(congress) && /^[a-z]+$/i.test(type) && /^\d+$/.test(number)) {
+              navigate(`/bill/${congress}/${type}/${number}`)
+            }
           }
         })
         cleanup = () => listener.then?.(l => l.remove()) || listener.remove?.()
@@ -258,6 +263,7 @@ export default function App() {
       <OfflineScreen />
       <Nav />
       <main id="main-content">
+      <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"          element={<Home />} />
@@ -281,6 +287,7 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
+      </ErrorBoundary>
       </main>
     </>
   )

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styles from './Onboarding.module.css'
 
@@ -23,7 +23,26 @@ const SLIDES = [
 export default function Onboarding({ onComplete }) {
   const [slide, setSlide] = useState(0)
   const navigate = useNavigate()
+  const containerRef = useRef(null)
   const isLast = slide === SLIDES.length - 1
+
+  // Focus trap + Escape key
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    el.focus()
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') { skip(); return }
+      if (e.key !== 'Tab') return
+      const focusable = Array.from(el.querySelectorAll('button'))
+      if (!focusable.length) return
+      const first = focusable[0], last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    el.addEventListener('keydown', handleKeyDown)
+    return () => el.removeEventListener('keydown', handleKeyDown)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function next() {
     if (isLast) {
@@ -40,8 +59,8 @@ export default function Onboarding({ onComplete }) {
   }
 
   return (
-    <div className={styles.overlay}>
-      <div className={styles.container}>
+    <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Welcome to CapitolKey">
+      <div className={styles.container} ref={containerRef} tabIndex={-1}>
         <button className={styles.skip} onClick={skip}>Skip</button>
 
         <div className={styles.brandMark}>CAPITOLKEY</div>
