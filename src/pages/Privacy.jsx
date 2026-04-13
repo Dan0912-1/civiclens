@@ -71,6 +71,48 @@ export default function Privacy() {
         </div>
 
         <div className={styles.section}>
+          <h2>School and Classroom Use</h2>
+          <p>
+            CapitolKey can be used in classroom settings by teachers and students
+            aged 13 and older. When CapitolKey is used in a school context, the
+            school or district may have additional obligations under the Family
+            Educational Rights and Privacy Act (FERPA). Schools are responsible
+            for ensuring their use of CapitolKey complies with applicable FERPA
+            requirements.
+          </p>
+          <p>
+            Teachers who create classrooms on CapitolKey can view aggregate
+            completion statistics (such as how many students completed an
+            assignment) but cannot access individual student profiles or
+            personalized bill explanations.
+          </p>
+          <p>
+            Classroom data, including assignments and completion records, is
+            deleted when a classroom is archived by the teacher and permanently
+            removed from our systems within 30 days of archival.
+          </p>
+          <p>
+            Schools may request data deletion for all students in their
+            classrooms by contacting us at{' '}
+            <a href="mailto:capitolkeyapp@gmail.com" style={{ color: 'var(--amber)' }}>
+              capitolkeyapp@gmail.com
+            </a>.
+          </p>
+
+          <h3 style={{ marginTop: '1.5rem', marginBottom: '0.75rem', fontSize: '1.1rem', color: 'var(--navy)' }}>Parental Notice</h3>
+          <div className={styles.neutralBox}>
+            <div className={styles.neutralIcon}>&#9432;</div>
+            <p>
+              If you are under 18 and using CapitolKey through a school, your
+              parent or guardian should be aware that your anonymized profile
+              data (state, age range, interests) is processed by AI to generate
+              bill explanations. No personally identifying information is shared
+              with AI providers.
+            </p>
+          </div>
+        </div>
+
+        <div className={styles.section}>
           <h2>Data storage and security</h2>
           <p>
             Account data is stored securely in Supabase (hosted on AWS) with

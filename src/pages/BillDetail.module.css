@@ -41,7 +41,7 @@
   padding: 2px 8px;
   border-radius: 1px;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -70,7 +70,7 @@
 
 .chamber {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   color: var(--text-muted);
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -179,7 +179,7 @@
 
 .progressLabel {
   font-family: var(--font-mono);
-  font-size: 0.58rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -268,7 +268,7 @@
 
 .historyDate {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   color: var(--text-muted);
@@ -289,7 +289,7 @@
 
 .historyMore {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -697,6 +697,47 @@
   color: var(--white);
 }
 
+/* Assign to Class */
+.assignWrapper {
+  position: relative;
+}
+
+.assignDropdown {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  min-width: 200px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.assignItem {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s;
+}
+
+.assignItem:last-child {
+  border-bottom: none;
+}
+
+.assignItem:hover {
+  background: var(--cream);
+}
+
 .congressLink {
   display: inline-block;
   background: var(--navy);
@@ -760,3 +801,35 @@
 }
 
 .markCompleteBtn:hover { opacity: 0.85; }
+
+/* ─── Print Stylesheet ───────────────────────────────── */
+@media print {
+  .page {
+    background: white;
+    padding: 0;
+    min-height: auto;
+  }
+  .container { max-width: 100%; }
+  .back, .bookmarkBtn, .shareBtn, .repBtn,
+  .markCompleteBtn, .retryBtn, .expandBtn,
+  .assignmentBanner, .sourceAttribution { display: none !important; }
+  .card {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+  .analysisSection {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+  .actionsGrid { break-inside: avoid; }
+  .actionCard {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+  .title { font-size: 1.4rem; }
+  .headline { font-size: 1.1rem; }
+  .summaryBody, .passFailBody { font-size: 0.9rem; line-height: 1.6; }
+}

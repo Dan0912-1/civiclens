@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
-import { markComplete } from '../lib/classroom'
+import { useToast } from '../context/ToastContext'
+import { markComplete, getMyClassrooms, createAssignment } from '../lib/classroom'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -41,6 +42,7 @@ export default function BillDetail() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
+  const { showToast } = useToast()
   const trackedRef = useRef(false)
 
   // Data passed from Results page via router state
@@ -63,6 +65,10 @@ export default function BillDetail() {
   const [shareMsg, setShareMsg] = useState('')
   const [assignmentCompleted, setAssignmentCompleted] = useState(false)
   const assignmentTimerRef = useRef(null)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignClassrooms, setAssignClassrooms] = useState([])
+  const [assignLoading, setAssignLoading] = useState(false)
+  const assignRef = useRef(null)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -117,6 +123,54 @@ export default function BillDetail() {
     assignmentTimerRef.current = Date.now()
     return () => { assignmentTimerRef.current = null }
   }, [assignmentId, assignmentClassroomId, user])
+
+  // Close assign dropdown on outside click
+  useEffect(() => {
+    if (!assignOpen) return
+    function handleClick(e) {
+      if (assignRef.current && !assignRef.current.contains(e.target)) {
+        setAssignOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [assignOpen])
+
+  async function handleAssignOpen() {
+    if (assignOpen) { setAssignOpen(false); return }
+    setAssignLoading(true)
+    setAssignOpen(true)
+    try {
+      const session = await supabase?.auth.getSession()
+      const token = session?.data?.session?.access_token
+      if (!token) { setAssignLoading(false); return }
+      const rooms = await getMyClassrooms(token)
+      // Only show classrooms where user is a teacher
+      setAssignClassrooms(rooms.filter(r => r.role === 'teacher'))
+    } catch {
+      setAssignClassrooms([])
+    }
+    setAssignLoading(false)
+  }
+
+  async function handleAssignToClassroom(classroom) {
+    const session = await supabase?.auth.getSession()
+    const token = session?.data?.session?.access_token
+    if (!token) return
+    const billId = bill?.legiscan_bill_id
+      ? `ls-${bill.legiscan_bill_id}`
+      : `${type.toUpperCase()}${number}-${congress}`
+    try {
+      await createAssignment(token, classroom.id, {
+        billId,
+        billData: { ...bill, analysis },
+      })
+      showToast(`Assigned to ${classroom.name}`)
+      setAssignOpen(false)
+    } catch (err) {
+      showToast(err.message || 'Failed to assign', 'error')
+    }
+  }
 
   async function handleMarkComplete() {
     if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted) return
@@ -551,11 +605,13 @@ export default function BillDetail() {
                   try {
                     const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
                     if (bookmarked) {
-                      await removeBookmark(user.id, bId)
-                      setBookmarked(false)
+                      const ok = await removeBookmark(user.id, bId)
+                      if (ok) { setBookmarked(false); showToast('Bookmark removed') }
+                      else showToast('Could not remove bookmark', 'error')
                     } else {
-                      await addBookmark(user.id, bId, { ...bill, analysis })
-                      setBookmarked(true)
+                      const ok = await addBookmark(user.id, bId, { ...bill, analysis })
+                      if (ok) { setBookmarked(true); showToast('Bill saved to bookmarks') }
+                      else showToast('Could not save bookmark', 'error')
                     }
                   } finally { setBookmarkBusy(false) }
                 }}
@@ -578,6 +634,35 @@ export default function BillDetail() {
             >
               {shareMsg || 'Share'}
             </button>
+            {user && (
+              <div className={styles.assignWrapper} ref={assignRef}>
+                <button
+                  className={styles.footerBtn}
+                  onClick={handleAssignOpen}
+                >
+                  Assign to Class
+                </button>
+                {assignOpen && (
+                  <div className={styles.assignDropdown}>
+                    {assignLoading ? (
+                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>Loading...</div>
+                    ) : assignClassrooms.length === 0 ? (
+                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>No classrooms found</div>
+                    ) : (
+                      assignClassrooms.map(c => (
+                        <button
+                          key={c.id}
+                          className={styles.assignItem}
+                          onClick={() => handleAssignToClassroom(c)}
+                        >
+                          {c.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <button
             className={styles.congressLink}
