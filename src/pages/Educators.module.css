@@ -1,0 +1,262 @@
+.page {
+  min-height: calc(100vh - 64px);
+  background: var(--cream);
+  padding: var(--space-2xl) var(--space-lg);
+}
+
+.container {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.hero {
+  padding: var(--space-2xl) 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-2xl);
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.hero h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: -0.02em;
+  margin-bottom: var(--space-sm);
+}
+
+.hero p {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+}
+
+.section {
+  margin-bottom: var(--space-2xl);
+  animation: fadeUp 0.5s ease forwards;
+}
+
+.section h2 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--navy);
+  letter-spacing: -0.015em;
+  text-transform: none;
+  margin-bottom: var(--space-md);
+}
+
+.section p {
+  font-family: var(--font-serif);
+  color: var(--text-secondary);
+  line-height: 1.75;
+  margin-bottom: var(--space-md);
+  font-size: 1.05rem;
+}
+
+.section p:last-child {
+  margin-bottom: 0;
+}
+
+/* Standards alignment cards */
+.standardsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.standardCard {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--amber);
+  border-radius: 1px;
+  padding: var(--space-lg);
+  box-shadow: none;
+}
+
+.standardCode {
+  display: inline-block;
+  background: transparent;
+  color: var(--amber-dark);
+  border: 1px solid var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 2px 8px;
+  border-radius: 1px;
+  margin-bottom: var(--space-xs);
+}
+
+.standardCard h3 {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.standardCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* Lesson plan cards */
+.lessonGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.lessonCard {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
+  border-radius: 1px;
+  padding: var(--space-lg);
+  box-shadow: none;
+}
+
+.lessonNumber {
+  display: inline-block;
+  background: transparent;
+  color: var(--amber-dark);
+  border: 1px solid var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 2px 8px;
+  border-radius: 1px;
+  margin-bottom: var(--space-sm);
+}
+
+.lessonCard h3 {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.lessonCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* Getting started steps */
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.stepCard {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: var(--space-lg);
+  text-align: center;
+  box-shadow: none;
+}
+
+.stepNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 50%;
+  margin-bottom: var(--space-sm);
+}
+
+.stepCard h3 {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.stepCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* CTA */
+.cta {
+  background: var(--navy);
+  color: var(--white);
+  border-radius: 1px;
+  padding: var(--space-2xl);
+  text-align: center;
+  margin-top: var(--space-xl);
+}
+
+.cta h2 {
+  color: var(--white);
+  margin-bottom: var(--space-lg);
+  font-size: 1.75rem;
+}
+
+.ctaBtn {
+  background: var(--amber);
+  color: var(--navy);
+  padding: 14px 28px;
+  border: 1px solid var(--amber);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.15s ease;
+}
+
+.ctaBtn:hover {
+  background: var(--amber-dark);
+}
+
+/* Legal links */
+.legal {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl) 0 var(--space-md);
+  font-size: 0.85rem;
+}
+
+.legal button,
+.legal a {
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.legal button:hover,
+.legal a:hover {
+  color: var(--amber-dark);
+}
+
+.legalDot {
+  color: var(--border);
+}

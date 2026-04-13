@@ -25,6 +25,7 @@ const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
 const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
 const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
 const ClassroomView = lazy(() => import('./pages/ClassroomView.jsx'))
+const Educators = lazy(() => import('./pages/Educators.jsx'))
 
 function PageLoader() {
   return (
@@ -56,6 +57,7 @@ const PAGE_TITLES = {
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
   '/admin': 'Admin | CapitolKey',
+  '/educators': 'For Educators | CapitolKey',
   '/classroom': 'Classrooms | CapitolKey',
   '/classroom/join': 'Join Classroom | CapitolKey',
 }
@@ -271,6 +273,7 @@ export default function App() {
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
           <Route path="/admin"          element={<Admin />} />
+          <Route path="/educators"  element={<Educators />} />
           <Route path="/classroom"       element={<TeacherDashboard />} />
           <Route path="/classroom/join"  element={<JoinClassroom />} />
           <Route path="/classroom/:id"       element={<ClassroomDetail />} />
