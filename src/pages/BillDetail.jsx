@@ -81,7 +81,9 @@ export default function BillDetail() {
     setPersonalizationError(false)
     setNoProfile(false)
     setShareMsg('')
+    setBookmarked(false)
     setBookmarkBusy(false)
+    setHistoryOpen(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -181,7 +183,10 @@ export default function BillDetail() {
     try {
       await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
       setAssignmentCompleted(true)
-    } catch {}
+      showToast('Marked as read!')
+    } catch (err) {
+      showToast(err.message || 'Could not mark as read', 'error')
+    }
   }
 
   // Fetch bill detail when route params change. Guarded by a cancelled flag
@@ -241,7 +246,7 @@ export default function BillDetail() {
     if (!bill || analysis || skipPersonalization) return
     let cancelled = false
     // Capture the in-flight bill identity; abort if the route changes.
-    const requestBillId = `${bill.type}${bill.number}-${bill.congress}`
+    const requestBillId = `${bill.type?.toUpperCase()}${bill.number}-${bill.congress}`
     const currentRouteId = `${type.toUpperCase()}${number}-${congress}`
     if (requestBillId !== currentRouteId) return
 
@@ -249,7 +254,8 @@ export default function BillDetail() {
       const stored = sessionStorage.getItem('civicProfile')
       if (!stored) { setNoProfile(true); return }
       setPersonalizationError(false)
-      const profile = JSON.parse(stored)
+      let profile
+      try { profile = JSON.parse(stored) } catch { setNoProfile(true); return }
       try {
         const resp = await fetch(`${API_BASE}/api/personalize`, {
           method: 'POST',
@@ -609,7 +615,7 @@ export default function BillDetail() {
                       if (ok) { setBookmarked(false); showToast('Bookmark removed') }
                       else showToast('Could not remove bookmark', 'error')
                     } else {
-                      const ok = await addBookmark(user.id, bId, { ...bill, analysis })
+                      const ok = await addBookmark(user.id, bId, { bill: { ...bill }, analysis })
                       if (ok) { setBookmarked(true); showToast('Bill saved to bookmarks') }
                       else showToast('Could not save bookmark', 'error')
                     }
@@ -622,12 +628,17 @@ export default function BillDetail() {
             <button
               className={styles.footerBtn}
               onClick={async () => {
-                const text = `${displayTitle} — ${analysis?.headline || ''}\n${window.location.href}`
+                const WEB_ORIGIN = 'https://capitolkey.vercel.app'
+                const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
+                const shareUrl = `${origin}/bill/${congress}/${type.toLowerCase()}/${number}`
+                const text = `${displayTitle} — ${analysis?.headline || ''}\n${shareUrl}`
                 if (navigator.share) {
-                  try { await navigator.share({ title: displayTitle, text, url: window.location.href }) } catch {}
+                  try { await navigator.share({ title: displayTitle, text, url: shareUrl }) } catch {}
                 } else {
-                  await navigator.clipboard.writeText(text)
-                  setShareMsg('Link copied!')
+                  try {
+                    await navigator.clipboard.writeText(text)
+                    setShareMsg('Link copied!')
+                  } catch { setShareMsg('Could not copy') }
                   setTimeout(() => setShareMsg(''), 2000)
                 }
               }}

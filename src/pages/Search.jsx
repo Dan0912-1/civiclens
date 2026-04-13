@@ -314,7 +314,7 @@ export default function Search() {
               onChange={e => {
                 const code = e.target.value
                 setSelectedState(code)
-                setChamberFilter('')
+                setChamberFilter('All')
                 if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
               }}
             >

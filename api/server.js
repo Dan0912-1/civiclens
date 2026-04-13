@@ -1536,7 +1536,20 @@ function normalizeProfile(profile) {
   const interests = rawInterests.filter(i => VALID_INTERESTS.includes(i))
   const state = US_STATES.includes(profile.state) ? profile.state : ''
   const grade = isValidGrade(profile.grade) ? String(profile.grade) : ''
-  const subInterests = Array.isArray(profile.subInterests) ? profile.subInterests.slice(0, 20) : []
+  const VALID_SUB_INTERESTS = new Set([
+    'Student loans', 'School safety', 'College access', 'Teacher quality', 'Special ed',
+    'Climate change', 'Clean water', 'Wildlife', 'Renewable energy', 'Pollution',
+    'Minimum wage', 'Student debt', 'Gig economy', 'Cost of living', 'Small business',
+    'Mental health', 'Drug costs', 'School health', 'Insurance access', 'Substance abuse',
+    'AI & algorithms', 'Data privacy', 'Social media', 'Broadband access', 'Cybersecurity',
+    'Rent & affordability', 'Homelessness', 'Tenant rights', 'Public housing', 'Zoning',
+    'DACA & Dreamers', 'Visas', 'Asylum', 'Citizenship', 'Border policy',
+    'Voting access', 'Police reform', 'Disability rights', 'LGBTQ rights', 'Equal pay',
+    'National service', 'Food assistance', 'Libraries', 'Rural development', 'Nonprofits',
+  ])
+  const subInterests = Array.isArray(profile.subInterests)
+    ? profile.subInterests.filter(s => typeof s === 'string' && VALID_SUB_INTERESTS.has(s)).slice(0, 20)
+    : []
   const career = typeof profile.career === 'string' ? profile.career.slice(0, 50) : ''
   return {
     ...profile,

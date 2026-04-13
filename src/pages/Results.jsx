@@ -30,6 +30,7 @@ export default function Results() {
   const [settledBills, setSettledBills] = useState(new Set())
   const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
+  const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [interactionSummary, setInteractionSummary] = useState(null)
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
   const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
@@ -54,7 +55,8 @@ export default function Results() {
         // No cloud profile — check sessionStorage and sync it to Supabase
         const stored = sessionStorage.getItem('civicProfile')
         if (stored) {
-          const localProfile = JSON.parse(stored)
+          let localProfile
+          try { localProfile = JSON.parse(stored) } catch { navigate('/profile'); return }
           setProfile(localProfile)
           // Save local profile to Supabase so it persists across sessions
           saveProfile(user.id, localProfile)
@@ -69,7 +71,7 @@ export default function Results() {
         navigate('/profile')
         return
       }
-      setProfile(JSON.parse(stored))
+      try { setProfile(JSON.parse(stored)) } catch { navigate('/profile'); return }
     }
     load()
   }, [navigate, user])
@@ -343,14 +345,19 @@ export default function Results() {
   }, [user])
 
   async function toggleBookmark(billId, bill, analysis) {
-    if (!user) return
-    if (bookmarkedIds.has(billId)) {
-      setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
-      await removeBookmark(user.id, billId)
-    } else {
-      setBookmarkedIds(prev => new Set(prev).add(billId))
-      await addBookmark(user.id, billId, { bill, analysis })
-    }
+    if (!user || bookmarkBusy) return
+    setBookmarkBusy(true)
+    try {
+      if (bookmarkedIds.has(billId)) {
+        setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
+        const ok = await removeBookmark(user.id, billId)
+        if (!ok) setBookmarkedIds(prev => new Set(prev).add(billId))
+      } else {
+        setBookmarkedIds(prev => new Set(prev).add(billId))
+        const ok = await addBookmark(user.id, billId, { bill, analysis })
+        if (!ok) setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
+      }
+    } finally { setBookmarkBusy(false) }
   }
 
   // Collect all topic tags for filter bar

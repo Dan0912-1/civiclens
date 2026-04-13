@@ -72,12 +72,36 @@ export function AuthProvider({ children }) {
       // Auto-create profile row for new OAuth sign-ups so they don't appear "profileless"
       if (event === 'SIGNED_IN' && session?.user) {
         const existing = await loadProfile(session.user.id)
-        if (!existing) {
-          // Seed an empty profile — user can fill details later on /profile
+        // Merge local sessionStorage profile into cloud on first sign-in
+        // so students who filled out their profile before creating an
+        // account don't lose their work.
+        const localRaw = sessionStorage.getItem('civicProfile')
+        let localProfile = null
+        if (localRaw) {
+          try { localProfile = JSON.parse(localRaw) } catch {}
+        }
+        if (!existing && localProfile && localProfile.interests?.length) {
+          // Local profile is richer than a bare seed — upload it
+          const meta = session.user.user_metadata || {}
+          await saveProfile(session.user.id, {
+            ...localProfile,
+            name: meta.full_name || meta.name || localProfile.name || '',
+            email: meta.email || session.user.email || localProfile.email || '',
+          })
+        } else if (!existing) {
+          // No local profile — seed an empty one so they don't appear "profileless"
           const meta = session.user.user_metadata || {}
           await saveProfile(session.user.id, {
             name: meta.full_name || meta.name || '',
             email: meta.email || session.user.email || '',
+          })
+        } else if (existing && localProfile && localProfile.interests?.length && !existing.interests?.length) {
+          // Cloud profile exists but is bare; local is richer — merge up
+          const meta = session.user.user_metadata || {}
+          await saveProfile(session.user.id, {
+            ...localProfile,
+            name: existing.name || meta.full_name || localProfile.name || '',
+            email: existing.email || meta.email || localProfile.email || '',
           })
         }
       }
