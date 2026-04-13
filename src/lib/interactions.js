@@ -1,4 +1,5 @@
 import { getApiBase } from './api'
+import { enqueue } from './offlineQueue'
 
 const STORAGE_KEY = 'civicInteractions'
 
@@ -7,14 +8,17 @@ export function trackInteraction(userId, token, { billId, actionType, topicTag }
 
   if (userId && token) {
     // Fire-and-forget POST to server
-    fetch(`${getApiBase()}/api/interactions`, {
+    const url = `${getApiBase()}/api/interactions`
+    const body = { bill_id: billId, action_type: actionType, topic_tag: topicTag }
+    const headers = { Authorization: `Bearer ${token}` }
+    fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ bill_id: billId, action_type: actionType, topic_tag: topicTag }),
-    }).catch(() => {})
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    }).catch(() => {
+      // Network failure — queue for retry when back online
+      enqueue(url, 'POST', body, headers)
+    })
   }
 
   // Always store locally too (for summary computation)

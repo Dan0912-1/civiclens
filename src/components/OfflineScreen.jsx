@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { flush } from '../lib/offlineQueue'
 import styles from './OfflineScreen.module.css'
 
 export default function OfflineScreen() {
@@ -7,7 +8,7 @@ export default function OfflineScreen() {
 
   useEffect(() => {
     const goOffline = () => { setOffline(true); setDismissed(false) }
-    const goOnline = () => setOffline(false)
+    const goOnline = () => { setOffline(false); flush() }
     window.addEventListener('offline', goOffline)
     window.addEventListener('online', goOnline)
     return () => {
