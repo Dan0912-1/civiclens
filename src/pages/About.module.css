@@ -102,7 +102,7 @@
 .techBadge {
   display: inline-block;
   background: transparent;
-  color: var(--amber);
+  color: var(--amber-dark);
   border: 1px solid var(--amber);
   font-family: var(--font-mono);
   font-size: 0.62rem;
@@ -187,7 +187,7 @@
 
 .legal button:hover,
 .legal a:hover {
-  color: var(--amber);
+  color: var(--amber-dark);
 }
 
 .legalDot {

@@ -70,6 +70,7 @@ export default function JoinClassroom() {
               value={firstName}
               onChange={e => setFirstName(e.target.value)}
               placeholder="First name"
+              aria-label="First name"
               className={styles.nameInput}
               autoFocus
               autoComplete="given-name"
@@ -79,6 +80,7 @@ export default function JoinClassroom() {
               value={lastName}
               onChange={e => setLastName(e.target.value)}
               placeholder="Last name (optional)"
+              aria-label="Last name"
               className={styles.nameInput}
               autoComplete="family-name"
             />
@@ -113,6 +115,7 @@ export default function JoinClassroom() {
             value={code}
             onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
             placeholder="ABC123"
+            aria-label="Classroom join code"
             className={styles.codeInput}
             maxLength={6}
             autoFocus

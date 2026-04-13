@@ -48,6 +48,7 @@ export default function Nav() {
 
   return (
     <nav className={styles.nav}>
+      <a href="#main-content" className={styles.skipLink}>Skip to main content</a>
       <div className={styles.inner}>
 
         {/* All items in one row with equal gap */}

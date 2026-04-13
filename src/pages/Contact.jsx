@@ -65,8 +65,9 @@ export default function Contact() {
         ) : (
           <form className={styles.form} onSubmit={handleSubmit}>
             <div className={styles.field}>
-              <label className={styles.label}>Name <span className={styles.optional}>(optional)</span></label>
+              <label htmlFor="contact-name" className={styles.label}>Name <span className={styles.optional}>(optional)</span></label>
               <input
+                id="contact-name"
                 type="text"
                 className={styles.input}
                 placeholder="Your name"
@@ -76,8 +77,9 @@ export default function Contact() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>Email <span className={styles.optional}>(optional)</span></label>
+              <label htmlFor="contact-email" className={styles.label}>Email <span className={styles.optional}>(optional)</span></label>
               <input
+                id="contact-email"
                 type="email"
                 className={styles.input}
                 placeholder="your@email.com"

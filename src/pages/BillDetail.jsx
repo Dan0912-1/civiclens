@@ -200,7 +200,8 @@ export default function BillDetail() {
         const resp = await fetch(`${API_BASE}/api/personalize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bill, profile })
+          body: JSON.stringify({ bill, profile }),
+          signal: AbortSignal.timeout(30000),
         })
         if (cancelled) return
         if (resp.ok) {
@@ -229,7 +230,8 @@ export default function BillDetail() {
       const resp = await fetch(`${API_BASE}/api/personalize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bill, profile })
+        body: JSON.stringify({ bill, profile }),
+        signal: AbortSignal.timeout(30000),
       })
       if (resp.ok) {
         const data = await resp.json()
@@ -447,12 +449,13 @@ export default function BillDetail() {
                   {analysis.civic_actions.map((a, i) => (
                     <div key={i} className={styles.actionCard}>
                       <div className={styles.actionTitle}>{a.action}</div>
-                      <p className={styles.actionHow} dangerouslySetInnerHTML={{
-                        __html: a.how.replace(
-                          /(https?:\/\/[^\s,)]+)/g,
-                          '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--amber);text-decoration:underline">$1</a>'
+                      <p className={styles.actionHow}>{
+                        a.how.split(/(https?:\/\/[^\s,)]+)/g).map((part, j) =>
+                          /^https?:\/\//.test(part)
+                            ? <a key={j} href={part} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>{part}</a>
+                            : part
                         )
-                      }} />
+                      }</p>
                       {a.time && <span className={styles.actionTime}>~{a.time}</span>}
                     </div>
                   ))}

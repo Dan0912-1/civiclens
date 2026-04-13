@@ -35,7 +35,9 @@ export default function CreateClassroomModal({ onClose, onCreated }) {
         <p>Give your class a name. Students will join using a code — no account needed.</p>
 
         <form onSubmit={handleSubmit}>
+          <label htmlFor="classroom-name" className={styles.label || undefined} style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Classroom name</label>
           <input
+            id="classroom-name"
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}

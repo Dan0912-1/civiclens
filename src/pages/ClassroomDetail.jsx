@@ -22,6 +22,7 @@ export default function ClassroomDetail() {
   const [showAssign, setShowAssign] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
   const [token, setToken] = useState(null)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
     if (!user) { navigate('/'); return }
@@ -39,21 +40,28 @@ export default function ClassroomDetail() {
 
   async function loadData() {
     setLoading(true)
+    setLoadError(null)
     const t = await getToken()
-    if (!t) { setLoading(false); return }
+    if (!t) { setLoading(false); setLoadError('Could not authenticate. Please sign in again.'); return }
 
-    const [cr, a] = await Promise.all([
-      getClassroomDetail(t, id),
-      getAssignments(t, id),
-    ])
-    setClassroom(cr)
-    setAssignments(a)
-    setLoading(false)
+    try {
+      const [cr, a] = await Promise.all([
+        getClassroomDetail(t, id),
+        getAssignments(t, id),
+      ])
+      if (!cr) { setLoadError('Classroom not found or you don\u2019t have access.'); setLoading(false); return }
+      setClassroom(cr)
+      setAssignments(a)
+      setLoading(false)
 
-    // Load stats in background for teachers
-    if (cr?.role === 'teacher') {
-      const s = await getClassroomStats(t, id)
-      setStats(s)
+      // Load stats in background for teachers
+      if (cr?.role === 'teacher') {
+        const s = await getClassroomStats(t, id)
+        setStats(s)
+      }
+    } catch {
+      setLoadError('Could not load classroom. Check your connection and try again.')
+      setLoading(false)
     }
   }
 
@@ -129,7 +137,8 @@ export default function ClassroomDetail() {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
-          <p className={styles.error}>Classroom not found</p>
+          <p className={styles.error}>{loadError || 'Classroom not found'}</p>
+          <button className={styles.back} onClick={() => loadData()} style={{ marginBottom: '0.5rem' }}>Try Again</button>
           <button className={styles.back} onClick={() => navigate('/classroom')}>Back to Classrooms</button>
         </div>
       </main>

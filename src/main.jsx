@@ -19,7 +19,7 @@ if (sentryDsn) {
     ],
     tracesSampleRate: 0.2,
     replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: 0.5,
+    replaysOnErrorSampleRate: 0, // disabled — error replays could capture student profile data
   })
 }
 

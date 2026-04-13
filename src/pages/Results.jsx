@@ -172,7 +172,8 @@ export default function Results() {
         const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills, profile })
+          body: JSON.stringify({ bills, profile }),
+          signal: AbortSignal.timeout(60000),
         })
         const data = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)

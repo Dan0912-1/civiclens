@@ -187,6 +187,7 @@ export default function Home() {
             type="text"
             className={styles.searchInput}
             placeholder="e.g. student loans, minimum wage, climate..."
+            aria-label="Search bills"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />

@@ -50,7 +50,7 @@
 }
 
 .codeInput:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--amber);
   box-shadow: var(--shadow-amber);
 }
@@ -117,7 +117,7 @@
 }
 
 .nameInput:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--amber);
   box-shadow: var(--shadow-amber);
 }

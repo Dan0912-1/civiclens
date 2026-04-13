@@ -46,7 +46,7 @@
 }
 
 .searchInput:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--amber);
   box-shadow: var(--shadow-amber);
 }
@@ -128,7 +128,7 @@
 }
 
 .stateSelect:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--amber);
 }
 
@@ -343,7 +343,7 @@
   color: var(--navy);
 }
 
-.textarea:focus { outline: none; border-color: var(--amber); }
+.textarea:focus { outline: 2px solid transparent; border-color: var(--amber); box-shadow: var(--shadow-amber); }
 
 .dateInput {
   font-family: var(--font-mono);
@@ -355,7 +355,7 @@
   max-width: 200px;
 }
 
-.dateInput:focus { outline: none; border-color: var(--amber); }
+.dateInput:focus { outline: 2px solid transparent; border-color: var(--amber); box-shadow: var(--shadow-amber); }
 
 .actions {
   display: flex;

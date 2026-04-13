@@ -53,7 +53,7 @@
 }
 
 .req {
-  color: var(--amber);
+  color: var(--amber-dark);
 }
 
 .optional {
@@ -75,7 +75,7 @@
 }
 
 .input:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--navy);
   box-shadow: 0 0 0 1px var(--navy);
 }
@@ -95,7 +95,7 @@
 }
 
 .textarea:focus {
-  outline: none;
+  outline: 2px solid transparent;
   border-color: var(--navy);
   box-shadow: 0 0 0 1px var(--navy);
 }

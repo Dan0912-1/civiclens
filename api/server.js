@@ -4947,11 +4947,15 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
 
 // ─── Admin Stats ────────────────────────────────────────────────────────────
 // Protected by ADMIN_SECRET env var — set this on Railway for production
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'dev-admin-secret'
+const ADMIN_SECRET = process.env.ADMIN_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-admin-secret')
+if (!ADMIN_SECRET && process.env.NODE_ENV === 'production') {
+  console.error('[FATAL] ADMIN_SECRET env var is required in production')
+  process.exit(1)
+}
 
 function requireAdmin(req, res, next) {
-  const token = req.headers['x-admin-token'] || req.query.token
-  if (token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
+  const token = req.headers['x-admin-token']
+  if (!ADMIN_SECRET || token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
   next()
 }
 
