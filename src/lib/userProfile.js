@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { getApiBase } from './api'
+import { enqueue } from './offlineQueue'
 
 export async function loadProfile(userId) {
   if (!supabase) return null
@@ -43,26 +44,32 @@ export async function getBookmarks(userId) {
 }
 
 export async function addBookmark(userId, billId, billData) {
-  if (!supabase) return
+  if (!supabase) return false
   try {
-    await supabase
+    const { error } = await supabase
       .from('bookmarks')
       .upsert({ user_id: userId, bill_id: billId, bill_data: billData }, { onConflict: 'user_id,bill_id' })
+    return !error
   } catch {
-    // non-fatal
+    // Network failure — queue for retry when back online
+    enqueue('supabase:bookmarks', 'POST', { user_id: userId, bill_id: billId, bill_data: billData })
+    return false
   }
 }
 
 export async function removeBookmark(userId, billId) {
-  if (!supabase) return
+  if (!supabase) return false
   try {
-    await supabase
+    const { error } = await supabase
       .from('bookmarks')
       .delete()
       .eq('user_id', userId)
       .eq('bill_id', billId)
+    return !error
   } catch {
-    // non-fatal
+    // Network failure — queue for retry when back online
+    enqueue('supabase:bookmarks', 'DELETE', { user_id: userId, bill_id: billId })
+    return false
   }
 }
 

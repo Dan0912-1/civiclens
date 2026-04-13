@@ -275,6 +275,7 @@ export default function Search() {
                 value={inputValue}
                 onChange={e => setInputValue(e.target.value)}
                 placeholder="Search bills..."
+                aria-label="Search bills"
               />
             </div>
             <button
@@ -313,7 +314,7 @@ export default function Search() {
               onChange={e => {
                 const code = e.target.value
                 setSelectedState(code)
-                setChamberFilter('')
+                setChamberFilter('All')
                 if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
               }}
             >
@@ -369,7 +370,7 @@ export default function Search() {
         {/* Results */}
         {!loading && !error && filteredBills.length > 0 && (
           <>
-            <div className={styles.meta}>
+            <div className={styles.meta} role="status" aria-live="polite">
               {totalResults} result{totalResults !== 1 ? 's' : ''} for "{activeQuery}" &middot; {filterLabel}
             </div>
             <div className={styles.grid}>

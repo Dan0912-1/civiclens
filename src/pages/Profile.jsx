@@ -130,7 +130,8 @@ export default function Profile() {
       additionalContext: '',
     }
     if (!stored) return base
-    const parsed = JSON.parse(stored)
+    let parsed
+    try { parsed = JSON.parse(stored) } catch { return base }
     // Backwards-compat migration: hasJob:bool → employment, familySituation:string → array
     const employment = parsed.employment
       ?? (parsed.hasJob === true ? 'part_time' : 'none')
@@ -340,6 +341,7 @@ export default function Profile() {
                   value={profile.additionalContext}
                   onChange={e => setProfile(p => ({ ...p, additionalContext: e.target.value }))}
                   rows={2}
+                  maxLength={500}
                 />
               </div>
             </div>

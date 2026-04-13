@@ -68,7 +68,7 @@
   padding: 2px 8px;
   border-radius: 1px;
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -90,7 +90,7 @@
 
 .recommendReason {
   font-family: var(--font-body);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   color: var(--text-muted);
   font-style: italic;
   letter-spacing: 0.02em;
@@ -106,7 +106,7 @@
 
 .chamber {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -458,8 +458,8 @@
 }
 
 .iconBtn {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

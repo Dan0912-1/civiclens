@@ -158,6 +158,13 @@ input, select, textarea {
   font-family: var(--font-body);
 }
 
+/* Global focus indicator fallback — ensures keyboard users always see focus.
+   Individual components can override with their own :focus-visible styles. */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+
 /* iOS WKWebView auto-zooms when an input with font-size < 16px receives focus.
    Force 16px on mobile so tapping any form field never triggers viewport zoom.
    !important overrides CSS-module class selectors that set smaller sizes. */

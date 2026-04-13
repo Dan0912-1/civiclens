@@ -1,0 +1,399 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 25, 41, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-lg);
+}
+
+.modal {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: 32px;
+  max-width: 600px;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal h2 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--navy);
+  margin-bottom: var(--space-lg);
+}
+
+/* ─── Search bar ──────────────────────────────────────────────────────────── */
+
+.searchRow {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.searchInput {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  color: var(--navy);
+}
+
+.searchInput:focus {
+  outline: 2px solid transparent;
+  border-color: var(--amber);
+  box-shadow: var(--shadow-amber);
+}
+
+.searchBtn {
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 16px;
+  border-radius: 1px;
+}
+
+.searchBtn:hover:not(:disabled) { background: var(--navy-light); }
+.searchBtn:disabled { opacity: 0.5; }
+
+/* ─── Filter section ──────────────────────────────────────────────────────── */
+
+.filterSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-md);
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.tabGroup {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.tab {
+  padding: 6px 14px;
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--white);
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+
+.tab:hover { background: var(--cream); }
+
+.tabActive {
+  background: var(--navy);
+  color: var(--white);
+}
+
+.tabActive:hover { background: var(--navy-light); }
+
+.stateSelect {
+  padding: 6px 10px;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  color: var(--navy);
+  background: var(--white);
+  max-width: 180px;
+}
+
+.stateSelect:focus {
+  outline: 2px solid transparent;
+  border-color: var(--amber);
+}
+
+.chamberRow {
+  display: flex;
+  gap: 4px;
+}
+
+.chamberPill {
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--white);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chamberPill:hover { border-color: var(--amber); color: var(--navy); }
+
+.chamberActive {
+  background: var(--amber);
+  color: var(--navy);
+  border-color: var(--amber);
+}
+
+/* ─── Topic chips ─────────────────────────────────────────────────────────── */
+
+.chipSection {
+  margin-bottom: var(--space-md);
+}
+
+.chipLabel {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 12px;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  background: var(--cream);
+  color: var(--navy);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.chip:hover {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--navy);
+}
+
+/* ─── Results list ────────────────────────────────────────────────────────── */
+
+.resultsList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border-light);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.resultItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--white);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.resultItem:hover { background: var(--cream); }
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.resultBillNum {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.resultMeta {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 1px;
+  background: var(--cream);
+  color: var(--text-muted);
+  border: 1px solid var(--border-light);
+}
+
+.badgeChamber {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 1px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.resultTitle {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.noResults {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  text-align: center;
+  padding: var(--space-lg);
+  font-style: italic;
+}
+
+/* ─── Assignment form (step 2) ────────────────────────────────────────────── */
+
+.assignForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.selectedBill {
+  background: var(--cream);
+  padding: 14px;
+  border-radius: 1px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.changeBtn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 0.72rem;
+  color: var(--amber);
+  text-decoration: underline;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.textarea {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  resize: vertical;
+  color: var(--navy);
+}
+
+.textarea:focus { outline: 2px solid transparent; border-color: var(--amber); box-shadow: var(--shadow-amber); }
+
+.dateInput {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  color: var(--navy);
+  max-width: 200px;
+}
+
+.dateInput:focus { outline: 2px solid transparent; border-color: var(--amber); box-shadow: var(--shadow-amber); }
+
+.actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: flex-end;
+  margin-top: var(--space-sm);
+}
+
+.btnCancel {
+  background: var(--white);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+}
+
+.btnAssign {
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 10px 20px;
+  border-radius: 1px;
+}
+
+.btnAssign:hover:not(:disabled) { background: var(--navy-light); }
+.btnAssign:disabled { opacity: 0.5; }
+
+.error {
+  color: var(--status-failed);
+  font-size: 0.82rem;
+  margin-top: var(--space-sm);
+}

@@ -43,8 +43,10 @@ export default function Privacy() {
           <p>
             We do not sell, rent, or share your personal information with any
             third party for marketing or advertising purposes. Your profile data
-            is sent to Anthropic's Claude AI solely for generating personalized
-            bill explanations. No other third party receives your data.
+            is sent to our AI providers (Groq and Anthropic) solely for generating
+            personalized bill explanations. Your data is anonymized before
+            processing — no name, email, or account ID is included. No other
+            third party receives your data.
           </p>
         </div>
 
@@ -55,7 +57,8 @@ export default function Privacy() {
           </p>
           <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.75, paddingLeft: '1.25rem', marginTop: '0.5rem' }}>
             <li><strong>Supabase</strong> — authentication, database, and user data storage (hosted on AWS)</li>
-            <li><strong>Anthropic Claude AI</strong> — generates personalized bill explanations from your profile</li>
+            <li><strong>Groq (Qwen3-32B)</strong> — primary AI provider for personalized bill explanations (anonymized profile data only)</li>
+            <li><strong>Anthropic Claude AI</strong> — backup AI provider for bill explanations</li>
             <li><strong>LegiScan</strong> — provides federal and state legislation data</li>
             <li><strong>Google OAuth / Apple Sign-In</strong> — optional account authentication</li>
             <li><strong>Firebase Cloud Messaging</strong> — push notifications on mobile (if enabled)</li>
@@ -65,6 +68,48 @@ export default function Privacy() {
             These services may process limited data as necessary to provide their
             functionality. Each operates under its own privacy policy.
           </p>
+        </div>
+
+        <div className={styles.section}>
+          <h2>School and Classroom Use</h2>
+          <p>
+            CapitolKey can be used in classroom settings by teachers and students
+            aged 13 and older. When CapitolKey is used in a school context, the
+            school or district may have additional obligations under the Family
+            Educational Rights and Privacy Act (FERPA). Schools are responsible
+            for ensuring their use of CapitolKey complies with applicable FERPA
+            requirements.
+          </p>
+          <p>
+            Teachers who create classrooms on CapitolKey can view aggregate
+            completion statistics (such as how many students completed an
+            assignment) but cannot access individual student profiles or
+            personalized bill explanations.
+          </p>
+          <p>
+            Classroom data, including assignments and completion records, is
+            deleted when a classroom is archived by the teacher and permanently
+            removed from our systems within 30 days of archival.
+          </p>
+          <p>
+            Schools may request data deletion for all students in their
+            classrooms by contacting us at{' '}
+            <a href="mailto:capitolkeyapp@gmail.com" style={{ color: 'var(--amber)' }}>
+              capitolkeyapp@gmail.com
+            </a>.
+          </p>
+
+          <h3 style={{ marginTop: '1.5rem', marginBottom: '0.75rem', fontSize: '1.1rem', color: 'var(--navy)' }}>Parental Notice</h3>
+          <div className={styles.neutralBox}>
+            <div className={styles.neutralIcon}>&#9432;</div>
+            <p>
+              If you are under 18 and using CapitolKey through a school, your
+              parent or guardian should be aware that your anonymized profile
+              data (state, age range, interests) is processed by AI to generate
+              bill explanations. No personally identifying information is shared
+              with AI providers.
+            </p>
+          </div>
         </div>
 
         <div className={styles.section}>

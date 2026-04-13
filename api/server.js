@@ -88,7 +88,7 @@ app.use(compression())
 
 // 64KB body cap — large enough for batch personalize (20 bills) but tight
 // enough to bound abuse. Default is 100kb; an explicit value documents intent.
-app.use(express.json({ limit: '64kb' }))
+app.use(express.json({ limit: '2mb' }))
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
@@ -180,6 +180,7 @@ const featuredLimiter = rateLimit({
 
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+const GROQ_API_KEY = process.env.GROQ_API_KEY
 const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
@@ -218,6 +219,151 @@ function setClaudeBackoff(retryAfterHeader) {
   }
 }
 
+// ─── LLM provider (Groq primary, Haiku fallback) ─────────────────────────
+// Groq Qwen3-32B is primary: 4-5x cheaper, 5x faster, comparable quality.
+// Falls back to Claude Haiku if GROQ_API_KEY is missing or Groq goes down.
+let _useGroqFallback = !!GROQ_API_KEY  // true = use Groq (primary)
+let _groqFallbackSince = _useGroqFallback ? Date.now() : null
+
+function activateGroqFallback(reason) {
+  if (_useGroqFallback) return
+  if (!GROQ_API_KEY) {
+    console.error(`[llm-failover] Would switch to Groq but GROQ_API_KEY is not set`)
+    return
+  }
+  _useGroqFallback = true
+  _groqFallbackSince = Date.now()
+  console.log(`[llm-failover] Switched to Groq Qwen3-32B — reason: ${reason}`)
+}
+
+function isUsingGroq() { return _useGroqFallback }
+
+// ─── Global LLM concurrency limiter (semaphore) ──────────────────────────────
+// Prevents thundering herd: when 30 students hit /api/personalize-batch
+// simultaneously, each batch has its own CONCURRENCY of 10, but ALL LLM calls
+// across ALL requests are gated through this semaphore (max 15 in-flight).
+const GLOBAL_LLM_CONCURRENCY = 15
+let _llmInFlight = 0
+const _llmQueue = []
+
+async function acquireLLMSlot(timeoutMs = 90000) {
+  if (_llmInFlight < GLOBAL_LLM_CONCURRENCY) {
+    _llmInFlight++
+    return
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const idx = _llmQueue.indexOf(entry)
+      if (idx >= 0) _llmQueue.splice(idx, 1)
+      reject(new Error('LLM queue timeout — too many concurrent requests'))
+    }, timeoutMs)
+    const entry = { resolve: () => { clearTimeout(timer); _llmInFlight++; resolve() }, reject }
+    _llmQueue.push(entry)
+  })
+}
+
+function releaseLLMSlot() {
+  _llmInFlight--
+  if (_llmQueue.length > 0) {
+    const next = _llmQueue.shift()
+    next.resolve()
+  }
+}
+
+/**
+ * Unified LLM call. Tries Haiku first; on credit/auth failure, falls back to Groq.
+ * Returns { text, usage: { input_tokens, output_tokens }, provider }
+ * Throws on unrecoverable errors.
+ * All calls are gated by the global LLM semaphore (max GLOBAL_LLM_CONCURRENCY).
+ */
+async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
+  await acquireLLMSlot()
+  try {
+  // ── Groq path ──
+  if (_useGroqFallback) {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        max_tokens: Math.max(maxTokens, 1024), // Qwen needs more room
+        temperature,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userPrompt + '\n\n/no_think' }
+        ]
+      })
+    })
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}))
+      throw new Error(`Groq ${resp.status}: ${errBody.error?.message || 'Unknown'}`)
+    }
+    const data = await resp.json()
+    const text = data.choices?.[0]?.message?.content || ''
+    return {
+      text,
+      usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
+      provider: 'groq'
+    }
+  }
+
+  // ── Haiku path ──
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      temperature,
+      system,
+      messages: [{ role: 'user', content: userPrompt }]
+    })
+  })
+
+  // Credit exhaustion / auth failure → switch to Groq and retry once
+  if (resp.status === 402 || resp.status === 401 || resp.status === 403) {
+    activateGroqFallback(`Anthropic HTTP ${resp.status}`)
+    return callLLM({ system, userPrompt, maxTokens, temperature, timeoutMs })
+  }
+
+  // Return rate-limit and server errors to caller for their retry logic
+  if (resp.status === 429) {
+    setClaudeBackoff(resp.headers.get('retry-after'))
+    const err = new Error('HTTP 429')
+    err.status = 429
+    err.retryAfter = resp.headers.get('retry-after')
+    throw err
+  }
+  if (resp.status >= 500) {
+    const err = new Error(`HTTP ${resp.status}`)
+    err.status = resp.status
+    throw err
+  }
+
+  const data = await resp.json()
+  const text = data.content?.[0]?.text || ''
+  if (!text) throw new Error('Empty response from Claude')
+
+  recordAnthropicSuccess()
+  return {
+    text,
+    usage: { input_tokens: data.usage?.input_tokens || 0, output_tokens: data.usage?.output_tokens || 0 },
+    provider: 'haiku'
+  }
+  } finally {
+    releaseLLMSlot()
+  }
+}
+
 // ─── In-flight request deduplication ───────────────────────────────────────
 // Prevents cache stampede: if N requests ask for the same cacheKey
 // simultaneously, only one triggers the expensive work (Claude/LegiScan).
@@ -236,7 +382,7 @@ function dedup(key, fn) {
 // instead of an obvious root cause in the Railway logs.
 const missingKeys = []
 if (!LEGISCAN_KEY)  missingKeys.push('LEGISCAN_API_KEY')
-if (!ANTHROPIC_KEY) missingKeys.push('ANTHROPIC_API_KEY')
+if (!GROQ_API_KEY && !ANTHROPIC_KEY) missingKeys.push('GROQ_API_KEY or ANTHROPIC_API_KEY')
 if (missingKeys.length) {
   console.error(`[startup] WARNING: missing env vars — ${missingKeys.join(', ')}. ` +
     `Dependent endpoints will return errors until these are set.`)
@@ -1275,12 +1421,27 @@ ABSOLUTE RULES
 10. NEVER tell the student to take personal action ("delete the app", "change your password") in headline/summary/if_it_passes/if_it_fails. Save action steps for civic_actions.
 11. For short bills (<500 words of source text), summary MUST cover every operative provision: dates, who runs it, deadlines, scope, temporary vs permanent. No cherry-picking.
 
-RELEVANCE
-9-10: directly changes daily life now (paycheck, school, healthcare)
-7-8: affects them within 1-2 years (college costs, job market)
-5-6: broader community / future
-3-4: tangential via interests or family
-1-2: no meaningful connection
+RELEVANCE — use the number that BEST fits the category:
+9-10: bill directly changes this student's daily life NOW (their paycheck, their school, their healthcare)
+7-8: affects them within 1-2 years (college costs, job market they'll enter)
+5-6: broader community/future impact with a CLEAR, SPECIFIC link to student
+3-4: tangential — only connected through a family member's job or a side interest
+1-2: no meaningful connection at all
+CRITICAL: Do NOT inflate relevance with speculative or indirect chains. If the bill's subject (e.g. defense, agriculture, trade) has no direct overlap with the student's stated interests, job, school, or family situation, the relevance MUST be ≤ 3. A hardware store worker is not connected to defense spending. An art student is not connected to military funding.
+HIGH relevance requires the bill to name something the student personally does or will do within 2 years.
+
+RELEVANCE EXAMPLES:
+- Student works part-time, bill raises minimum wage → relevance 9 (directly changes their paycheck)
+- Student interested in environment, bill funds coastal restoration → relevance 8 (ties to their passion and future career)
+- Student interested in art/theater, bill increases defense spending → relevance 1-2 (no connection — say so honestly)
+- Student's parent works retail, bill changes trade tariffs → relevance 3 (only tangential through family)
+Low relevance is the CORRECT answer when the connection is weak. Helping students focus on bills that matter to THEM means honestly rating irrelevant bills low.
+
+CIVIC ACTIONS — MANDATORY:
+- Every civic_action MUST include a real URL in the "how" field
+- Use: https://www.congress.gov/bill/119th-congress/[house-bill|senate-bill]/[number] for bill pages
+- Use: https://www.house.gov/representatives/find-your-representative or https://www.senate.gov/senators/senators-contact.htm for contact actions
+- NEVER leave a civic_action without a URL.
 
 OUTPUT — return ONLY this JSON, nothing else:
 {
@@ -1294,6 +1455,51 @@ OUTPUT — return ONLY this JSON, nothing else:
     { "action": "Short imperative title", "how": "One sentence with a specific URL/phone/step.", "time": "5 minutes | 15 minutes | 1 hour" }
   ]
 }`
+
+// ─── Relevance post-processing ────────────────────────────────────────────
+// Qwen3 (Groq) tends to over-rate relevance on bills with no real connection
+// to the student. This function only pulls DOWN clearly inflated scores —
+// it never touches scores where a reasonable connection exists.
+function adjustRelevance(parsed, profile) {
+  const raw = Number(parsed.relevance)
+  if (isNaN(raw) || raw <= 3) return // already low — trust it
+
+  const tag = (parsed.topic_tag || 'Other').toLowerCase()
+  const interests = (profile.interests || []).map(i => i.toLowerCase())
+  const hasJob = profile.employment && profile.employment !== 'none'
+  const grade = parseInt(profile.grade, 10) || 0
+  const isSenior = grade >= 12
+
+  // Direct-connection checks — any of these = trust the LLM score
+  if (hasJob && ['economy', 'housing'].includes(tag)) return
+  if (isSenior && tag === 'education') return
+
+  const affinityMap = {
+    education:      ['education', 'teaching', 'college prep', 'stem', 'debate'],
+    healthcare:     ['healthcare', 'biology', 'pre-med', 'sports', 'mental health'],
+    economy:        ['business', 'economics', 'entrepreneurship', 'finance'],
+    environment:    ['environment', 'science', 'agriculture', 'biology'],
+    technology:     ['technology', 'gaming', 'computer science', 'stem', 'engineering', 'social media'],
+    housing:        ['real estate', 'architecture', 'community service'],
+    'civil rights': ['politics', 'debate', 'history', 'social justice'],
+    immigration:    ['languages', 'culture', 'politics', 'debate'],
+    community:      ['community service', 'volunteering', 'politics'],
+    other:          [],
+  }
+  const related = affinityMap[tag] || []
+  const hasInterestMatch = interests.some(i =>
+    related.some(r => i.includes(r) || r.includes(i))
+  )
+  if (hasInterestMatch) return // LLM had a reason — trust it
+
+  // Bill-content keywords that affect any student universally
+  const summary = (parsed.summary || '').toLowerCase()
+  const universalKeywords = ['student', 'school', 'minor', 'under 17', 'under 18', 'youth', 'teen', 'college', 'university']
+  if (universalKeywords.some(kw => summary.includes(kw))) return
+
+  // No direct connection found — cap the score
+  parsed.relevance = Math.min(raw, 3)
+}
 
 // Sanitize freeform "Other context" text. Previously this also tried to strip
 // personal-name-shaped tokens with a regex, but that filter was both too
@@ -1330,7 +1536,20 @@ function normalizeProfile(profile) {
   const interests = rawInterests.filter(i => VALID_INTERESTS.includes(i))
   const state = US_STATES.includes(profile.state) ? profile.state : ''
   const grade = isValidGrade(profile.grade) ? String(profile.grade) : ''
-  const subInterests = Array.isArray(profile.subInterests) ? profile.subInterests.slice(0, 20) : []
+  const VALID_SUB_INTERESTS = new Set([
+    'Student loans', 'School safety', 'College access', 'Teacher quality', 'Special ed',
+    'Climate change', 'Clean water', 'Wildlife', 'Renewable energy', 'Pollution',
+    'Minimum wage', 'Student debt', 'Gig economy', 'Cost of living', 'Small business',
+    'Mental health', 'Drug costs', 'School health', 'Insurance access', 'Substance abuse',
+    'AI & algorithms', 'Data privacy', 'Social media', 'Broadband access', 'Cybersecurity',
+    'Rent & affordability', 'Homelessness', 'Tenant rights', 'Public housing', 'Zoning',
+    'DACA & Dreamers', 'Visas', 'Asylum', 'Citizenship', 'Border policy',
+    'Voting access', 'Police reform', 'Disability rights', 'LGBTQ rights', 'Equal pay',
+    'National service', 'Food assistance', 'Libraries', 'Rural development', 'Nonprofits',
+  ])
+  const subInterests = Array.isArray(profile.subInterests)
+    ? profile.subInterests.filter(s => typeof s === 'string' && VALID_SUB_INTERESTS.has(s)).slice(0, 20)
+    : []
   const career = typeof profile.career === 'string' ? profile.career.slice(0, 50) : ''
   return {
     ...profile,
@@ -1505,96 +1724,32 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
       const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
 
-      // Wall-clock cap so a long retry storm can't pin a request open while the
-      // client has already given up — prevents Claude tokens being burned for a
-      // response we'll never deliver.
-      const requestStart = Date.now()
-      const REQUEST_BUDGET_MS = 45000
-
       const MAX_RETRIES = 4
       const billLabel = identity
       let lastError = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (Date.now() - requestStart > REQUEST_BUDGET_MS) {
-          lastError = lastError || 'request budget exceeded'
-          break
-        }
-        if (isClaudeBackedOff()) {
-          lastError = 'Claude circuit breaker open'
-          break
-        }
         if (!tryConsumeAnthropicQuota()) {
           throw Object.assign(new Error('Service temporarily at capacity'), { statusCode: 503 })
         }
         try {
-          const remaining = REQUEST_BUDGET_MS - (Date.now() - requestStart)
-          const resp = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': ANTHROPIC_KEY,
-              'anthropic-version': '2023-06-01'
-            },
-            signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
-            body: JSON.stringify({
-              model: 'claude-haiku-4-5-20251001',
-              max_tokens: 700,
-              temperature: 0.4,
-              system: systemPrompt,
-              messages: [
-                { role: 'user', content: userPrompt }
-              ]
-            })
-          })
-
-          // Auth errors are not transient — fail immediately
-          if (resp.status === 401 || resp.status === 403) {
-            throw new Error(`Anthropic auth error: ${resp.status}`)
-          }
-
-          // Rate limit — set circuit breaker and retry
-          if (resp.status === 429) {
-            setClaudeBackoff(resp.headers.get('retry-after'))
-            if (attempt < MAX_RETRIES) {
-              const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-              lastError = 'HTTP 429'
-              await new Promise(r => setTimeout(r, delay))
-              continue
-            }
-          }
-
-          // Server error — retry without circuit breaker
-          if (resp.status >= 500 && attempt < MAX_RETRIES) {
-            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            lastError = `HTTP ${resp.status}`
-            console.log(`[personalize] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-            await new Promise(r => setTimeout(r, delay))
-            continue
-          }
-
-          const data = await resp.json()
-
-          if (!data.content?.[0]?.text) {
-            throw new Error(data.error?.message || 'No response from Claude')
-          }
-
-          // Only count successful calls against quota
+          const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
           recordAnthropicSuccess()
 
-          const parsed = extractJson(data.content[0].text)
+          const parsed = extractJson(llmResult.text)
+          adjustRelevance(parsed, profile)
           parsed.sources = sources
           const personalizeResult = { analysis: parsed }
           setCache(cacheKey, personalizeResult)
-          // Non-blocking Supabase write — L1 cache already set
           setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, personalizeResult)
             .catch(err => console.error('[cache] bg Supabase write failed:', err.message))
+          console.log(`[personalize] ${billLabel} via ${llmResult.provider} (${llmResult.usage.input_tokens}→${llmResult.usage.output_tokens} tokens)`)
           return personalizeResult
         } catch (err) {
           lastError = err.message
-          if (err.statusCode) throw err // re-throw capacity errors
+          if (err.statusCode) throw err
           if (attempt < MAX_RETRIES) {
             const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            console.log(`[personalize] ${err.name || 'Error'} for ${billLabel} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+            console.log(`[personalize] ${err.message} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
             await new Promise(r => setTimeout(r, delay))
             continue
           }
@@ -1745,12 +1900,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   let clientGone = false
   req.on('close', () => { clientGone = true })
 
-  // 3. Fire Claude calls with concurrency limit and retry on transient failures
+  // 3. Fire LLM calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
-    // C1 — replace attacker-supplied metadata with canonical LegiScan title.
     const trustedBill = buildTrustedBill(bill, billData?.meta)
-
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
     const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
 
@@ -1761,86 +1914,32 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       if (Date.now() - batchStart > BATCH_BUDGET_MS) {
         return { billId, error: lastError || 'batch budget exceeded' }
       }
-      if (isClaudeBackedOff()) {
-        return { billId, error: 'Claude circuit breaker open' }
-      }
       if (!tryConsumeAnthropicQuota()) {
         return { billId, error: 'service capacity' }
       }
       try {
-        const remaining = BATCH_BUDGET_MS - (Date.now() - batchStart)
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_KEY,
-            'anthropic-version': '2023-06-01'
-          },
-          signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 700,
-            temperature: 0.4,
-            system: systemPrompt,
-            messages: [
-              { role: 'user', content: userPrompt }
-            ]
-          })
-        })
-
-        // Auth errors are not transient — fail immediately
-        if (resp.status === 401 || resp.status === 403) {
-          throw new Error(`Anthropic auth error: ${resp.status}`)
-        }
-
-        // Rate limit — set circuit breaker and retry
-        if (resp.status === 429) {
-          setClaudeBackoff(resp.headers.get('retry-after'))
-          if (attempt < MAX_RETRIES) {
-            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            lastError = 'HTTP 429'
-            await new Promise(r => setTimeout(r, delay))
-            continue
-          }
-        }
-
-        // Server error — retry
-        if (resp.status >= 500 && attempt < MAX_RETRIES) {
-          const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-          lastError = `HTTP ${resp.status}`
-          console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-          await new Promise(r => setTimeout(r, delay))
-          continue
-        }
-
-        const data = await resp.json()
-        if (!data.content?.[0]?.text) {
-          throw new Error(data.error?.message || 'No response from Claude')
-        }
-
-        // Only count successful calls against quota
+        const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
         recordAnthropicSuccess()
 
-        const parsed = extractJson(data.content[0].text)
+        const parsed = extractJson(llmResult.text)
+        adjustRelevance(parsed, profile)
         parsed.sources = sources
         const result = { analysis: parsed }
 
         setCache(cacheKey, result)
-        // Non-blocking Supabase write
         setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
           .catch(err => console.error('[cache] bg batch Supabase write failed:', err.message))
 
         return { billId, result }
       } catch (err) {
         lastError = err.message
-        // Retry on any transient error (timeouts, network, JSON parse, malformed response)
         if (attempt < MAX_RETRIES) {
           const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-          console.log(`[batch] ${err.name || 'Error'} for ${billId} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+          console.log(`[batch] ${err.message} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
           await new Promise(r => setTimeout(r, delay))
           continue
         }
-        console.error(`[batch] Claude error for ${billId} after ${MAX_RETRIES} retries:`, err.message)
+        console.error(`[batch] Failed for ${billId} after ${MAX_RETRIES} retries:`, err.message)
         return { billId, error: err.message }
       }
     }
@@ -2052,47 +2151,18 @@ app.post('/api/share-post', personalizeLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Service temporarily at capacity, please try again shortly', retryable: true })
     }
     try {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01'
-        },
-        signal: AbortSignal.timeout(30000),
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 800,
-          temperature: 0.8, // higher than personalize — we want voice variety across drafts
-          system: SHARE_POST_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
+      const llmResult = await callLLM({
+        system: SHARE_POST_SYSTEM_PROMPT,
+        userPrompt,
+        maxTokens: 800,
+        temperature: 0.8,
+        timeoutMs: 30000
       })
 
-      // Auth errors are not transient — fail immediately
-      if (resp.status === 401 || resp.status === 403) {
-        throw new Error(`Anthropic auth error: ${resp.status}`)
-      }
-
-      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
-        const delay = Math.min(4000, 800 * 2 ** attempt) + Math.floor(Math.random() * 300)
-        lastError = `HTTP ${resp.status}`
-        console.log(`[share-post] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-        await new Promise(r => setTimeout(r, delay))
-        continue
-      }
-
-      const data = await resp.json()
-      if (!data.content?.[0]?.text) {
-        throw new Error(data.error?.message || 'No response from Claude')
-      }
-
-      const parsed = extractJson(data.content[0].text)
+      const parsed = extractJson(llmResult.text)
       if (!Array.isArray(parsed.drafts) || !parsed.drafts.length) {
-        throw new Error('Claude returned no drafts')
+        throw new Error('LLM returned no drafts')
       }
-      // Filter out anything malformed and trim. We don't reject the whole
-      // response over one bad draft — surface the good ones.
       const drafts = parsed.drafts
         .filter(d => d && typeof d.text === 'string' && d.text.trim())
         .map(d => ({ angle: d.angle || 'draft', text: d.text.trim() }))
@@ -3397,31 +3467,14 @@ async function speculativePersonalize(bills, profile) {
       const billText = content?.text || ''
       const trustedBill = buildTrustedBill(bill, null)
       const userPrompt = buildUserPrompt(norm, trustedBill, billText)
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 700,
-          temperature: 0.4,
-          system: PERSONALIZE_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        signal: AbortSignal.timeout(30000),
-      })
-      if (!resp.ok) continue
-      const data = await resp.json()
-      const text = data.content?.[0]?.text || ''
-      const parsed = extractJson(text)
+      const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
+      const parsed = extractJson(llmResult.text)
       if (parsed) {
+        adjustRelevance(parsed, norm)
         const result = { analysis: parsed }
         setCache(cacheKey, result)
         setSupabaseCache(cacheKey, identity, String(norm.grade), (norm.interests || []).slice().sort(), result)
-        console.log(`[speculative] Pre-personalized ${identity}`)
+        console.log(`[speculative] Pre-personalized ${identity} via ${llmResult.provider}`)
       }
     } catch (err) {
       console.error(`[speculative] Failed for ${bill.type}${bill.number}:`, err.message)
@@ -4268,6 +4321,684 @@ app.get('/api/featured', featuredLimiter, async (req, res) => {
   }
 })
 
+// ─── Classroom system ────────────────────────────────────────────────────────
+// Teacher-created classes with join codes, bill assignments, and aggregate stats.
+// Privacy: teacher endpoints return ONLY aggregate data — never per-student details.
+
+const classroomLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: userOrIpKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many classroom requests — please slow down.' },
+})
+
+const JOIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no 0/O, 1/I/L
+function generateJoinCode() {
+  const bytes = crypto.randomBytes(6)
+  let code = ''
+  for (let i = 0; i < 6; i++) code += JOIN_CODE_CHARS[bytes[i] % JOIN_CODE_CHARS.length]
+  return code
+}
+
+async function requireClassroomTeacher(req, classroomId) {
+  const user = await requireAuth(req)
+  if (!supabase) throw new Error('Service unavailable')
+  const { data: classroom } = await supabase
+    .from('classrooms').select('id, owner_id').eq('id', classroomId).single()
+  if (!classroom) throw new Error('Not found')
+  if (classroom.owner_id === user.id) return user
+  const { data: membership } = await supabase
+    .from('classroom_members').select('role')
+    .eq('classroom_id', classroomId).eq('user_id', user.id).eq('role', 'teacher').single()
+  if (!membership) throw new Error('Forbidden')
+  return user
+}
+
+async function requireClassroomMember(req, classroomId) {
+  const user = await requireAuth(req)
+  if (!supabase) throw new Error('Service unavailable')
+  const { data: membership } = await supabase
+    .from('classroom_members').select('role')
+    .eq('classroom_id', classroomId).eq('user_id', user.id).single()
+  if (!membership) throw new Error('Forbidden')
+  return { ...user, classroomRole: membership.role }
+}
+
+// Create classroom
+app.post('/api/classroom', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const name = (req.body.name || '').trim()
+    if (!name || name.length > 100) return res.status(400).json({ error: 'Name is required (max 100 chars)' })
+
+    let join_code
+    for (let i = 0; i < 5; i++) {
+      join_code = generateJoinCode()
+      const { data: existing } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+      if (!existing) break
+      if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code — please retry' })
+    }
+
+    const { data: classroom, error } = await supabase.from('classrooms')
+      .insert({ owner_id: user.id, name, join_code, require_name: !!req.body.requireName })
+      .select('id, name, join_code, require_name, created_at')
+      .single()
+    if (error) throw error
+
+    // Add owner as teacher member
+    await supabase.from('classroom_members')
+      .insert({ classroom_id: classroom.id, user_id: user.id, role: 'teacher' })
+
+    res.json({ classroom })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] create error:', err.message)
+    res.status(500).json({ error: 'Failed to create classroom' })
+  }
+})
+
+// List my classrooms (as teacher or student)
+app.get('/api/classroom', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+
+    const { data: memberships } = await supabase.from('classroom_members')
+      .select('classroom_id, role').eq('user_id', user.id)
+    if (!memberships || memberships.length === 0) return res.json({ classrooms: [] })
+
+    const ids = memberships.map(m => m.classroom_id)
+    const roleMap = Object.fromEntries(memberships.map(m => [m.classroom_id, m.role]))
+
+    const { data: classrooms } = await supabase.from('classrooms')
+      .select('id, owner_id, name, join_code, archived, created_at')
+      .in('id', ids)
+      .order('created_at', { ascending: false })
+
+    // Get member counts
+    const { data: memberCounts } = await supabase.from('classroom_members')
+      .select('classroom_id').in('classroom_id', ids).eq('role', 'student')
+
+    const countMap = {}
+    for (const m of (memberCounts || [])) {
+      countMap[m.classroom_id] = (countMap[m.classroom_id] || 0) + 1
+    }
+
+    // Get assignment counts
+    const { data: assignmentCounts } = await supabase.from('classroom_assignments')
+      .select('classroom_id').in('classroom_id', ids)
+    const assignMap = {}
+    for (const a of (assignmentCounts || [])) {
+      assignMap[a.classroom_id] = (assignMap[a.classroom_id] || 0) + 1
+    }
+
+    const result = (classrooms || []).map(c => ({
+      ...c,
+      role: roleMap[c.id],
+      studentCount: countMap[c.id] || 0,
+      assignmentCount: assignMap[c.id] || 0,
+    }))
+
+    res.json({ classrooms: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] list error:', err.message)
+    res.status(500).json({ error: 'Failed to list classrooms' })
+  }
+})
+
+// Get classroom detail
+app.get('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, owner_id, name, join_code, archived, created_at')
+      .eq('id', req.params.id).single()
+    if (!classroom) return res.status(404).json({ error: 'Classroom not found' })
+
+    const { data: members } = await supabase.from('classroom_members')
+      .select('role').eq('classroom_id', req.params.id).eq('role', 'student')
+
+    res.json({ classroom: { ...classroom, role: user.classroomRole, studentCount: (members || []).length } })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] detail error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch classroom' })
+  }
+})
+
+// Update classroom (name, archive)
+app.put('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    const updates = {}
+    if (typeof req.body.name === 'string') {
+      const name = req.body.name.trim()
+      if (!name || name.length > 100) return res.status(400).json({ error: 'Name must be 1-100 chars' })
+      updates.name = name
+    }
+    if (typeof req.body.archived === 'boolean') updates.archived = req.body.archived
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' })
+
+    updates.updated_at = new Date().toISOString()
+    const { data, error } = await supabase.from('classrooms')
+      .update(updates).eq('id', req.params.id).select('id, name, archived, updated_at').single()
+    if (error) throw error
+    res.json({ classroom: data })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] update error:', err.message)
+    res.status(500).json({ error: 'Failed to update classroom' })
+  }
+})
+
+// Delete classroom (owner only)
+app.delete('/api/classroom/:id', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('owner_id').eq('id', req.params.id).single()
+    if (!classroom) return res.status(404).json({ error: 'Classroom not found' })
+    if (classroom.owner_id !== user.id) return res.status(403).json({ error: 'Only the classroom owner can delete it' })
+
+    await supabase.from('classrooms').delete().eq('id', req.params.id)
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] delete error:', err.message)
+    res.status(500).json({ error: 'Failed to delete classroom' })
+  }
+})
+
+// Regenerate join code
+app.post('/api/classroom/:id/regenerate-code', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    let join_code
+    for (let i = 0; i < 5; i++) {
+      join_code = generateJoinCode()
+      const { data: existing } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+      if (!existing) break
+      if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code' })
+    }
+    await supabase.from('classrooms').update({ join_code, updated_at: new Date().toISOString() }).eq('id', req.params.id)
+    res.json({ join_code })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] regenerate-code error:', err.message)
+    res.status(500).json({ error: 'Failed to regenerate code' })
+  }
+})
+
+// Join classroom by code
+app.post('/api/classroom/join', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const code = (req.body.code || '').trim().toUpperCase()
+    if (code.length !== 6) return res.status(400).json({ error: 'Join code must be 6 characters' })
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, name, archived').eq('join_code', code).single()
+    if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
+    if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer accepting new members' })
+
+    const { data: existing } = await supabase.from('classroom_members')
+      .select('id').eq('classroom_id', classroom.id).eq('user_id', user.id).single()
+    if (existing) return res.status(409).json({ error: 'You are already a member of this classroom' })
+
+    await supabase.from('classroom_members')
+      .insert({ classroom_id: classroom.id, user_id: user.id, role: 'student' })
+
+    res.json({ classroom: { id: classroom.id, name: classroom.name } })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] join error:', err.message)
+    res.status(500).json({ error: 'Failed to join classroom' })
+  }
+})
+
+// Public: peek at classroom by code (no auth — for anonymous students)
+app.get('/api/classroom/peek/:code', classroomLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const code = (req.params.code || '').trim().toUpperCase()
+    if (code.length !== 6) return res.status(400).json({ error: 'Invalid code' })
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, name, archived, require_name').eq('join_code', code).single()
+    if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
+    if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer active' })
+
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at')
+      .eq('classroom_id', classroom.id)
+      .order('created_at', { ascending: false })
+
+    res.json({
+      classroom: { id: classroom.id, name: classroom.name, requireName: !!classroom.require_name },
+      assignments: assignments || [],
+    })
+  } catch (err) {
+    console.error('[classroom] peek error:', err.message)
+    res.status(500).json({ error: 'Failed to load classroom' })
+  }
+})
+
+// Leave classroom (student)
+app.delete('/api/classroom/:id/leave', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    await supabase.from('classroom_members')
+      .delete().eq('classroom_id', req.params.id).eq('user_id', user.id).eq('role', 'student')
+    res.json({ left: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[classroom] leave error:', err.message)
+    res.status(500).json({ error: 'Failed to leave classroom' })
+  }
+})
+
+// List members (teacher only — names only, no interaction data)
+app.get('/api/classroom/:id/members', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    const { data: members } = await supabase.from('classroom_members')
+      .select('user_id, role, joined_at').eq('classroom_id', req.params.id)
+      .order('joined_at', { ascending: true })
+
+    // Fetch display names from auth (no interaction data)
+    const userIds = (members || []).map(m => m.user_id)
+    const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    const nameMap = {}
+    for (const u of (users || [])) {
+      if (userIds.includes(u.id)) {
+        nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
+      }
+    }
+
+    const result = (members || []).map(m => ({
+      id: m.user_id,
+      name: nameMap[m.user_id] || 'Student',
+      role: m.role,
+      joinedAt: m.joined_at,
+    }))
+
+    res.json({ members: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] members error:', err.message)
+    res.status(500).json({ error: 'Failed to list members' })
+  }
+})
+
+// Create assignment
+app.post('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomTeacher(req, req.params.id)
+    const { billId, billData, instructions, dueDate } = req.body || {}
+    if (!billId || typeof billId !== 'string' || billId.length > 80) {
+      return res.status(400).json({ error: 'Valid bill_id is required' })
+    }
+
+    // Check for duplicate assignment
+    const { data: existing } = await supabase.from('classroom_assignments')
+      .select('id').eq('classroom_id', req.params.id).eq('bill_id', billId).single()
+    if (existing) return res.status(409).json({ error: 'This bill is already assigned to this classroom' })
+
+    const row = {
+      classroom_id: req.params.id,
+      bill_id: billId,
+      bill_data: billData || {},
+      assigned_by: user.id,
+    }
+    if (instructions && typeof instructions === 'string') row.instructions = instructions.slice(0, 500)
+    if (dueDate) row.due_date = dueDate
+
+    const { data: assignment, error } = await supabase.from('classroom_assignments')
+      .insert(row).select('id, bill_id, bill_data, instructions, due_date, created_at').single()
+    if (error) throw error
+
+    res.json({ assignment })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] create assignment error:', err.message)
+    res.status(500).json({ error: 'Failed to create assignment' })
+  }
+})
+
+// Delete assignment
+app.delete('/api/classroom/:id/assignments/:assignmentId', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+    await supabase.from('classroom_assignments')
+      .delete().eq('id', req.params.assignmentId).eq('classroom_id', req.params.id)
+    res.json({ deleted: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] delete assignment error:', err.message)
+    res.status(500).json({ error: 'Failed to delete assignment' })
+  }
+})
+
+// List assignments (member — includes completion status for the current user)
+app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    // Check which assignments the current user has completed
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completedSet = new Set()
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id').eq('user_id', user.id).in('assignment_id', assignmentIds)
+      completedSet = new Set((completions || []).map(c => c.assignment_id))
+    }
+
+    // For teachers, also get aggregate completion counts
+    let completionCounts = {}
+    let totalStudents = 0
+    if (user.classroomRole === 'teacher' && assignmentIds.length > 0) {
+      const { data: members } = await supabase.from('classroom_members')
+        .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
+      totalStudents = (members || []).length
+
+      const { data: allCompletions } = await supabase.from('assignment_completions')
+        .select('assignment_id').in('assignment_id', assignmentIds)
+      for (const c of (allCompletions || [])) {
+        completionCounts[c.assignment_id] = (completionCounts[c.assignment_id] || 0) + 1
+      }
+    }
+
+    const result = (assignments || []).map(a => ({
+      ...a,
+      completed: completedSet.has(a.id),
+      ...(user.classroomRole === 'teacher' ? {
+        completions: completionCounts[a.id] || 0,
+        totalStudents,
+      } : {}),
+    }))
+
+    res.json({ assignments: result })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] list assignments error:', err.message)
+    res.status(500).json({ error: 'Failed to list assignments' })
+  }
+})
+
+// Mark assignment complete (student)
+app.post('/api/classroom/:id/assignments/:assignmentId/complete', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireClassroomMember(req, req.params.id)
+    if (user.classroomRole !== 'student') return res.status(403).json({ error: 'Only students can mark assignments complete' })
+
+    // Verify assignment belongs to this classroom
+    const { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id').eq('id', req.params.assignmentId).eq('classroom_id', req.params.id).single()
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' })
+
+    let timeSpent = null
+    if (typeof req.body.timeSpentSec === 'number') {
+      timeSpent = Math.min(3600, Math.round(req.body.timeSpentSec / 30) * 30) // round to 30s, cap 1hr
+    }
+
+    await supabase.from('assignment_completions')
+      .upsert({
+        assignment_id: req.params.assignmentId,
+        user_id: user.id,
+        time_spent_sec: timeSpent,
+        completed_at: new Date().toISOString(),
+      }, { onConflict: 'assignment_id,user_id' })
+
+    res.json({ completed: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] complete error:', err.message)
+    res.status(500).json({ error: 'Failed to mark assignment complete' })
+  }
+})
+
+// Aggregate stats (teacher only — PRIVACY: no per-student data ever returned)
+app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    // Total students
+    const { data: students } = await supabase.from('classroom_members')
+      .select('user_id').eq('classroom_id', req.params.id).eq('role', 'student')
+    const totalStudents = (students || []).length
+    const studentIds = (students || []).map(s => s.user_id)
+
+    // Assignments with aggregate completion counts
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: false })
+
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completionMap = {}
+    let timeMap = {}
+    let activeThisWeek = new Set()
+
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, user_id, time_spent_sec, completed_at')
+        .in('assignment_id', assignmentIds)
+
+      const weekAgo = Date.now() - 7 * 86400000
+      for (const c of (completions || [])) {
+        completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
+        if (c.time_spent_sec) {
+          if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
+          timeMap[c.assignment_id].push(c.time_spent_sec)
+        }
+        if (new Date(c.completed_at).getTime() > weekAgo) activeThisWeek.add(c.user_id)
+      }
+    }
+
+    // Topic engagement — aggregate only, scoped to classroom students
+    let topicEngagement = {}
+    if (studentIds.length > 0) {
+      const { data: interactions } = await supabase.from('bill_interactions')
+        .select('topic_tag').in('user_id', studentIds)
+      for (const i of (interactions || [])) {
+        if (i.topic_tag) topicEngagement[i.topic_tag] = (topicEngagement[i.topic_tag] || 0) + 1
+      }
+    }
+
+    // Weekly activity (last 8 weeks)
+    const weeklyActivity = []
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('completed_at').in('assignment_id', assignmentIds)
+      const weekBuckets = {}
+      for (const c of (completions || [])) {
+        const d = new Date(c.completed_at)
+        const weekStart = new Date(d)
+        weekStart.setDate(d.getDate() - d.getDay())
+        const key = weekStart.toISOString().slice(0, 10)
+        weekBuckets[key] = (weekBuckets[key] || 0) + 1
+      }
+      const sorted = Object.entries(weekBuckets).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8)
+      for (const [week, count] of sorted) weeklyActivity.push({ week, completions: count })
+    }
+
+    const assignmentStats = (assignments || []).map(a => {
+      const times = timeMap[a.id] || []
+      const avgTime = times.length > 0 ? Math.round(times.reduce((s, t) => s + t, 0) / times.length) : null
+      return {
+        id: a.id,
+        billId: a.bill_id,
+        title: a.bill_data?.title || a.bill_id,
+        dueDate: a.due_date,
+        completions: completionMap[a.id] || 0,
+        totalStudents,
+        avgTimeSec: avgTime,
+      }
+    })
+
+    res.json({
+      totalStudents,
+      activeThisWeek: activeThisWeek.size,
+      assignments: assignmentStats,
+      topicEngagement: Object.entries(topicEngagement).sort((a, b) => b[1] - a[1]).slice(0, 10),
+      weeklyActivity,
+    })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] stats error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch classroom stats' })
+  }
+})
+
+// Per-student assignment completions (teacher only)
+app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    // Get students
+    const { data: members } = await supabase.from('classroom_members')
+      .select('user_id, joined_at').eq('classroom_id', req.params.id).eq('role', 'student')
+      .order('joined_at', { ascending: true })
+    const studentIds = (members || []).map(m => m.user_id)
+
+    // Fetch display names
+    const nameMap = {}
+    if (studentIds.length > 0) {
+      const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+      for (const u of (users || [])) {
+        if (studentIds.includes(u.id)) {
+          nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
+        }
+      }
+    }
+
+    // Get assignments
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: true })
+    const assignmentIds = (assignments || []).map(a => a.id)
+
+    // Get all completions for these assignments
+    let completionsByAssignment = {}
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, user_id, completed_at, time_spent_sec')
+        .in('assignment_id', assignmentIds)
+      for (const c of (completions || [])) {
+        if (!completionsByAssignment[c.assignment_id]) completionsByAssignment[c.assignment_id] = {}
+        completionsByAssignment[c.assignment_id][c.user_id] = {
+          completedAt: c.completed_at,
+          timeSpent: c.time_spent_sec,
+        }
+      }
+    }
+
+    const students = studentIds.map(uid => ({
+      id: uid,
+      name: nameMap[uid] || 'Student',
+    }))
+
+    const assignmentList = (assignments || []).map(a => ({
+      id: a.id,
+      title: a.bill_data?.title || a.bill_id,
+      billType: a.bill_data?.type || a.bill_data?.bill_type || '',
+      billNumber: a.bill_data?.number || a.bill_data?.bill_number || '',
+      dueDate: a.due_date,
+    }))
+
+    // Build per-student completion map: { studentId: { assignmentId: { completedAt, timeSpent } } }
+    const completionMap = {}
+    for (const uid of studentIds) {
+      completionMap[uid] = {}
+      for (const aId of assignmentIds) {
+        completionMap[uid][aId] = completionsByAssignment[aId]?.[uid] || null
+      }
+    }
+
+    res.json({ students, assignments: assignmentList, completions: completionMap })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] completions error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch completions' })
+  }
+})
+
+// Export CSV (teacher only — aggregate data)
+app.get('/api/classroom/:id/export', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    const { data: students } = await supabase.from('classroom_members')
+      .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
+    const totalStudents = (students || []).length
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('name').eq('id', req.params.id).single()
+
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: true })
+
+    const assignmentIds = (assignments || []).map(a => a.id)
+    let completionMap = {}
+    let timeMap = {}
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, time_spent_sec').in('assignment_id', assignmentIds)
+      for (const c of (completions || [])) {
+        completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
+        if (c.time_spent_sec) {
+          if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
+          timeMap[c.assignment_id].push(c.time_spent_sec)
+        }
+      }
+    }
+
+    let csv = 'Assignment,Bill ID,Due Date,Completions,Total Students,Completion %,Avg Time (min)\n'
+    for (const a of (assignments || [])) {
+      const comp = completionMap[a.id] || 0
+      const pct = totalStudents > 0 ? Math.round((comp / totalStudents) * 100) : 0
+      const times = timeMap[a.id] || []
+      const avgMin = times.length > 0 ? (times.reduce((s, t) => s + t, 0) / times.length / 60).toFixed(1) : 'N/A'
+      const title = (a.bill_data?.title || a.bill_id).replace(/"/g, '""')
+      csv += `"${title}",${a.bill_id},${a.due_date || 'N/A'},${comp},${totalStudents},${pct}%,${avgMin}\n`
+    }
+
+    const filename = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
+    res.setHeader('Content-Type', 'text/csv')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(csv)
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] export error:', err.message)
+    res.status(500).json({ error: 'Failed to export' })
+  }
+})
+
 // ─── Feedback endpoint ───────────────────────────────────────────────────────
 app.post('/api/feedback', feedbackLimiter, async (req, res) => {
   const { name, email, type, message } = req.body || {}
@@ -4342,17 +5073,21 @@ app.post('/api/feedback', feedbackLimiter, async (req, res) => {
 
 // ─── Admin Stats ────────────────────────────────────────────────────────────
 // Protected by ADMIN_SECRET env var — set this on Railway for production
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'dev-admin-secret'
+const ADMIN_SECRET = process.env.ADMIN_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-admin-secret')
+if (!ADMIN_SECRET && process.env.NODE_ENV === 'production') {
+  console.error('[FATAL] ADMIN_SECRET env var is required in production')
+  process.exit(1)
+}
 
 function requireAdmin(req, res, next) {
-  const token = req.headers['x-admin-token'] || req.query.token
-  if (token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
+  const token = req.headers['x-admin-token']
+  if (!ADMIN_SECRET || token !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' })
   next()
 }
 
 app.get('/api/admin/stats', requireAdmin, async (req, res) => {
   try {
-    const stats = { users: {}, bills: {}, cache: {}, api: {}, feedback: {}, interactions: {} }
+    const stats = { users: {}, bills: {}, cache: {}, api: {}, feedback: {}, interactions: {}, classrooms: {} }
 
     // User stats
     if (supabase) {
@@ -4456,6 +5191,25 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
       const typeMap = {}
       for (const f of (fb || [])) typeMap[f.type] = (typeMap[f.type] || 0) + 1
       stats.feedback.byType = typeMap
+    }
+
+    // Classroom stats
+    if (supabase) {
+      const [classroomsRes, membersRes, assignmentsRes, completionsRes] = await Promise.all([
+        supabase.from('classrooms').select('id', { count: 'exact' }),
+        supabase.from('classroom_members').select('role', { count: 'exact' }),
+        supabase.from('classroom_assignments').select('id', { count: 'exact' }),
+        supabase.from('assignment_completions').select('id', { count: 'exact' }),
+      ])
+      const studentCount = (membersRes.data || []).filter(m => m.role === 'student').length
+      const teacherCount = (membersRes.data || []).filter(m => m.role === 'teacher').length
+      stats.classrooms = {
+        totalClassrooms: classroomsRes.count || 0,
+        totalStudents: studentCount,
+        totalTeachers: teacherCount,
+        totalAssignments: assignmentsRes.count || 0,
+        totalCompletions: completionsRes.count || 0,
+      }
     }
 
     // API metrics (in-memory)

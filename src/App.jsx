@@ -21,6 +21,11 @@ const Search = lazy(() => import('./pages/Search.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
+const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
+const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
+const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
+const ClassroomView = lazy(() => import('./pages/ClassroomView.jsx'))
+const Educators = lazy(() => import('./pages/Educators.jsx'))
 
 function PageLoader() {
   return (
@@ -52,6 +57,9 @@ const PAGE_TITLES = {
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
   '/admin': 'Admin | CapitolKey',
+  '/educators': 'For Educators | CapitolKey',
+  '/classroom': 'Classrooms | CapitolKey',
+  '/classroom/join': 'Join Classroom | CapitolKey',
 }
 
 function NotFound() {
@@ -195,12 +203,20 @@ export default function App() {
           document.getElementById('force-update')?.remove()
           const el = document.createElement('div')
           el.id = 'force-update'
-          el.innerHTML = `
-            <div style="position:fixed;inset:0;z-index:99999;background:var(--navy);color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:2rem;">
-              <h2 style="font-family:var(--font-display);font-size:1.5rem;margin-bottom:1rem;">Update Required</h2>
-              <p style="color:rgba(255,255,255,0.7);margin-bottom:1.5rem;max-width:300px;">A new version of CapitolKey is available. Please update to continue.</p>
-              <a href="https://apps.apple.com/app/capitolkey/id6743539498" style="background:var(--amber);color:var(--navy);padding:0.75rem 2rem;border-radius:12px;font-weight:700;text-decoration:none;">Update Now</a>
-            </div>`
+          const overlay = document.createElement('div')
+          Object.assign(overlay.style, { position: 'fixed', inset: '0', zIndex: '99999', background: 'var(--navy)', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '2rem' })
+          const h2 = document.createElement('h2')
+          Object.assign(h2.style, { fontFamily: 'var(--font-display)', fontSize: '1.5rem', marginBottom: '1rem' })
+          h2.textContent = 'Update Required'
+          const p = document.createElement('p')
+          Object.assign(p.style, { color: 'rgba(255,255,255,0.7)', marginBottom: '1.5rem', maxWidth: '300px' })
+          p.textContent = 'A new version of CapitolKey is available. Please update to continue.'
+          const a = document.createElement('a')
+          a.href = 'https://apps.apple.com/app/capitolkey/id6743539498'
+          Object.assign(a.style, { background: 'var(--amber)', color: 'var(--navy)', padding: '0.75rem 2rem', borderRadius: '12px', fontWeight: '700', textDecoration: 'none' })
+          a.textContent = 'Update Now'
+          overlay.append(h2, p, a)
+          el.appendChild(overlay)
           document.body.appendChild(el)
         }
       } catch {
@@ -241,6 +257,7 @@ export default function App() {
       )}
       <OfflineScreen />
       <Nav />
+      <main id="main-content">
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"          element={<Home />} />
@@ -255,10 +272,16 @@ export default function App() {
           <Route path="/privacy"   element={<Privacy />} />
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
-          <Route path="/admin"     element={<Admin />} />
+          <Route path="/admin"          element={<Admin />} />
+          <Route path="/educators"  element={<Educators />} />
+          <Route path="/classroom"       element={<TeacherDashboard />} />
+          <Route path="/classroom/join"  element={<JoinClassroom />} />
+          <Route path="/classroom/:id"       element={<ClassroomDetail />} />
+          <Route path="/classroom/view/:code" element={<ClassroomView />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
+      </main>
     </>
   )
 }

@@ -5,6 +5,7 @@ import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } f
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
+import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import styles from './Results.module.css'
@@ -29,6 +30,7 @@ export default function Results() {
   const [settledBills, setSettledBills] = useState(new Set())
   const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
+  const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [interactionSummary, setInteractionSummary] = useState(null)
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
   const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
@@ -53,7 +55,8 @@ export default function Results() {
         // No cloud profile — check sessionStorage and sync it to Supabase
         const stored = sessionStorage.getItem('civicProfile')
         if (stored) {
-          const localProfile = JSON.parse(stored)
+          let localProfile
+          try { localProfile = JSON.parse(stored) } catch { navigate('/profile'); return }
           setProfile(localProfile)
           // Save local profile to Supabase so it persists across sessions
           saveProfile(user.id, localProfile)
@@ -68,7 +71,7 @@ export default function Results() {
         navigate('/profile')
         return
       }
-      setProfile(JSON.parse(stored))
+      try { setProfile(JSON.parse(stored)) } catch { navigate('/profile'); return }
     }
     load()
   }, [navigate, user])
@@ -102,6 +105,44 @@ export default function Results() {
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
   }, [user])
 
+  // Load pending classroom assignments for students (logged-in or anonymous)
+  const [pendingAssignments, setPendingAssignments] = useState([])
+  useEffect(() => {
+    async function loadAssignments() {
+      const allAssignments = []
+
+      // Logged-in: fetch from server
+      if (user) {
+        const session = await supabase?.auth.getSession()
+        const token = session?.data?.session?.access_token
+        if (token) {
+          const classrooms = await getMyClassrooms(token)
+          const studentClasses = classrooms.filter(c => c.role === 'student')
+          for (const cls of studentClasses) {
+            const assignments = await getAssignments(token, cls.id)
+            for (const a of assignments) {
+              if (!a.completed) allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.id })
+            }
+          }
+        }
+      }
+
+      // Anonymous: fetch from sessionStorage codes via peek
+      const localJoined = getJoinedClassrooms()
+      for (const cls of localJoined) {
+        try {
+          const data = await peekClassroom(cls.code)
+          for (const a of (data.assignments || [])) {
+            allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.classroomId })
+          }
+        } catch {}
+      }
+
+      setPendingAssignments(allAssignments)
+    }
+    loadAssignments()
+  }, [user])
+
   // Fetch bills when profile is ready. Also re-fetch once the interaction
   // summary loads so the interest-weighted ranking uses the user's click
   // history on the first render (otherwise new logins see generic ranking
@@ -133,7 +174,8 @@ export default function Results() {
         const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills, profile })
+          body: JSON.stringify({ bills, profile }),
+          signal: AbortSignal.timeout(60000),
         })
         const data = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
@@ -303,14 +345,19 @@ export default function Results() {
   }, [user])
 
   async function toggleBookmark(billId, bill, analysis) {
-    if (!user) return
-    if (bookmarkedIds.has(billId)) {
-      setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
-      await removeBookmark(user.id, billId)
-    } else {
-      setBookmarkedIds(prev => new Set(prev).add(billId))
-      await addBookmark(user.id, billId, { bill, analysis })
-    }
+    if (!user || bookmarkBusy) return
+    setBookmarkBusy(true)
+    try {
+      if (bookmarkedIds.has(billId)) {
+        setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
+        const ok = await removeBookmark(user.id, billId)
+        if (!ok) setBookmarkedIds(prev => new Set(prev).add(billId))
+      } else {
+        setBookmarkedIds(prev => new Set(prev).add(billId))
+        const ok = await addBookmark(user.id, billId, { bill, analysis })
+        if (!ok) setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
+      }
+    } finally { setBookmarkBusy(false) }
   }
 
   // Collect all topic tags for filter bar
@@ -377,6 +424,50 @@ export default function Results() {
             ← Edit my profile
           </button>
         </div>
+
+        {/* Classroom assignments */}
+        {pendingAssignments.length > 0 && (
+          <div className={styles.assignmentsSection}>
+            <div className={styles.assignmentsHeader}>
+              <span className={styles.assignmentsLabel}>Assigned to You</span>
+              <span className={styles.assignmentsCount}>{pendingAssignments.length}</span>
+            </div>
+            <div className={styles.assignmentsList}>
+              {pendingAssignments.map(a => {
+                const bd = a.bill_data || {}
+                const congress = bd.congress
+                const billType = (bd.type || bd.bill_type || '').toLowerCase()
+                const billNum = bd.number || bd.bill_number
+                return (
+                  <button
+                    key={a.id}
+                    className={styles.assignmentItem}
+                    onClick={() => {
+                      if (congress && billType && billNum) {
+                        navigate(`/bill/${congress}/${billType}/${billNum}`, {
+                          state: { assignment: a.id, classroom: a.classroomId }
+                        })
+                      }
+                    }}
+                  >
+                    <span className={styles.assignmentBillNum}>
+                      {bd.type || bd.bill_type} {bd.number || bd.bill_number}
+                    </span>
+                    <span className={styles.assignmentTitle}>
+                      {(bd.title || a.bill_id).slice(0, 80)}
+                    </span>
+                    <span className={styles.assignmentClass}>{a.classroomName}</span>
+                    {a.due_date && (
+                      <span className={styles.assignmentDue}>
+                        Due {new Date(a.due_date + 'T00:00').toLocaleDateString()}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Federal / State tab switcher */}
         <div className={styles.tabBar}>

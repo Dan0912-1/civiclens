@@ -187,6 +187,7 @@ export default function Home() {
             type="text"
             className={styles.searchInput}
             placeholder="e.g. student loans, minimum wage, climate..."
+            aria-label="Search bills"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
           />
@@ -252,7 +253,7 @@ export default function Home() {
       {/* CTA */}
       <section className={styles.ctaSection}>
         <h2>Ready to see what's happening?</h2>
-        <p>No sign-up needed. Just dive in.</p>
+        <p>No account needed — set your state and interests to get started.</p>
         <button
           className={styles.ctaPrimary}
           onClick={() => navigate('/profile')}
@@ -267,6 +268,7 @@ export default function Home() {
         <Link to="/privacy">Privacy Policy</Link>
         <Link to="/terms">Terms of Service</Link>
         <Link to="/about">About</Link>
+        <Link to="/educators">Educators</Link>
         <Link to="/contact">Contact</Link>
       </footer>
 

@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
+import { useToast } from '../context/ToastContext'
+import { markComplete, getMyClassrooms, createAssignment } from '../lib/classroom'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -40,12 +42,15 @@ export default function BillDetail() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
+  const { showToast } = useToast()
   const trackedRef = useRef(false)
 
   // Data passed from Results page via router state
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
   const skipPersonalization = location.state?.skipPersonalization || false
+  const assignmentId = location.state?.assignment || null
+  const assignmentClassroomId = location.state?.classroom || null
 
   const [bill, setBill] = useState(passedBill)
   const [analysis, setAnalysis] = useState(passedAnalysis)
@@ -58,6 +63,12 @@ export default function BillDetail() {
   const [bookmarked, setBookmarked] = useState(false)
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [shareMsg, setShareMsg] = useState('')
+  const [assignmentCompleted, setAssignmentCompleted] = useState(false)
+  const assignmentTimerRef = useRef(null)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [assignClassrooms, setAssignClassrooms] = useState([])
+  const [assignLoading, setAssignLoading] = useState(false)
+  const assignRef = useRef(null)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -70,7 +81,9 @@ export default function BillDetail() {
     setPersonalizationError(false)
     setNoProfile(false)
     setShareMsg('')
+    setBookmarked(false)
     setBookmarkBusy(false)
+    setHistoryOpen(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -105,6 +118,76 @@ export default function BillDetail() {
       setBookmarked(bms.some(b => b.bill_id === bId))
     })
   }, [user, bill, congress, type, number])
+
+  // Assignment completion: start timer when page loads with assignment context
+  useEffect(() => {
+    if (!assignmentId || !assignmentClassroomId || !user) return
+    assignmentTimerRef.current = Date.now()
+    return () => { assignmentTimerRef.current = null }
+  }, [assignmentId, assignmentClassroomId, user])
+
+  // Close assign dropdown on outside click
+  useEffect(() => {
+    if (!assignOpen) return
+    function handleClick(e) {
+      if (assignRef.current && !assignRef.current.contains(e.target)) {
+        setAssignOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [assignOpen])
+
+  async function handleAssignOpen() {
+    if (assignOpen) { setAssignOpen(false); return }
+    setAssignLoading(true)
+    setAssignOpen(true)
+    try {
+      const session = await supabase?.auth.getSession()
+      const token = session?.data?.session?.access_token
+      if (!token) { setAssignLoading(false); return }
+      const rooms = await getMyClassrooms(token)
+      // Only show classrooms where user is a teacher
+      setAssignClassrooms(rooms.filter(r => r.role === 'teacher'))
+    } catch {
+      setAssignClassrooms([])
+    }
+    setAssignLoading(false)
+  }
+
+  async function handleAssignToClassroom(classroom) {
+    const session = await supabase?.auth.getSession()
+    const token = session?.data?.session?.access_token
+    if (!token) return
+    const billId = bill?.legiscan_bill_id
+      ? `ls-${bill.legiscan_bill_id}`
+      : `${type.toUpperCase()}${number}-${congress}`
+    try {
+      await createAssignment(token, classroom.id, {
+        billId,
+        billData: { ...bill, analysis },
+      })
+      showToast(`Assigned to ${classroom.name}`)
+      setAssignOpen(false)
+    } catch (err) {
+      showToast(err.message || 'Failed to assign', 'error')
+    }
+  }
+
+  async function handleMarkComplete() {
+    if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted) return
+    const session = await supabase?.auth.getSession()
+    const token = session?.data?.session?.access_token
+    if (!token) return
+    const elapsed = assignmentTimerRef.current ? Math.round((Date.now() - assignmentTimerRef.current) / 1000) : null
+    try {
+      await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
+      setAssignmentCompleted(true)
+      showToast('Marked as read!')
+    } catch (err) {
+      showToast(err.message || 'Could not mark as read', 'error')
+    }
+  }
 
   // Fetch bill detail when route params change. Guarded by a cancelled flag
   // so that if the user navigates away (or to a different bill) mid-fetch we
@@ -163,7 +246,7 @@ export default function BillDetail() {
     if (!bill || analysis || skipPersonalization) return
     let cancelled = false
     // Capture the in-flight bill identity; abort if the route changes.
-    const requestBillId = `${bill.type}${bill.number}-${bill.congress}`
+    const requestBillId = `${bill.type?.toUpperCase()}${bill.number}-${bill.congress}`
     const currentRouteId = `${type.toUpperCase()}${number}-${congress}`
     if (requestBillId !== currentRouteId) return
 
@@ -171,12 +254,14 @@ export default function BillDetail() {
       const stored = sessionStorage.getItem('civicProfile')
       if (!stored) { setNoProfile(true); return }
       setPersonalizationError(false)
-      const profile = JSON.parse(stored)
+      let profile
+      try { profile = JSON.parse(stored) } catch { setNoProfile(true); return }
       try {
         const resp = await fetch(`${API_BASE}/api/personalize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bill, profile })
+          body: JSON.stringify({ bill, profile }),
+          signal: AbortSignal.timeout(30000),
         })
         if (cancelled) return
         if (resp.ok) {
@@ -205,7 +290,8 @@ export default function BillDetail() {
       const resp = await fetch(`${API_BASE}/api/personalize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bill, profile })
+        body: JSON.stringify({ bill, profile }),
+        signal: AbortSignal.timeout(30000),
       })
       if (resp.ok) {
         const data = await resp.json()
@@ -279,6 +365,19 @@ export default function BillDetail() {
         <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
           ← Back to results
         </button>
+
+        {assignmentId && (
+          <div className={styles.assignmentBanner}>
+            <span className={styles.assignmentBannerText}>
+              {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
+            </span>
+            {!assignmentCompleted && (
+              <button className={styles.markCompleteBtn} onClick={handleMarkComplete}>
+                Mark as Read
+              </button>
+            )}
+          </div>
+        )}
 
         <div className={styles.header}>
           <div className={styles.headerMeta}>
@@ -410,12 +509,13 @@ export default function BillDetail() {
                   {analysis.civic_actions.map((a, i) => (
                     <div key={i} className={styles.actionCard}>
                       <div className={styles.actionTitle}>{a.action}</div>
-                      <p className={styles.actionHow} dangerouslySetInnerHTML={{
-                        __html: a.how.replace(
-                          /(https?:\/\/[^\s,)]+)/g,
-                          '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--amber);text-decoration:underline">$1</a>'
+                      <p className={styles.actionHow}>{
+                        a.how.split(/(https?:\/\/[^\s,)]+)/g).map((part, j) =>
+                          /^https?:\/\//.test(part)
+                            ? <a key={j} href={part} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>{part}</a>
+                            : part
                         )
-                      }} />
+                      }</p>
                       {a.time && <span className={styles.actionTime}>~{a.time}</span>}
                     </div>
                   ))}
@@ -511,11 +611,13 @@ export default function BillDetail() {
                   try {
                     const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
                     if (bookmarked) {
-                      await removeBookmark(user.id, bId)
-                      setBookmarked(false)
+                      const ok = await removeBookmark(user.id, bId)
+                      if (ok) { setBookmarked(false); showToast('Bookmark removed') }
+                      else showToast('Could not remove bookmark', 'error')
                     } else {
-                      await addBookmark(user.id, bId, { ...bill, analysis })
-                      setBookmarked(true)
+                      const ok = await addBookmark(user.id, bId, { bill: { ...bill }, analysis })
+                      if (ok) { setBookmarked(true); showToast('Bill saved to bookmarks') }
+                      else showToast('Could not save bookmark', 'error')
                     }
                   } finally { setBookmarkBusy(false) }
                 }}
@@ -526,18 +628,52 @@ export default function BillDetail() {
             <button
               className={styles.footerBtn}
               onClick={async () => {
-                const text = `${displayTitle} — ${analysis?.headline || ''}\n${window.location.href}`
+                const WEB_ORIGIN = 'https://capitolkey.vercel.app'
+                const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
+                const shareUrl = `${origin}/bill/${congress}/${type.toLowerCase()}/${number}`
+                const text = `${displayTitle} — ${analysis?.headline || ''}\n${shareUrl}`
                 if (navigator.share) {
-                  try { await navigator.share({ title: displayTitle, text, url: window.location.href }) } catch {}
+                  try { await navigator.share({ title: displayTitle, text, url: shareUrl }) } catch {}
                 } else {
-                  await navigator.clipboard.writeText(text)
-                  setShareMsg('Link copied!')
+                  try {
+                    await navigator.clipboard.writeText(text)
+                    setShareMsg('Link copied!')
+                  } catch { setShareMsg('Could not copy') }
                   setTimeout(() => setShareMsg(''), 2000)
                 }
               }}
             >
               {shareMsg || 'Share'}
             </button>
+            {user && (
+              <div className={styles.assignWrapper} ref={assignRef}>
+                <button
+                  className={styles.footerBtn}
+                  onClick={handleAssignOpen}
+                >
+                  Assign to Class
+                </button>
+                {assignOpen && (
+                  <div className={styles.assignDropdown}>
+                    {assignLoading ? (
+                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>Loading...</div>
+                    ) : assignClassrooms.length === 0 ? (
+                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>No classrooms found</div>
+                    ) : (
+                      assignClassrooms.map(c => (
+                        <button
+                          key={c.id}
+                          className={styles.assignItem}
+                          onClick={() => handleAssignToClassroom(c)}
+                        >
+                          {c.name}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <button
             className={styles.congressLink}

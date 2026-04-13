@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { getApiBase } from '../lib/api'
 import styles from './SharePostModal.module.css'
@@ -32,6 +32,40 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
       setPerspective('')
       setCopiedIdx(null)
       setPlatform('instagram')
+    }
+  }, [isOpen])
+
+  const modalRef = useRef(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const previouslyFocused = document.activeElement
+    const modal = modalRef.current
+    if (!modal) return
+
+    const focusableSelector = 'a[href], button:not([disabled]), textarea, input:not([disabled]), select, [tabindex]:not([tabindex="-1"])'
+    const getFocusable = () => Array.from(modal.querySelectorAll(focusableSelector))
+
+    const focusable = getFocusable()
+    if (focusable.length) focusable[0].focus()
+
+    function handleKeyDown(e) {
+      if (e.key !== 'Tab') return
+      const els = getFocusable()
+      if (!els.length) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus() }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus() }
+      }
+    }
+
+    modal.addEventListener('keydown', handleKeyDown)
+    return () => {
+      modal.removeEventListener('keydown', handleKeyDown)
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus()
     }
   }, [isOpen])
 
@@ -87,7 +121,7 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
   // staggered-entry animation) doesn't break position:fixed on the overlay.
   return createPortal(
     <div className={styles.overlay} onClick={onClose} onKeyDown={e => { if (e.key === 'Escape') onClose() }}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div ref={modalRef} className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className={styles.closeBtn} onClick={onClose} aria-label="Close">×</button>
 
         <h2 className={styles.heading}>Share your take</h2>

@@ -48,6 +48,7 @@ export default function Nav() {
 
   return (
     <nav className={styles.nav}>
+      <a href="#main-content" className={styles.skipLink}>Skip to main content</a>
       <div className={styles.inner}>
 
         {/* All items in one row with equal gap */}
@@ -74,6 +75,7 @@ export default function Nav() {
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved Bills</button>
                 )}
+                <button className={styles.dropItem} onClick={() => handleNav('/classroom')}>Classrooms</button>
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/settings')}>Settings</button>
                 )}

@@ -58,39 +58,60 @@
   margin-bottom: 0;
 }
 
-/* Neutrality box */
-.neutralBox {
+/* Standards alignment cards */
+.standardsGrid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.standardCard {
   background: var(--white);
   border: 1px solid var(--border);
   border-left: 2px solid var(--amber);
   border-radius: 1px;
-  padding: var(--space-xl);
-  display: flex;
-  gap: var(--space-lg);
-  align-items: flex-start;
+  padding: var(--space-lg);
   box-shadow: none;
 }
 
-.neutralIcon {
-  font-size: 1.75rem;
-  flex-shrink: 0;
+.standardCode {
+  display: inline-block;
+  background: transparent;
+  color: var(--amber-dark);
+  border: 1px solid var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 2px 8px;
+  border-radius: 1px;
+  margin-bottom: var(--space-xs);
 }
 
-.neutralBox p {
-  margin: 0;
+.standardCard h3 {
+  font-family: var(--font-body);
   font-size: 0.95rem;
-  line-height: 1.7;
-  color: var(--text-secondary);
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
 }
 
-/* Tech grid */
-.techGrid {
+.standardCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* Lesson plan cards */
+.lessonGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--space-md);
 }
 
-.techCard {
+.lessonCard {
   background: var(--white);
   border: 1px solid var(--border);
   border-top: 2px solid var(--navy);
@@ -99,7 +120,7 @@
   box-shadow: none;
 }
 
-.techBadge {
+.lessonNumber {
   display: inline-block;
   background: transparent;
   color: var(--amber-dark);
@@ -114,7 +135,7 @@
   margin-bottom: var(--space-sm);
 }
 
-.techCard h3 {
+.lessonCard h3 {
   font-family: var(--font-body);
   font-size: 0.95rem;
   font-weight: 700;
@@ -122,7 +143,53 @@
   margin-bottom: var(--space-xs);
 }
 
-.techCard p {
+.lessonCard p {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+/* Getting started steps */
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-md);
+}
+
+.stepCard {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: var(--space-lg);
+  text-align: center;
+  box-shadow: none;
+}
+
+.stepNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--navy);
+  color: var(--white);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 50%;
+  margin-bottom: var(--space-sm);
+}
+
+.stepCard h3 {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-xs);
+}
+
+.stepCard p {
   font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.55;

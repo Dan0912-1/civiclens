@@ -1,3 +1,20 @@
+.skipLink {
+  position: absolute;
+  top: -100%;
+  left: 1rem;
+  background: var(--navy);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0 0 8px 8px;
+  text-decoration: none;
+  font-weight: 700;
+  z-index: 101;
+  font-size: 0.85rem;
+}
+.skipLink:focus {
+  top: calc(env(safe-area-inset-top, 0px) + 0px);
+}
+
 .nav {
   height: calc(64px + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);

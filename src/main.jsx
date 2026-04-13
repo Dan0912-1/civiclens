@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import * as Sentry from '@sentry/react'
 import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider } from './context/AuthContext'
+import { ToastProvider } from './context/ToastContext'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import App from './App.jsx'
 import './index.css'
@@ -19,7 +20,7 @@ if (sentryDsn) {
     ],
     tracesSampleRate: 0.2,
     replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: 0.5,
+    replaysOnErrorSampleRate: 0, // disabled — error replays could capture student profile data
   })
 }
 
@@ -28,8 +29,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <ErrorBoundary>
       <BrowserRouter>
         <AuthProvider>
+          <ToastProvider>
           <App />
           <Analytics />
+          </ToastProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

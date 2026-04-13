@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { useAuth } from '../context/AuthContext'
 import styles from './AuthModal.module.css'
@@ -14,6 +14,41 @@ export default function AuthModal({ isOpen, onClose }) {
   const [loading, setLoading] = useState(false)
   const [signupSuccess, setSignupSuccess] = useState(false)
   const [resetSent, setResetSent] = useState(false)
+
+  const modalRef = useRef(null)
+
+  useEffect(() => {
+    if (!isOpen) return
+    const previouslyFocused = document.activeElement
+    const modal = modalRef.current
+    if (!modal) return
+
+    const focusableSelector = 'a[href], button:not([disabled]), textarea, input:not([disabled]), select, [tabindex]:not([tabindex="-1"])'
+    const getFocusable = () => Array.from(modal.querySelectorAll(focusableSelector))
+
+    // Focus first focusable element
+    const focusable = getFocusable()
+    if (focusable.length) focusable[0].focus()
+
+    function handleKeyDown(e) {
+      if (e.key !== 'Tab') return
+      const els = getFocusable()
+      if (!els.length) return
+      const first = els[0]
+      const last = els[els.length - 1]
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus() }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus() }
+      }
+    }
+
+    modal.addEventListener('keydown', handleKeyDown)
+    return () => {
+      modal.removeEventListener('keydown', handleKeyDown)
+      if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus()
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -107,7 +142,7 @@ export default function AuthModal({ isOpen, onClose }) {
 
   return (
     <div className={styles.overlay} onClick={handleClose} onKeyDown={e => { if (e.key === 'Escape') handleClose() }}>
-      <div className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div ref={modalRef} className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className={styles.closeBtn} onClick={handleClose} aria-label="Close">
           &times;
         </button>

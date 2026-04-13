@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getBookmarks, removeBookmark, getNotificationPrefs, setNotificationPrefs } from '../lib/userProfile'
+import { useToast } from '../context/ToastContext'
 import { supabase } from '../lib/supabase'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
@@ -20,6 +21,7 @@ function isNativePlatform() {
 export default function Bookmarks() {
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const { showToast } = useToast()
   const [bookmarks, setBookmarks] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAuth, setShowAuth] = useState(false)
@@ -83,7 +85,9 @@ export default function Bookmarks() {
   async function handleRemove(billId) {
     if (!user) return
     setBookmarks(prev => prev.filter(b => b.bill_id !== billId))
-    await removeBookmark(user.id, billId)
+    const ok = await removeBookmark(user.id, billId)
+    if (ok) showToast('Bookmark removed')
+    else showToast('Could not remove bookmark', 'error')
   }
 
   if (authLoading || loading) {
