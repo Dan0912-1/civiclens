@@ -1,5 +1,5 @@
 /**
- * Side-by-side test: Qwen3 8B (Groq) vs Claude Haiku
+ * Side-by-side test: Qwen3 32B (Groq) vs Claude Haiku
  * Uses the actual CapitolKey system prompt and a realistic bill + student profile.
  *
  * DO NOT COMMIT — contains API key usage. Delete after testing.
@@ -59,9 +59,9 @@ SUMMARY (CRS): This bill increases the federal minimum wage from $7.25 per hour 
 
 Personalize this bill for the student above.`
 
-// ── Groq (Qwen3 8B) ──────────────────────────────────────────────────────────
+// ── Groq (Qwen3 32B) ──────────────────────────────────────────────────────────
 async function testGroq() {
-  console.log('━━━ Testing Qwen3 8B via Groq ━━━')
+  console.log('━━━ Testing Qwen3 32B via Groq ━━━')
   const start = Date.now()
 
   const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -71,7 +71,7 @@ async function testGroq() {
       'Authorization': `Bearer ${GROQ_API_KEY}`
     },
     body: JSON.stringify({
-      model: 'qwen-qwen3-8b',
+      model: 'qwen/qwen3-32b',
       max_tokens: 700,
       temperature: 0.4,
       messages: [
@@ -94,7 +94,7 @@ async function testGroq() {
 
   console.log(`Time: ${elapsed}ms`)
   console.log(`Tokens — input: ${usage.prompt_tokens}, output: ${usage.completion_tokens}, total: ${usage.total_tokens}`)
-  console.log(`Est. cost: $${((usage.prompt_tokens * 0.05 + usage.completion_tokens * 0.40) / 1_000_000).toFixed(6)}`)
+  console.log(`Est. cost: $${((usage.prompt_tokens * 0.29 + usage.completion_tokens * 0.59) / 1_000_000).toFixed(6)}`)
   console.log('\n── Raw output ──')
   console.log(content)
 
@@ -121,7 +121,7 @@ async function testGroq() {
 // ── Run ──────────────────────────────────────────────────────────────────────
 async function main() {
   console.log('╔══════════════════════════════════════════════════════════════╗')
-  console.log('║   CapitolKey Model Comparison: Qwen3 8B (Groq) Test        ║')
+  console.log('║   CapitolKey Model Comparison: Qwen3 32B (Groq) Test        ║')
   console.log('╚══════════════════════════════════════════════════════════════╝\n')
 
   const groqResult = await testGroq()
@@ -131,7 +131,7 @@ async function main() {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
 
   if (groqResult) {
-    console.log(`\nQwen3 8B (Groq):`)
+    console.log(`\nQwen3 32B (Groq):`)
     console.log(`  Speed: ${groqResult.elapsed}ms`)
     console.log(`  Tokens: ${groqResult.usage.prompt_tokens} in / ${groqResult.usage.completion_tokens} out`)
     console.log(`  JSON valid: ${groqResult.parsed ? '✅' : '❌'}`)
