@@ -3,9 +3,10 @@ import styles from './OfflineScreen.module.css'
 
 export default function OfflineScreen() {
   const [offline, setOffline] = useState(!navigator.onLine)
+  const [dismissed, setDismissed] = useState(false)
 
   useEffect(() => {
-    const goOffline = () => setOffline(true)
+    const goOffline = () => { setOffline(true); setDismissed(false) }
     const goOnline = () => setOffline(false)
     window.addEventListener('offline', goOffline)
     window.addEventListener('online', goOnline)
@@ -15,26 +16,20 @@ export default function OfflineScreen() {
     }
   }, [])
 
-  if (!offline) return null
+  if (!offline || dismissed) return null
 
   return (
-    <div className={styles.overlay}>
-      <div className={styles.card}>
-        <div className={styles.icon}>&#9888;</div>
-        <h2>No connection</h2>
-        <p>
-          CapitolKey needs an internet connection to load legislation data.
-          Check your Wi-Fi or cellular connection and try again.
-        </p>
-        <button
-          className={styles.retry}
-          onClick={() => {
-            if (navigator.onLine) setOffline(false)
-          }}
-        >
-          Try again
-        </button>
-      </div>
+    <div className={styles.banner}>
+      <span className={styles.text}>
+        &#9888; You're offline — showing cached content
+      </span>
+      <button
+        className={styles.dismiss}
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss offline notice"
+      >
+        &#10005;
+      </button>
     </div>
   )
 }
