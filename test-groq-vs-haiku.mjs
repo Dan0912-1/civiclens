@@ -72,11 +72,11 @@ async function testGroq() {
     },
     body: JSON.stringify({
       model: 'qwen/qwen3-32b',
-      max_tokens: 700,
+      max_tokens: 1024,
       temperature: 0.4,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: USER_PROMPT }
+        { role: 'user', content: USER_PROMPT + '\n\n/no_think' }
       ]
     })
   })
