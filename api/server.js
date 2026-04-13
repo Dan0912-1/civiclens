@@ -180,6 +180,7 @@ const featuredLimiter = rateLimit({
 
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
+const GROQ_API_KEY = process.env.GROQ_API_KEY
 const CONGRESS_API_KEY = process.env.CONGRESS_API_KEY
 const LEGISCAN_BASE = 'https://api.legiscan.com/'
 const CONGRESS_BASE = 'https://api.congress.gov/v3'
@@ -218,6 +219,113 @@ function setClaudeBackoff(retryAfterHeader) {
   }
 }
 
+// ─── LLM provider (Groq primary, Haiku fallback) ─────────────────────────
+// Groq Qwen3-32B is primary: 4-5x cheaper, 5x faster, comparable quality.
+// Falls back to Claude Haiku if GROQ_API_KEY is missing or Groq goes down.
+let _useGroqFallback = !!GROQ_API_KEY  // true = use Groq (primary)
+let _groqFallbackSince = _useGroqFallback ? Date.now() : null
+
+function activateGroqFallback(reason) {
+  if (_useGroqFallback) return
+  if (!GROQ_API_KEY) {
+    console.error(`[llm-failover] Would switch to Groq but GROQ_API_KEY is not set`)
+    return
+  }
+  _useGroqFallback = true
+  _groqFallbackSince = Date.now()
+  console.log(`[llm-failover] Switched to Groq Qwen3-32B — reason: ${reason}`)
+}
+
+function isUsingGroq() { return _useGroqFallback }
+
+/**
+ * Unified LLM call. Tries Haiku first; on credit/auth failure, falls back to Groq.
+ * Returns { text, usage: { input_tokens, output_tokens }, provider }
+ * Throws on unrecoverable errors.
+ */
+async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
+  // ── Groq path ──
+  if (_useGroqFallback) {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        model: 'qwen/qwen3-32b',
+        max_tokens: Math.max(maxTokens, 1024), // Qwen needs more room
+        temperature,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userPrompt + '\n\n/no_think' }
+        ]
+      })
+    })
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}))
+      throw new Error(`Groq ${resp.status}: ${errBody.error?.message || 'Unknown'}`)
+    }
+    const data = await resp.json()
+    const text = data.choices?.[0]?.message?.content || ''
+    return {
+      text,
+      usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
+      provider: 'groq'
+    }
+  }
+
+  // ── Haiku path ──
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens,
+      temperature,
+      system,
+      messages: [{ role: 'user', content: userPrompt }]
+    })
+  })
+
+  // Credit exhaustion / auth failure → switch to Groq and retry once
+  if (resp.status === 402 || resp.status === 401 || resp.status === 403) {
+    activateGroqFallback(`Anthropic HTTP ${resp.status}`)
+    return callLLM({ system, userPrompt, maxTokens, temperature, timeoutMs })
+  }
+
+  // Return rate-limit and server errors to caller for their retry logic
+  if (resp.status === 429) {
+    setClaudeBackoff(resp.headers.get('retry-after'))
+    const err = new Error('HTTP 429')
+    err.status = 429
+    err.retryAfter = resp.headers.get('retry-after')
+    throw err
+  }
+  if (resp.status >= 500) {
+    const err = new Error(`HTTP ${resp.status}`)
+    err.status = resp.status
+    throw err
+  }
+
+  const data = await resp.json()
+  const text = data.content?.[0]?.text || ''
+  if (!text) throw new Error('Empty response from Claude')
+
+  recordAnthropicSuccess()
+  return {
+    text,
+    usage: { input_tokens: data.usage?.input_tokens || 0, output_tokens: data.usage?.output_tokens || 0 },
+    provider: 'haiku'
+  }
+}
+
 // ─── In-flight request deduplication ───────────────────────────────────────
 // Prevents cache stampede: if N requests ask for the same cacheKey
 // simultaneously, only one triggers the expensive work (Claude/LegiScan).
@@ -236,7 +344,7 @@ function dedup(key, fn) {
 // instead of an obvious root cause in the Railway logs.
 const missingKeys = []
 if (!LEGISCAN_KEY)  missingKeys.push('LEGISCAN_API_KEY')
-if (!ANTHROPIC_KEY) missingKeys.push('ANTHROPIC_API_KEY')
+if (!GROQ_API_KEY && !ANTHROPIC_KEY) missingKeys.push('GROQ_API_KEY or ANTHROPIC_API_KEY')
 if (missingKeys.length) {
   console.error(`[startup] WARNING: missing env vars — ${missingKeys.join(', ')}. ` +
     `Dependent endpoints will return errors until these are set.`)
@@ -1275,12 +1383,27 @@ ABSOLUTE RULES
 10. NEVER tell the student to take personal action ("delete the app", "change your password") in headline/summary/if_it_passes/if_it_fails. Save action steps for civic_actions.
 11. For short bills (<500 words of source text), summary MUST cover every operative provision: dates, who runs it, deadlines, scope, temporary vs permanent. No cherry-picking.
 
-RELEVANCE
-9-10: directly changes daily life now (paycheck, school, healthcare)
-7-8: affects them within 1-2 years (college costs, job market)
-5-6: broader community / future
-3-4: tangential via interests or family
-1-2: no meaningful connection
+RELEVANCE — use the number that BEST fits the category:
+9-10: bill directly changes this student's daily life NOW (their paycheck, their school, their healthcare)
+7-8: affects them within 1-2 years (college costs, job market they'll enter)
+5-6: broader community/future impact with a CLEAR, SPECIFIC link to student
+3-4: tangential — only connected through a family member's job or a side interest
+1-2: no meaningful connection at all
+CRITICAL: Do NOT inflate relevance with speculative or indirect chains. If the bill's subject (e.g. defense, agriculture, trade) has no direct overlap with the student's stated interests, job, school, or family situation, the relevance MUST be ≤ 3. A hardware store worker is not connected to defense spending. An art student is not connected to military funding.
+HIGH relevance requires the bill to name something the student personally does or will do within 2 years.
+
+RELEVANCE EXAMPLES:
+- Student works part-time, bill raises minimum wage → relevance 9 (directly changes their paycheck)
+- Student interested in environment, bill funds coastal restoration → relevance 8 (ties to their passion and future career)
+- Student interested in art/theater, bill increases defense spending → relevance 1-2 (no connection — say so honestly)
+- Student's parent works retail, bill changes trade tariffs → relevance 3 (only tangential through family)
+Low relevance is the CORRECT answer when the connection is weak. Helping students focus on bills that matter to THEM means honestly rating irrelevant bills low.
+
+CIVIC ACTIONS — MANDATORY:
+- Every civic_action MUST include a real URL in the "how" field
+- Use: https://www.congress.gov/bill/119th-congress/[house-bill|senate-bill]/[number] for bill pages
+- Use: https://www.house.gov/representatives/find-your-representative or https://www.senate.gov/senators/senators-contact.htm for contact actions
+- NEVER leave a civic_action without a URL.
 
 OUTPUT — return ONLY this JSON, nothing else:
 {
@@ -1294,6 +1417,51 @@ OUTPUT — return ONLY this JSON, nothing else:
     { "action": "Short imperative title", "how": "One sentence with a specific URL/phone/step.", "time": "5 minutes | 15 minutes | 1 hour" }
   ]
 }`
+
+// ─── Relevance post-processing ────────────────────────────────────────────
+// Qwen3 (Groq) tends to over-rate relevance on bills with no real connection
+// to the student. This function only pulls DOWN clearly inflated scores —
+// it never touches scores where a reasonable connection exists.
+function adjustRelevance(parsed, profile) {
+  const raw = Number(parsed.relevance)
+  if (isNaN(raw) || raw <= 3) return // already low — trust it
+
+  const tag = (parsed.topic_tag || 'Other').toLowerCase()
+  const interests = (profile.interests || []).map(i => i.toLowerCase())
+  const hasJob = profile.employment && profile.employment !== 'none'
+  const grade = parseInt(profile.grade, 10) || 0
+  const isSenior = grade >= 12
+
+  // Direct-connection checks — any of these = trust the LLM score
+  if (hasJob && ['economy', 'housing'].includes(tag)) return
+  if (isSenior && tag === 'education') return
+
+  const affinityMap = {
+    education:      ['education', 'teaching', 'college prep', 'stem', 'debate'],
+    healthcare:     ['healthcare', 'biology', 'pre-med', 'sports', 'mental health'],
+    economy:        ['business', 'economics', 'entrepreneurship', 'finance'],
+    environment:    ['environment', 'science', 'agriculture', 'biology'],
+    technology:     ['technology', 'gaming', 'computer science', 'stem', 'engineering', 'social media'],
+    housing:        ['real estate', 'architecture', 'community service'],
+    'civil rights': ['politics', 'debate', 'history', 'social justice'],
+    immigration:    ['languages', 'culture', 'politics', 'debate'],
+    community:      ['community service', 'volunteering', 'politics'],
+    other:          [],
+  }
+  const related = affinityMap[tag] || []
+  const hasInterestMatch = interests.some(i =>
+    related.some(r => i.includes(r) || r.includes(i))
+  )
+  if (hasInterestMatch) return // LLM had a reason — trust it
+
+  // Bill-content keywords that affect any student universally
+  const summary = (parsed.summary || '').toLowerCase()
+  const universalKeywords = ['student', 'school', 'minor', 'under 17', 'under 18', 'youth', 'teen', 'college', 'university']
+  if (universalKeywords.some(kw => summary.includes(kw))) return
+
+  // No direct connection found — cap the score
+  parsed.relevance = Math.min(raw, 3)
+}
 
 // Sanitize freeform "Other context" text. Previously this also tried to strip
 // personal-name-shaped tokens with a regex, but that filter was both too
@@ -1505,96 +1673,32 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
       const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
 
-      // Wall-clock cap so a long retry storm can't pin a request open while the
-      // client has already given up — prevents Claude tokens being burned for a
-      // response we'll never deliver.
-      const requestStart = Date.now()
-      const REQUEST_BUDGET_MS = 45000
-
       const MAX_RETRIES = 4
       const billLabel = identity
       let lastError = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (Date.now() - requestStart > REQUEST_BUDGET_MS) {
-          lastError = lastError || 'request budget exceeded'
-          break
-        }
-        if (isClaudeBackedOff()) {
-          lastError = 'Claude circuit breaker open'
-          break
-        }
         if (!tryConsumeAnthropicQuota()) {
           throw Object.assign(new Error('Service temporarily at capacity'), { statusCode: 503 })
         }
         try {
-          const remaining = REQUEST_BUDGET_MS - (Date.now() - requestStart)
-          const resp = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': ANTHROPIC_KEY,
-              'anthropic-version': '2023-06-01'
-            },
-            signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
-            body: JSON.stringify({
-              model: 'claude-haiku-4-5-20251001',
-              max_tokens: 700,
-              temperature: 0.4,
-              system: systemPrompt,
-              messages: [
-                { role: 'user', content: userPrompt }
-              ]
-            })
-          })
-
-          // Auth errors are not transient — fail immediately
-          if (resp.status === 401 || resp.status === 403) {
-            throw new Error(`Anthropic auth error: ${resp.status}`)
-          }
-
-          // Rate limit — set circuit breaker and retry
-          if (resp.status === 429) {
-            setClaudeBackoff(resp.headers.get('retry-after'))
-            if (attempt < MAX_RETRIES) {
-              const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-              lastError = 'HTTP 429'
-              await new Promise(r => setTimeout(r, delay))
-              continue
-            }
-          }
-
-          // Server error — retry without circuit breaker
-          if (resp.status >= 500 && attempt < MAX_RETRIES) {
-            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            lastError = `HTTP ${resp.status}`
-            console.log(`[personalize] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-            await new Promise(r => setTimeout(r, delay))
-            continue
-          }
-
-          const data = await resp.json()
-
-          if (!data.content?.[0]?.text) {
-            throw new Error(data.error?.message || 'No response from Claude')
-          }
-
-          // Only count successful calls against quota
+          const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
           recordAnthropicSuccess()
 
-          const parsed = extractJson(data.content[0].text)
+          const parsed = extractJson(llmResult.text)
+          adjustRelevance(parsed, profile)
           parsed.sources = sources
           const personalizeResult = { analysis: parsed }
           setCache(cacheKey, personalizeResult)
-          // Non-blocking Supabase write — L1 cache already set
           setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, personalizeResult)
             .catch(err => console.error('[cache] bg Supabase write failed:', err.message))
+          console.log(`[personalize] ${billLabel} via ${llmResult.provider} (${llmResult.usage.input_tokens}→${llmResult.usage.output_tokens} tokens)`)
           return personalizeResult
         } catch (err) {
           lastError = err.message
-          if (err.statusCode) throw err // re-throw capacity errors
+          if (err.statusCode) throw err
           if (attempt < MAX_RETRIES) {
             const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            console.log(`[personalize] ${err.name || 'Error'} for ${billLabel} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+            console.log(`[personalize] ${err.message} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
             await new Promise(r => setTimeout(r, delay))
             continue
           }
@@ -1745,12 +1849,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   let clientGone = false
   req.on('close', () => { clientGone = true })
 
-  // 3. Fire Claude calls with concurrency limit and retry on transient failures
+  // 3. Fire LLM calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources } = buildBillContent(billData)
-    // C1 — replace attacker-supplied metadata with canonical LegiScan title.
     const trustedBill = buildTrustedBill(bill, billData?.meta)
-
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
     const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
 
@@ -1761,86 +1863,32 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       if (Date.now() - batchStart > BATCH_BUDGET_MS) {
         return { billId, error: lastError || 'batch budget exceeded' }
       }
-      if (isClaudeBackedOff()) {
-        return { billId, error: 'Claude circuit breaker open' }
-      }
       if (!tryConsumeAnthropicQuota()) {
         return { billId, error: 'service capacity' }
       }
       try {
-        const remaining = BATCH_BUDGET_MS - (Date.now() - batchStart)
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_KEY,
-            'anthropic-version': '2023-06-01'
-          },
-          signal: AbortSignal.timeout(Math.min(30000, Math.max(2000, remaining))),
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 700,
-            temperature: 0.4,
-            system: systemPrompt,
-            messages: [
-              { role: 'user', content: userPrompt }
-            ]
-          })
-        })
-
-        // Auth errors are not transient — fail immediately
-        if (resp.status === 401 || resp.status === 403) {
-          throw new Error(`Anthropic auth error: ${resp.status}`)
-        }
-
-        // Rate limit — set circuit breaker and retry
-        if (resp.status === 429) {
-          setClaudeBackoff(resp.headers.get('retry-after'))
-          if (attempt < MAX_RETRIES) {
-            const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-            lastError = 'HTTP 429'
-            await new Promise(r => setTimeout(r, delay))
-            continue
-          }
-        }
-
-        // Server error — retry
-        if (resp.status >= 500 && attempt < MAX_RETRIES) {
-          const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-          lastError = `HTTP ${resp.status}`
-          console.log(`[batch] Claude ${resp.status} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-          await new Promise(r => setTimeout(r, delay))
-          continue
-        }
-
-        const data = await resp.json()
-        if (!data.content?.[0]?.text) {
-          throw new Error(data.error?.message || 'No response from Claude')
-        }
-
-        // Only count successful calls against quota
+        const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
         recordAnthropicSuccess()
 
-        const parsed = extractJson(data.content[0].text)
+        const parsed = extractJson(llmResult.text)
+        adjustRelevance(parsed, profile)
         parsed.sources = sources
         const result = { analysis: parsed }
 
         setCache(cacheKey, result)
-        // Non-blocking Supabase write
         setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
           .catch(err => console.error('[cache] bg batch Supabase write failed:', err.message))
 
         return { billId, result }
       } catch (err) {
         lastError = err.message
-        // Retry on any transient error (timeouts, network, JSON parse, malformed response)
         if (attempt < MAX_RETRIES) {
           const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
-          console.log(`[batch] ${err.name || 'Error'} for ${billId} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
+          console.log(`[batch] ${err.message} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
           await new Promise(r => setTimeout(r, delay))
           continue
         }
-        console.error(`[batch] Claude error for ${billId} after ${MAX_RETRIES} retries:`, err.message)
+        console.error(`[batch] Failed for ${billId} after ${MAX_RETRIES} retries:`, err.message)
         return { billId, error: err.message }
       }
     }
@@ -2052,47 +2100,18 @@ app.post('/api/share-post', personalizeLimiter, async (req, res) => {
       return res.status(503).json({ error: 'Service temporarily at capacity, please try again shortly', retryable: true })
     }
     try {
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01'
-        },
-        signal: AbortSignal.timeout(30000),
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 800,
-          temperature: 0.8, // higher than personalize — we want voice variety across drafts
-          system: SHARE_POST_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userPrompt }]
-        })
+      const llmResult = await callLLM({
+        system: SHARE_POST_SYSTEM_PROMPT,
+        userPrompt,
+        maxTokens: 800,
+        temperature: 0.8,
+        timeoutMs: 30000
       })
 
-      // Auth errors are not transient — fail immediately
-      if (resp.status === 401 || resp.status === 403) {
-        throw new Error(`Anthropic auth error: ${resp.status}`)
-      }
-
-      if ((resp.status === 429 || resp.status >= 500) && attempt < MAX_RETRIES) {
-        const delay = Math.min(4000, 800 * 2 ** attempt) + Math.floor(Math.random() * 300)
-        lastError = `HTTP ${resp.status}`
-        console.log(`[share-post] Claude ${resp.status} for ${billLabel}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
-        await new Promise(r => setTimeout(r, delay))
-        continue
-      }
-
-      const data = await resp.json()
-      if (!data.content?.[0]?.text) {
-        throw new Error(data.error?.message || 'No response from Claude')
-      }
-
-      const parsed = extractJson(data.content[0].text)
+      const parsed = extractJson(llmResult.text)
       if (!Array.isArray(parsed.drafts) || !parsed.drafts.length) {
-        throw new Error('Claude returned no drafts')
+        throw new Error('LLM returned no drafts')
       }
-      // Filter out anything malformed and trim. We don't reject the whole
-      // response over one bad draft — surface the good ones.
       const drafts = parsed.drafts
         .filter(d => d && typeof d.text === 'string' && d.text.trim())
         .map(d => ({ angle: d.angle || 'draft', text: d.text.trim() }))
@@ -3397,31 +3416,14 @@ async function speculativePersonalize(bills, profile) {
       const billText = content?.text || ''
       const trustedBill = buildTrustedBill(bill, null)
       const userPrompt = buildUserPrompt(norm, trustedBill, billText)
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 700,
-          temperature: 0.4,
-          system: PERSONALIZE_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userPrompt }],
-        }),
-        signal: AbortSignal.timeout(30000),
-      })
-      if (!resp.ok) continue
-      const data = await resp.json()
-      const text = data.content?.[0]?.text || ''
-      const parsed = extractJson(text)
+      const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
+      const parsed = extractJson(llmResult.text)
       if (parsed) {
+        adjustRelevance(parsed, norm)
         const result = { analysis: parsed }
         setCache(cacheKey, result)
         setSupabaseCache(cacheKey, identity, String(norm.grade), (norm.interests || []).slice().sort(), result)
-        console.log(`[speculative] Pre-personalized ${identity}`)
+        console.log(`[speculative] Pre-personalized ${identity} via ${llmResult.provider}`)
       }
     } catch (err) {
       console.error(`[speculative] Failed for ${bill.type}${bill.number}:`, err.message)

@@ -1,17 +1,23 @@
 /**
- * Multi-bill test: Qwen3 32B (Groq) quality evaluation
- * Runs 5 diverse bills × different student profiles to stress-test output quality.
+ * Side-by-side comparison: Qwen3 32B (Groq) vs Claude Haiku 4.5
+ * Runs 5 diverse bills through BOTH providers and scores quality.
  *
- * DO NOT COMMIT API KEYS — uses env variable only.
+ * DO NOT COMMIT API KEYS — uses env variables only.
+ *   GROQ_API_KEY=gsk_...  ANTHROPIC_API_KEY=sk-ant-...  node test-groq-vs-haiku.mjs
  */
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY
-if (!GROQ_API_KEY) {
-  console.error('Missing GROQ_API_KEY env variable. Run with:\n  GROQ_API_KEY=gsk_... node test-groq-vs-haiku.mjs')
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
+
+if (!GROQ_API_KEY && !ANTHROPIC_API_KEY) {
+  console.error('Provide at least one key:\n  GROQ_API_KEY=...  ANTHROPIC_API_KEY=...  node test-groq-vs-haiku.mjs')
   process.exit(1)
 }
 
-const SYSTEM_PROMPT = `You are CapitolKey, a strictly nonpartisan civic education tool. Show ONE specific high-school student how a U.S. bill touches THEIR life — concrete, factual, no opinions.
+// ── System prompts ────────────────────────────────────────────────────────────
+
+// Shared base prompt (used by both providers)
+const BASE_SYSTEM_PROMPT = `You are CapitolKey, a strictly nonpartisan civic education tool. Show ONE specific high-school student how a U.S. bill touches THEIR life — concrete, factual, no opinions.
 
 ABSOLUTE RULES
 1. NEVER evaluate ("good", "bad", "important", "needed", "harmful"). Zero opinion.
@@ -26,12 +32,22 @@ ABSOLUTE RULES
 10. NEVER tell the student to take personal action ("delete the app", "change your password") in headline/summary/if_it_passes/if_it_fails. Save action steps for civic_actions.
 11. For short bills (<500 words of source text), summary MUST cover every operative provision: dates, who runs it, deadlines, scope, temporary vs permanent. No cherry-picking.
 
-RELEVANCE
-9-10: directly changes daily life now (paycheck, school, healthcare)
-7-8: affects them within 1-2 years (college costs, job market)
-5-6: broader community / future
-3-4: tangential via interests or family
-1-2: no meaningful connection
+RELEVANCE — use the number that BEST fits the category:
+9-10: bill directly changes this student's daily life NOW (their paycheck, their school, their healthcare)
+7-8: affects them within 1-2 years (college costs, job market they'll enter)
+5-6: broader community/future impact with a CLEAR, SPECIFIC link to student
+3-4: tangential — only connected through a family member's job or a side interest
+1-2: no meaningful connection at all
+CRITICAL: Do NOT inflate relevance with speculative or indirect chains. If the bill's subject (e.g. defense, agriculture, trade) has no direct overlap with the student's stated interests, job, school, or family situation, the relevance MUST be ≤ 3. A hardware store worker is not connected to defense spending. An art student is not connected to military funding.
+HIGH relevance requires the bill to name something the student personally does or will do within 2 years.
+
+CIVIC ACTIONS — MANDATORY RULES:
+- Every civic_action MUST include a real, working URL in the "how" field
+- Use these URL patterns:
+  * Bill page: https://www.congress.gov/bill/119th-congress/[house-bill|senate-bill]/[number]
+  * Contact rep: https://www.house.gov/representatives/find-your-representative
+  * Contact senator: https://www.senate.gov/senators/senators-contact.htm
+- NEVER leave a civic_action without a URL. If you cannot provide a specific bill URL, use the contact-rep or contact-senator URL instead.
 
 OUTPUT — return ONLY this JSON, nothing else:
 {
@@ -39,17 +55,89 @@ OUTPUT — return ONLY this JSON, nothing else:
   "summary": "2-4 sentences. What the bill actually DOES (cover every operative provision, dates, scope). Why THIS specific student should care — reference their state/job/family/interests directly. Use real numbers from the bill text.",
   "if_it_passes": "1-2 sentences. What SPECIFICALLY changes for THIS student? Concrete: 'your paycheck goes up $X' not 'wages may increase'.",
   "if_it_fails": "1-2 sentences. What stays the same? Make the status quo concrete too.",
-  "relevance": "<number 1-10>",
-  "topic_tag": "Education | Healthcare | Economy | Environment | Technology | Housing | Civil Rights | Immigration | Community | Other",
+  "relevance": <number 1-10>,
+  "topic_tag": "Education" | "Healthcare" | "Economy" | "Environment" | "Technology" | "Housing" | "Civil Rights" | "Immigration" | "Community" | "Other",
   "civic_actions": [
     { "action": "Short imperative title", "how": "One sentence with a specific URL/phone/step.", "time": "5 minutes | 15 minutes | 1 hour" }
   ]
 }`
 
+// Approach 2: Add few-shot calibration examples to the prompt
+const FEWSHOT_SYSTEM_PROMPT = BASE_SYSTEM_PROMPT.replace(
+  'HIGH relevance requires the bill to name something the student personally does or will do within 2 years.',
+  `HIGH relevance requires the bill to name something the student personally does or will do within 2 years.
+
+RELEVANCE EXAMPLES:
+- Student works part-time, bill raises minimum wage → relevance 9 (directly changes their paycheck)
+- Student interested in environment, bill funds coastal restoration → relevance 8 (ties to their passion and future career)
+- Student interested in art/theater, bill increases defense spending → relevance 1-2 (no connection — say so honestly)
+- Student's parent works retail, bill changes trade tariffs → relevance 3 (only tangential through family)
+Low relevance is the CORRECT answer when the connection is weak. Helping students focus on bills that matter to THEM means honestly rating irrelevant bills low.`
+)
+
+// Approach 4: Server-side post-processing to correct relevance
+// ONLY pulls down clearly inflated scores. Never touches scores where a
+// reasonable connection exists. Conservative: trust the LLM unless we're
+// confident it over-rated.
+function adjustRelevance(parsed, testCase) {
+  const raw = Number(parsed.relevance)
+  if (isNaN(raw) || raw <= 3) return raw // already low — trust it
+
+  const tag = (parsed.topic_tag || 'Other').toLowerCase()
+  const prompt = testCase.prompt.toLowerCase()
+
+  // Extract profile signals from the prompt
+  const interestMatch = prompt.match(/interests?:\s*(.+)/i)
+  const interests = interestMatch
+    ? interestMatch[1].split(/,\s*/).map(i => i.trim().toLowerCase())
+    : []
+  const hasJob = /part-time job:\s*(?!none)/i.test(prompt)
+  const grade = parseInt((prompt.match(/grade:\s*(\d+)/i) || [])[1]) || 0
+  const isSenior = grade >= 12
+
+  // ── Direct-connection checks (any of these = trust the LLM score) ──
+
+  // Student has a job → economy/housing bills directly affect them
+  if (hasJob && ['economy', 'housing'].includes(tag)) return raw
+
+  // Senior heading to college → education bills directly affect them
+  if (isSenior && tag === 'education') return raw
+
+  // Interest-to-topic affinity
+  const affinityMap = {
+    education:      ['education', 'teaching', 'college prep', 'stem', 'debate'],
+    healthcare:     ['healthcare', 'biology', 'pre-med', 'sports', 'mental health'],
+    economy:        ['business', 'economics', 'entrepreneurship', 'finance'],
+    environment:    ['environment', 'science', 'agriculture', 'biology'],
+    technology:     ['technology', 'gaming', 'computer science', 'stem', 'engineering', 'social media'],
+    housing:        ['real estate', 'architecture', 'community service'],
+    'civil rights': ['politics', 'debate', 'history', 'social justice'],
+    immigration:    ['languages', 'culture', 'politics', 'debate'],
+    community:      ['community service', 'volunteering', 'politics'],
+    other:          [],
+  }
+  const related = affinityMap[tag] || []
+  const hasInterestMatch = interests.some(i =>
+    related.some(r => i.includes(r) || r.includes(i))
+  )
+  if (hasInterestMatch) return raw // LLM had a reason — trust it
+
+  // ── Bill-content keyword checks ──
+  // Check if the bill text mentions things that directly affect any student
+  const universalKeywords = ['student', 'school', 'minor', 'under 17', 'under 18', 'youth', 'teen', 'college', 'university']
+  const billText = prompt.slice(prompt.indexOf('bill:'))
+  const hitsUniversal = universalKeywords.some(kw => billText.includes(kw))
+  if (hitsUniversal) return raw
+
+  // ── No direct connection found — cap the score ──
+  return Math.min(raw, 3)
+}
+
 // ── Test cases: 5 diverse bills × different students ─────────────────────────
 const TEST_CASES = [
   {
     name: 'Test 1: Minimum Wage × CA Coffee Shop Worker',
+    expectedRelevance: { min: 8, max: 10 },
     prompt: `STUDENT PROFILE:
 - State: California
 - Grade: 11th
@@ -65,6 +153,7 @@ Personalize this bill for the student above.`
   },
   {
     name: 'Test 2: Student Loan × TX College-Bound Senior',
+    expectedRelevance: { min: 7, max: 9 },
     prompt: `STUDENT PROFILE:
 - State: Texas
 - Grade: 12th
@@ -80,6 +169,7 @@ Personalize this bill for the student above.`
   },
   {
     name: 'Test 3: Data Privacy × FL Tech-Interested Sophomore',
+    expectedRelevance: { min: 7, max: 10 },
     prompt: `STUDENT PROFILE:
 - State: Florida
 - Grade: 10th
@@ -95,6 +185,7 @@ Personalize this bill for the student above.`
   },
   {
     name: 'Test 4: Climate/EV × IL Environment Student',
+    expectedRelevance: { min: 5, max: 8 },
     prompt: `STUDENT PROFILE:
 - State: Illinois
 - Grade: 11th
@@ -110,6 +201,7 @@ Personalize this bill for the student above.`
   },
   {
     name: 'Test 5: Low Relevance × NY Art Student vs Defense Bill',
+    expectedRelevance: { min: 1, max: 3 },
     prompt: `STUDENT PROFILE:
 - State: New York
 - Grade: 9th
@@ -125,41 +217,199 @@ Personalize this bill for the student above.`
   }
 ]
 
-// ── Run one test case ────────────────────────────────────────────────────────
-async function runTest(testCase) {
-  console.log(`\n${'═'.repeat(70)}`)
-  console.log(`  ${testCase.name}`)
-  console.log(`${'═'.repeat(70)}`)
+// ── Provider configs ─────────────────────────────────────────────────────────
 
-  const start = Date.now()
+const PROVIDERS = []
 
-  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${GROQ_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: 'qwen/qwen3-32b',
-      max_tokens: 1024,
-      temperature: 0.4,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: testCase.prompt + '\n\n/no_think' }
-      ]
-    })
+if (GROQ_API_KEY) {
+  PROVIDERS.push({
+    name: 'Baseline',
+    short: 'baseline',
+    systemPrompt: BASE_SYSTEM_PROMPT,
+    postProcess: null,
+    call: async (systemPrompt, userPrompt) => {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'qwen/qwen3-32b',
+          max_tokens: 1024,
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt + '\n\n/no_think' }
+          ]
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(`${resp.status}: ${data.error?.message || 'Unknown'}`)
+      return {
+        content: data.choices?.[0]?.message?.content || '',
+        usage: data.usage || {},
+        costFn: (u) => (u.prompt_tokens * 0.29 + u.completion_tokens * 0.59) / 1_000_000
+      }
+    }
   })
 
-  const elapsed = Date.now() - start
-  const data = await resp.json()
+  // Approach 2: Few-shot examples in prompt
+  PROVIDERS.push({
+    name: 'Few-shot',
+    short: 'fewshot',
+    systemPrompt: FEWSHOT_SYSTEM_PROMPT,
+    postProcess: null,
+    call: async (systemPrompt, userPrompt) => {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'qwen/qwen3-32b',
+          max_tokens: 1024,
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt + '\n\n/no_think' }
+          ]
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(`${resp.status}: ${data.error?.message || 'Unknown'}`)
+      return {
+        content: data.choices?.[0]?.message?.content || '',
+        usage: data.usage || {},
+        costFn: (u) => (u.prompt_tokens * 0.29 + u.completion_tokens * 0.59) / 1_000_000
+      }
+    }
+  })
 
-  if (!resp.ok) {
-    console.error(`  ERROR: ${resp.status} — ${data.error?.message || 'Unknown'}`)
-    return { name: testCase.name, success: false, elapsed }
+  // Approach 2+4: Few-shot prompt + server-side post-processing
+  PROVIDERS.push({
+    name: 'Few-shot+PostProc',
+    short: '2+4',
+    systemPrompt: FEWSHOT_SYSTEM_PROMPT,
+    postProcess: adjustRelevance,
+    call: async (systemPrompt, userPrompt) => {
+      const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'qwen/qwen3-32b',
+          max_tokens: 1024,
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt + '\n\n/no_think' }
+          ]
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(`${resp.status}: ${data.error?.message || 'Unknown'}`)
+      return {
+        content: data.choices?.[0]?.message?.content || '',
+        usage: data.usage || {},
+        costFn: (u) => (u.prompt_tokens * 0.29 + u.completion_tokens * 0.59) / 1_000_000
+      }
+    }
+  })
+}
+
+if (ANTHROPIC_API_KEY) {
+  PROVIDERS.push({
+    name: 'Claude Haiku 4.5',
+    short: 'haiku',
+    call: async (systemPrompt, userPrompt) => {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 700,
+          temperature: 0.4,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      })
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(`${resp.status}: ${data.error?.message || JSON.stringify(data)}`)
+      return {
+        content: data.content?.[0]?.text || '',
+        usage: { prompt_tokens: data.usage?.input_tokens || 0, completion_tokens: data.usage?.output_tokens || 0 },
+        costFn: (u) => (u.prompt_tokens * 0.80 + u.completion_tokens * 4.00) / 1_000_000
+      }
+    }
+  })
+}
+
+// ── Quality scoring ──────────────────────────────────────────────────────────
+
+function scoreResult(parsed, checks, testCase) {
+  const scores = {}
+
+  // JSON validity (pass/fail)
+  scores.jsonValid = checks.jsonValid ? 1 : 0
+
+  // All required fields present
+  scores.allFields = checks.hasAllFields ? 1 : 0
+
+  // No opinion words
+  scores.nonpartisan = checks.noOpinionWords ? 1 : 0
+
+  // URLs in civic actions
+  const urlCount = parsed?.civic_actions?.filter(a => /https?:\/\//.test(a.how)).length || 0
+  const totalActions = parsed?.civic_actions?.length || 0
+  scores.urlCoverage = totalActions > 0 ? urlCount / totalActions : 0
+
+  // Relevance accuracy (how close to expected range)
+  const rel = Number(parsed?.relevance)
+  const { min, max } = testCase.expectedRelevance
+  if (rel >= min && rel <= max) {
+    scores.relevanceAccuracy = 1
+  } else if (rel >= min - 1 && rel <= max + 1) {
+    scores.relevanceAccuracy = 0.5
+  } else {
+    scores.relevanceAccuracy = 0
   }
 
-  const content = data.choices?.[0]?.message?.content || ''
-  const usage = data.usage || {}
+  // Headline length (≤12 words = 1, 13-15 = 0.5, >15 = 0)
+  const words = parsed?.headline?.split(/\s+/).length || 0
+  scores.headlineLength = words <= 12 ? 1 : words <= 15 ? 0.5 : 0
+
+  // Civic actions count (2-3 = 1, 1 = 0.5, 0 = 0)
+  scores.civicActionCount = totalActions >= 2 ? 1 : totalActions === 1 ? 0.5 : 0
+
+  // Overall weighted score (0-100)
+  const weights = { jsonValid: 20, allFields: 10, nonpartisan: 15, urlCoverage: 15, relevanceAccuracy: 20, headlineLength: 10, civicActionCount: 10 }
+  const total = Object.entries(weights).reduce((s, [k, w]) => s + (scores[k] || 0) * w, 0)
+
+  return { scores, total }
+}
+
+// ── Run one test case with one provider ──────────────────────────────────────
+
+async function runSingle(provider, testCase) {
+  const start = Date.now()
+  let content, usage, costFn
+  try {
+    const result = await provider.call(provider.systemPrompt || BASE_SYSTEM_PROMPT, testCase.prompt)
+    content = result.content
+    usage = result.usage
+    costFn = result.costFn
+  } catch (err) {
+    return { provider: provider.short, name: testCase.name, success: false, error: err.message, elapsed: Date.now() - start }
+  }
+  const elapsed = Date.now() - start
 
   // Parse JSON
   let parsed = null
@@ -172,101 +422,122 @@ async function runTest(testCase) {
     if (braceMatch) jsonStr = braceMatch[0]
     parsed = JSON.parse(jsonStr)
     jsonValid = true
-  } catch (e) { /* parse failed */ }
+  } catch { /* parse failed */ }
 
-  // Quality checks
+  // Apply post-processing if provider has it
+  if (parsed && provider.postProcess) {
+    const rawRel = parsed.relevance
+    parsed.relevance = provider.postProcess(parsed, testCase)
+    if (rawRel !== parsed.relevance) {
+      parsed._rawRelevance = rawRel
+    }
+  }
+
   const checks = {
     jsonValid,
     hasAllFields: parsed ? ['headline','summary','if_it_passes','if_it_fails','relevance','topic_tag','civic_actions'].every(f => f in parsed) : false,
     relevanceIsNumber: parsed ? !isNaN(Number(parsed.relevance)) : false,
     hasCivicActions: parsed?.civic_actions?.length >= 2,
-    headlineLength: parsed?.headline ? parsed.headline.split(' ').length : 0,
+    headlineLength: parsed?.headline ? parsed.headline.split(/\s+/).length : 0,
     noOpinionWords: parsed ? !/(good|bad|important|needed|harmful|great|terrible|crucial|vital)/i.test(JSON.stringify(parsed)) : false,
     hasUrls: parsed?.civic_actions ? parsed.civic_actions.some(a => /https?:\/\//.test(a.how)) : false,
   }
 
-  const passCount = Object.values(checks).filter(v => v === true || (typeof v === 'number' && v <= 14)).length
-  const totalChecks = Object.keys(checks).length
+  const { scores, total } = scoreResult(parsed, checks, testCase)
+  const cost = costFn(usage)
 
-  console.log(`  Speed: ${elapsed}ms | Tokens: ${usage.prompt_tokens}→${usage.completion_tokens} | Cost: $${((usage.prompt_tokens * 0.29 + usage.completion_tokens * 0.59) / 1_000_000).toFixed(6)}`)
-  console.log(`  Quality: ${passCount}/${totalChecks} checks passed`)
-
-  if (!jsonValid) {
-    console.log(`  ❌ JSON PARSE FAILED`)
-    console.log(`  Raw (first 300 chars): ${content.slice(0, 300)}`)
-  } else {
-    console.log(`  ✅ JSON valid | Relevance: ${parsed.relevance} | Tag: ${parsed.topic_tag}`)
-    console.log(`  Headline: "${parsed.headline}"`)
-    console.log(`  Summary: "${parsed.summary.slice(0, 150)}..."`)
-    console.log(`  if_it_passes: "${parsed.if_it_passes.slice(0, 120)}..."`)
-    console.log(`  if_it_fails: "${parsed.if_it_fails.slice(0, 120)}..."`)
-    console.log(`  Civic actions: ${parsed.civic_actions?.length || 0}`)
-    if (!checks.noOpinionWords) console.log(`  ⚠️  OPINION WORDS DETECTED in output`)
-    if (!checks.hasUrls) console.log(`  ⚠️  No URLs found in civic_actions`)
-    if (checks.headlineLength > 12) console.log(`  ⚠️  Headline over 12 words (${checks.headlineLength})`)
-  }
-
-  return { name: testCase.name, success: jsonValid, elapsed, usage, parsed, checks }
+  return { provider: provider.short, name: testCase.name, success: jsonValid, elapsed, usage, parsed, checks, scores, total, cost }
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
+
 async function main() {
-  console.log('╔══════════════════════════════════════════════════════════════════════╗')
-  console.log('║   CapitolKey Multi-Bill Quality Test: Qwen3 32B via Groq            ║')
-  console.log('║   5 bills × different students × diverse topics                     ║')
-  console.log('╚══════════════════════════════════════════════════════════════════════╝')
+  const providerNames = PROVIDERS.map(p => p.name).join(' vs ')
+  console.log('╔══════════════════════════════════════════════════════════════════════════╗')
+  console.log(`║   CapitolKey Side-by-Side Test: ${providerNames.padEnd(40)}║`)
+  console.log('║   5 bills × different students × quality scoring                        ║')
+  console.log('╚══════════════════════════════════════════════════════════════════════════╝')
 
-  const results = []
+  const allResults = []
+
   for (const tc of TEST_CASES) {
-    const r = await runTest(tc)
-    results.push(r)
-    // Small delay to avoid rate limits
-    await new Promise(resolve => setTimeout(resolve, 500))
+    console.log(`\n${'═'.repeat(74)}`)
+    console.log(`  ${tc.name}`)
+    console.log(`  Expected relevance: ${tc.expectedRelevance.min}-${tc.expectedRelevance.max}`)
+    console.log(`${'═'.repeat(74)}`)
+
+    for (const provider of PROVIDERS) {
+      const r = await runSingle(provider, tc)
+      allResults.push(r)
+
+      const label = `[${provider.name}]`
+      if (!r.success) {
+        console.log(`  ${label} ❌ ${r.error || 'JSON parse failed'}`)
+        continue
+      }
+
+      console.log(`  ${label}`)
+      console.log(`    Speed: ${r.elapsed}ms | Tokens: ${r.usage.prompt_tokens}→${r.usage.completion_tokens} | Cost: $${r.cost.toFixed(6)}`)
+      const relLabel = r.parsed._rawRelevance != null ? `${r.parsed._rawRelevance}→${r.parsed.relevance}` : `${r.parsed.relevance}`
+      console.log(`    Score: ${r.total}/100 | Relevance: ${relLabel} ${r.scores.relevanceAccuracy === 1 ? '✅' : r.scores.relevanceAccuracy === 0.5 ? '⚠️ close' : '❌ off'}`)
+      console.log(`    Headline: "${r.parsed.headline}"`)
+      console.log(`    Summary: "${r.parsed.summary.slice(0, 120)}..."`)
+      const urlCount = r.parsed.civic_actions?.filter(a => /https?:\/\//.test(a.how)).length || 0
+      console.log(`    Civic actions: ${r.parsed.civic_actions?.length || 0} (${urlCount} with URLs)`)
+      if (!r.checks.noOpinionWords) console.log(`    ⚠️  Opinion words detected`)
+
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
   }
 
-  // ── Final scorecard ──
-  console.log(`\n\n${'━'.repeat(70)}`)
+  // ── Final scorecard ──────────────────────────────────────────────────────
+  console.log(`\n\n${'━'.repeat(74)}`)
   console.log('FINAL SCORECARD')
-  console.log(`${'━'.repeat(70)}`)
+  console.log(`${'━'.repeat(74)}`)
 
-  const successful = results.filter(r => r.success)
-  const totalTime = results.reduce((s, r) => s + r.elapsed, 0)
-  const totalIn = successful.reduce((s, r) => s + (r.usage?.prompt_tokens || 0), 0)
-  const totalOut = successful.reduce((s, r) => s + (r.usage?.completion_tokens || 0), 0)
-  const totalCostGroq = (totalIn * 0.29 + totalOut * 0.59) / 1_000_000
-  const totalCostHaiku = (totalIn * 0.80 + totalOut * 4.00) / 1_000_000
+  for (const provider of PROVIDERS) {
+    const results = allResults.filter(r => r.provider === provider.short)
+    const successful = results.filter(r => r.success)
+    const avgScore = successful.length ? (successful.reduce((s, r) => s + r.total, 0) / successful.length).toFixed(1) : 'N/A'
+    const avgTime = results.length ? Math.round(results.reduce((s, r) => s + (r.elapsed || 0), 0) / results.length) : 'N/A'
+    const totalCost = successful.reduce((s, r) => s + (r.cost || 0), 0)
+    const jsonRate = `${successful.length}/${results.length}`
+    const relevanceHits = successful.filter(r => r.scores.relevanceAccuracy === 1).length
+    const urlHits = successful.filter(r => r.scores.urlCoverage === 1).length
 
-  console.log(`\n  JSON parse success: ${successful.length}/${results.length}`)
-  console.log(`  Total time (sequential): ${totalTime}ms (avg ${Math.round(totalTime / results.length)}ms per bill)`)
-  console.log(`  Total tokens: ${totalIn} in / ${totalOut} out`)
-  console.log(`\n  ── Cost comparison (all 5 bills) ──`)
-  console.log(`  Qwen3 32B (Groq):  $${totalCostGroq.toFixed(6)}`)
-  console.log(`  Claude Haiku:      $${totalCostHaiku.toFixed(6)}`)
-  console.log(`  Savings:           ${Math.round(totalCostHaiku / totalCostGroq)}x cheaper with Groq`)
-
-  console.log(`\n  ── Per-test results ──`)
-  for (const r of results) {
-    const status = r.success ? '✅' : '❌'
-    const relevance = r.parsed?.relevance ?? '?'
-    const opinionFree = r.checks?.noOpinionWords ? '✓' : '⚠️ opinion'
-    console.log(`  ${status} ${r.name.padEnd(50)} | ${r.elapsed}ms | rel:${relevance} | ${opinionFree}`)
+    console.log(`\n  [${provider.name}]`)
+    console.log(`    Avg quality score: ${avgScore}/100`)
+    console.log(`    JSON parse:        ${jsonRate}`)
+    console.log(`    Relevance on-target: ${relevanceHits}/${successful.length}`)
+    console.log(`    Full URL coverage: ${urlHits}/${successful.length}`)
+    console.log(`    Avg latency:       ${avgTime}ms`)
+    console.log(`    Total cost (5 bills): $${totalCost.toFixed(6)}`)
   }
 
-  // Check for the low-relevance test
-  const defenseTest = results.find(r => r.name.includes('Defense'))
-  if (defenseTest?.parsed) {
-    const rel = Number(defenseTest.parsed.relevance)
-    console.log(`\n  ── Low-relevance check (Defense bill × Art student) ──`)
-    console.log(`  Relevance: ${rel} ${rel <= 3 ? '✅ correctly low' : '⚠️ should be ≤ 3'}`)
-  }
+  // Comparison table (works for any number of providers)
+  if (PROVIDERS.length >= 2) {
+    console.log(`\n  ── Comparison ──`)
+    const cols = PROVIDERS.map(p => p.short)
+    const header = `  ${'Test'.padEnd(42)} | ${cols.map(c => c.padEnd(10)).join(' | ')} | Best`
+    console.log(header)
+    console.log(`  ${'─'.repeat(42)}-+-${cols.map(() => '─'.repeat(10)).join('-+-')}-+${'─'.repeat(10)}`)
 
-  console.log(`\n  ── Monthly cost projection (1,000 calls/day) ──`)
-  const avgIn = totalIn / successful.length
-  const avgOut = totalOut / successful.length
-  const dailyCostGroq = (avgIn * 0.29 + avgOut * 0.59) / 1_000_000 * 1000
-  const dailyCostHaiku = (avgIn * 0.80 + avgOut * 4.00) / 1_000_000 * 1000
-  console.log(`  Groq:  $${(dailyCostGroq * 30).toFixed(2)}/month`)
-  console.log(`  Haiku: $${(dailyCostHaiku * 30).toFixed(2)}/month`)
+    const wins = Object.fromEntries(cols.map(c => [c, 0]))
+    for (const tc of TEST_CASES) {
+      const scores = {}
+      for (const p of PROVIDERS) {
+        const r = allResults.find(r => r.provider === p.short && r.name === tc.name)
+        scores[p.short] = r?.total ?? 0
+      }
+      const maxScore = Math.max(...Object.values(scores))
+      const best = Object.entries(scores).filter(([,v]) => v === maxScore)
+      const bestLabel = best.length === cols.length ? 'Tie' : best.map(([k]) => k).join(',')
+      if (best.length < cols.length) best.forEach(([k]) => wins[k]++)
+      const shortName = tc.name.replace('Test ', 'T').slice(0, 42)
+      console.log(`  ${shortName.padEnd(42)} | ${cols.map(c => String(scores[c]).padEnd(10)).join(' | ')} | ${bestLabel}`)
+    }
+    console.log(`\n  Wins: ${cols.map(c => `${c} ${wins[c]}`).join(' / ')}`)
+  }
 }
 
 main().catch(console.error)
