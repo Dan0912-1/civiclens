@@ -370,7 +370,7 @@ export default function Search() {
         {/* Results */}
         {!loading && !error && filteredBills.length > 0 && (
           <>
-            <div className={styles.meta}>
+            <div className={styles.meta} role="status" aria-live="polite">
               {totalResults} result{totalResults !== 1 ? 's' : ''} for "{activeQuery}" &middot; {filterLabel}
             </div>
             <div className={styles.grid}>

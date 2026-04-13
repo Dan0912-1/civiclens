@@ -468,6 +468,113 @@
   font-style: italic;
 }
 
+/* Completion grid (Students tab) */
+.completionGrid {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.gridScrollWrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.completionTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 400px;
+}
+
+.completionTable th,
+.completionTable td {
+  padding: 10px 14px;
+  text-align: center;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.studentHeader {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--cream);
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.assignmentHeader {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  background: var(--cream);
+  min-width: 100px;
+  max-width: 140px;
+  vertical-align: bottom;
+}
+
+.assignmentHeaderType {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--amber);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.assignmentHeaderTitle {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  line-height: 1.3;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studentRow:hover {
+  background: rgba(232, 160, 32, 0.04);
+}
+
+.studentName {
+  text-align: left;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  position: sticky;
+  left: 0;
+  background: var(--white);
+  z-index: 1;
+}
+
+.studentRow:hover .studentName {
+  background: rgba(232, 160, 32, 0.04);
+}
+
+.completionCell {
+  cursor: default;
+  font-size: 1.1rem;
+}
+
+.checkmark {
+  color: var(--status-active);
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.pending {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  opacity: 0.5;
+}
+
 @media (max-width: 640px) {
   .page { padding: var(--space-lg) var(--space-md); }
   .header { flex-direction: column; }

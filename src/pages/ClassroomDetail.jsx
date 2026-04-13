@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
 import {
   getClassroomDetail, getAssignments, removeAssignment,
-  getClassroomStats, exportClassroomCsv, regenerateCode,
+  getClassroomStats, getCompletions, exportClassroomCsv, regenerateCode,
   updateClassroom, leaveClassroom
 } from '../lib/classroom'
 import AssignBillModal from '../components/AssignBillModal.jsx'
@@ -23,6 +23,8 @@ export default function ClassroomDetail() {
   const [codeCopied, setCodeCopied] = useState(false)
   const [token, setToken] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [completionsData, setCompletionsData] = useState(null)
+  const [completionsLoading, setCompletionsLoading] = useState(false)
 
   useEffect(() => {
     if (!user) { navigate('/'); return }
@@ -122,6 +124,23 @@ export default function ClassroomDetail() {
     loadData()
   }
 
+  async function loadCompletions() {
+    setCompletionsLoading(true)
+    const t = token || await getToken()
+    if (!t) { setCompletionsLoading(false); return }
+    try {
+      const data = await getCompletions(t, id)
+      setCompletionsData(data)
+    } catch { setCompletionsData(null) }
+    setCompletionsLoading(false)
+  }
+
+  function formatTimeSpent(sec) {
+    if (!sec) return ''
+    if (sec < 60) return `${sec}s`
+    return `${Math.round(sec / 60)} min`
+  }
+
   if (loading) {
     return (
       <main className={styles.page}>
@@ -182,6 +201,17 @@ export default function ClassroomDetail() {
           >
             Assignments
           </button>
+          {isTeacher && (
+            <button
+              className={`${styles.tab} ${tab === 'students' ? styles.tabActive : ''}`}
+              onClick={() => {
+                setTab('students')
+                if (!completionsData && !completionsLoading) loadCompletions()
+              }}
+            >
+              Students
+            </button>
+          )}
           {isTeacher && (
             <button
               className={`${styles.tab} ${tab === 'dashboard' ? styles.tabActive : ''}`}
@@ -275,6 +305,70 @@ export default function ClassroomDetail() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Students tab (teacher only) */}
+        {tab === 'students' && isTeacher && (
+          <div className={styles.tabContent}>
+            {completionsLoading ? (
+              <div className={styles.loading}>
+                <div className={styles.spinner} />
+                <span>Loading student data...</span>
+              </div>
+            ) : !completionsData || completionsData.students.length === 0 ? (
+              <p className={styles.emptyState}>No students yet. Share the join code to get started.</p>
+            ) : completionsData.assignments.length === 0 ? (
+              <p className={styles.emptyState}>No assignments yet. Create one from the Assignments tab.</p>
+            ) : (
+              <div className={styles.completionGrid}>
+                <div className={styles.gridScrollWrapper}>
+                  <table className={styles.completionTable}>
+                    <thead>
+                      <tr>
+                        <th className={styles.studentHeader}>Student</th>
+                        {completionsData.assignments.map(a => (
+                          <th key={a.id} className={styles.assignmentHeader}>
+                            <span className={styles.assignmentHeaderType}>
+                              {a.billType} {a.billNumber}
+                            </span>
+                            <span className={styles.assignmentHeaderTitle}>
+                              {(a.title || '').slice(0, 40)}
+                            </span>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {completionsData.students.map(student => (
+                        <tr key={student.id} className={styles.studentRow}>
+                          <td className={styles.studentName}>{student.name}</td>
+                          {completionsData.assignments.map(a => {
+                            const completion = completionsData.completions?.[student.id]?.[a.id]
+                            return (
+                              <td
+                                key={a.id}
+                                className={styles.completionCell}
+                                title={completion
+                                  ? `Completed ${new Date(completion.completedAt).toLocaleDateString()}${completion.timeSpent ? ' · ' + formatTimeSpent(completion.timeSpent) : ''}`
+                                  : 'Not completed'
+                                }
+                              >
+                                {completion ? (
+                                  <span className={styles.checkmark}>&#10003;</span>
+                                ) : (
+                                  <span className={styles.pending}>&mdash;</span>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

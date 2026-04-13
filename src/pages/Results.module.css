@@ -131,7 +131,8 @@
 }
 
 .filterBtn {
-  padding: 6px 14px;
+  padding: 10px 14px;
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: 1px;
   font-family: var(--font-mono);
@@ -349,13 +350,13 @@
 
 .assignmentClass {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   color: var(--text-muted);
   letter-spacing: 0.04em;
 }
 
 .assignmentDue {
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   color: var(--text-secondary);
 }

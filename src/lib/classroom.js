@@ -133,6 +133,12 @@ export async function markComplete(token, classroomId, assignmentId, timeSpentSe
   })
 }
 
+export async function getCompletions(token, id) {
+  const resp = await fetch(`${API}/api/classroom/${id}/completions`, { headers: await authHeaders(token) })
+  if (!resp.ok) return null
+  return resp.json()
+}
+
 export async function getClassroomStats(token, id) {
   const resp = await fetch(`${API}/api/classroom/${id}/stats`, { headers: await authHeaders(token) })
   if (!resp.ok) return null

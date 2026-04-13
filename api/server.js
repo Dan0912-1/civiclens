@@ -238,12 +238,47 @@ function activateGroqFallback(reason) {
 
 function isUsingGroq() { return _useGroqFallback }
 
+// ─── Global LLM concurrency limiter (semaphore) ──────────────────────────────
+// Prevents thundering herd: when 30 students hit /api/personalize-batch
+// simultaneously, each batch has its own CONCURRENCY of 10, but ALL LLM calls
+// across ALL requests are gated through this semaphore (max 15 in-flight).
+const GLOBAL_LLM_CONCURRENCY = 15
+let _llmInFlight = 0
+const _llmQueue = []
+
+async function acquireLLMSlot(timeoutMs = 90000) {
+  if (_llmInFlight < GLOBAL_LLM_CONCURRENCY) {
+    _llmInFlight++
+    return
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const idx = _llmQueue.indexOf(entry)
+      if (idx >= 0) _llmQueue.splice(idx, 1)
+      reject(new Error('LLM queue timeout — too many concurrent requests'))
+    }, timeoutMs)
+    const entry = { resolve: () => { clearTimeout(timer); _llmInFlight++; resolve() }, reject }
+    _llmQueue.push(entry)
+  })
+}
+
+function releaseLLMSlot() {
+  _llmInFlight--
+  if (_llmQueue.length > 0) {
+    const next = _llmQueue.shift()
+    next.resolve()
+  }
+}
+
 /**
  * Unified LLM call. Tries Haiku first; on credit/auth failure, falls back to Groq.
  * Returns { text, usage: { input_tokens, output_tokens }, provider }
  * Throws on unrecoverable errors.
+ * All calls are gated by the global LLM semaphore (max GLOBAL_LLM_CONCURRENCY).
  */
 async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
+  await acquireLLMSlot()
+  try {
   // ── Groq path ──
   if (_useGroqFallback) {
     const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -323,6 +358,9 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
     text,
     usage: { input_tokens: data.usage?.input_tokens || 0, output_tokens: data.usage?.output_tokens || 0 },
     provider: 'haiku'
+  }
+  } finally {
+    releaseLLMSlot()
   }
 }
 
@@ -4816,6 +4854,81 @@ app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
     console.error('[classroom] stats error:', err.message)
     res.status(500).json({ error: 'Failed to fetch classroom stats' })
+  }
+})
+
+// Per-student assignment completions (teacher only)
+app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => {
+  try {
+    await requireClassroomTeacher(req, req.params.id)
+
+    // Get students
+    const { data: members } = await supabase.from('classroom_members')
+      .select('user_id, joined_at').eq('classroom_id', req.params.id).eq('role', 'student')
+      .order('joined_at', { ascending: true })
+    const studentIds = (members || []).map(m => m.user_id)
+
+    // Fetch display names
+    const nameMap = {}
+    if (studentIds.length > 0) {
+      const { data: { users } } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+      for (const u of (users || [])) {
+        if (studentIds.includes(u.id)) {
+          nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
+        }
+      }
+    }
+
+    // Get assignments
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, due_date, created_at')
+      .eq('classroom_id', req.params.id)
+      .order('created_at', { ascending: true })
+    const assignmentIds = (assignments || []).map(a => a.id)
+
+    // Get all completions for these assignments
+    let completionsByAssignment = {}
+    if (assignmentIds.length > 0) {
+      const { data: completions } = await supabase.from('assignment_completions')
+        .select('assignment_id, user_id, completed_at, time_spent_sec')
+        .in('assignment_id', assignmentIds)
+      for (const c of (completions || [])) {
+        if (!completionsByAssignment[c.assignment_id]) completionsByAssignment[c.assignment_id] = {}
+        completionsByAssignment[c.assignment_id][c.user_id] = {
+          completedAt: c.completed_at,
+          timeSpent: c.time_spent_sec,
+        }
+      }
+    }
+
+    const students = studentIds.map(uid => ({
+      id: uid,
+      name: nameMap[uid] || 'Student',
+    }))
+
+    const assignmentList = (assignments || []).map(a => ({
+      id: a.id,
+      title: a.bill_data?.title || a.bill_id,
+      billType: a.bill_data?.type || a.bill_data?.bill_type || '',
+      billNumber: a.bill_data?.number || a.bill_data?.bill_number || '',
+      dueDate: a.due_date,
+    }))
+
+    // Build per-student completion map: { studentId: { assignmentId: { completedAt, timeSpent } } }
+    const completionMap = {}
+    for (const uid of studentIds) {
+      completionMap[uid] = {}
+      for (const aId of assignmentIds) {
+        completionMap[uid][aId] = completionsByAssignment[aId]?.[uid] || null
+      }
+    }
+
+    res.json({ students, assignments: assignmentList, completions: completionMap })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[classroom] completions error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch completions' })
   }
 })
 
