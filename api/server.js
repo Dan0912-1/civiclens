@@ -88,7 +88,7 @@ app.use(compression())
 
 // 64KB body cap — large enough for batch personalize (20 bills) but tight
 // enough to bound abuse. Default is 100kb; an explicit value documents intent.
-app.use(express.json({ limit: '64kb' }))
+app.use(express.json({ limit: '2mb' }))
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)
