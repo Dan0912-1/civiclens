@@ -12,7 +12,7 @@ const DEMO_BILLS = [
     title: 'H.R. 2847: Student Loan Refinancing Act',
     summary: 'Reduces federal student loan interest to 4.5% for borrowers in qualifying income brackets. Estimated fiscal impact: $12.3B over 10 years.',
     relevance: 9,
-    chips: ['119th Congress', 'Fiscal Note Attached', 'Ways & Means'],
+    chips: ['119th Congress', 'Cost Estimate Attached', 'Ways & Means'],
   },
   {
     tag: 'Healthcare', tagColor: '#1F4D3A', tagBg: 'transparent',
@@ -107,9 +107,9 @@ export default function Home() {
             <span className={styles.accent}>Shaping Your Life</span>?
           </h1>
           <p className={styles.subhead}>
-            Track bills in Congress and your state legislature, explained
-            in plain language. See how they affect you personally.
-            Nonpartisan. Built by a student.
+            Real bills, explained for your life. Track legislation in
+            Congress and your state legislature in plain language and see
+            how it affects you personally. Nonpartisan. Built by a student.
           </p>
           <div className={styles.ctaRow}>
             <button
@@ -126,13 +126,13 @@ export default function Home() {
             </button>
           </div>
           <div className={styles.trustStrip}>
-            <span><span className={styles.trustCheck}>✓</span>Verified Sources</span>
+            <span><span className={styles.trustCheck}>✓</span>Congress.gov</span>
+            <span className={styles.trustSep}>·</span>
+            <span><span className={styles.trustCheck}>✓</span>State Legislatures</span>
             <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Nonpartisan</span>
             <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Updated Hourly</span>
-            <span className={styles.trustSep}>·</span>
-            <span><span className={styles.trustCheck}>✓</span>Congress.gov</span>
           </div>
         </div>
 
@@ -252,7 +252,7 @@ export default function Home() {
 
       {/* CTA */}
       <section className={styles.ctaSection}>
-        <h2>Ready to see what's happening?</h2>
+        <h2>Start tracking bills that affect you.</h2>
         <p>No account needed. Set your state and interests to get started.</p>
         <button
           className={styles.ctaPrimary}

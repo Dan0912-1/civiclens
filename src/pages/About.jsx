@@ -24,7 +24,7 @@ export default function About() {
           </p>
           <p>
             CapitolKey changes that. We take real legislation, pull the bills most
-            relevant to your life, and explain them in plain English. What changes
+            relevant to your life, and explain them in plain language. What changes
             if they pass, what stays the same if they fail, and how you can make
             your voice heard.
           </p>

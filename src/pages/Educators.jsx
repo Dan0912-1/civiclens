@@ -66,7 +66,8 @@ export default function Educators() {
           <p>
             Bring real legislation into your classroom. CapitolKey gives students
             a nonpartisan, plain-language window into the laws shaping their lives,
-            aligned to the standards you already teach.
+            aligned to the standards you already teach. Built by a student who
+            wanted the tool that didn't exist.
           </p>
         </div>
 
