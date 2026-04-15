@@ -171,52 +171,122 @@ export function extractStructuredExcerpt(text) {
 // Map of app interest topics → keywords found in bill section text.
 // These overlap the classifier list but are tuned for section retrieval:
 // higher-signal phrases, fewer generic terms that match everywhere.
+//
+// Keyword rules:
+// - Single words are matched with \b word boundaries, so 'coal' does NOT hit
+//   'coalition' and 'clean' does NOT hit 'cleanse'. Compiled below into
+//   INTEREST_SECTION_KEYWORD_REGEX.
+// - Multi-word entries ('clean air', 'tax credit') work as substrings; the
+//   space already gives us the boundary we need on each side.
+// - Prefer bigrams over single words when the unigram is lexically noisy
+//   ('coal' → 'coal mining' + 'coal-fired', 'clean' → 'clean air'/'clean
+//   water'/'clean energy'). This keeps signal and kills false positives like
+//   "clean hands doctrine" or "coalition government".
 const INTEREST_SECTION_KEYWORDS = {
   education: [
-    'educational', 'school ', 'student', 'teacher', 'curriculum', 'pell',
-    'tuition', 'college', 'university', 'k-12', 'kindergarten', 'academic',
-    'scholarship', 'literacy', 'title i', 'idea act', 'pupil',
+    'educational', 'school', 'schools', 'schoolchildren', 'student', 'students',
+    'teacher', 'teachers', 'curriculum', 'pell grant', 'tuition', 'college',
+    'university', 'k-12', 'kindergarten', 'academic', 'scholarship',
+    'literacy', 'title i of', 'idea act', 'pupil', 'classroom',
+    'higher education', 'public school', 'charter school', 'school district',
   ],
   environment: [
-    'climate', 'environmental', 'energy', 'clean ', 'pollution', 'emission',
+    'climate', 'environmental', 'pollution', 'emission', 'emissions',
     'renewable', 'carbon', 'greenhouse', 'conservation', 'endangered',
-    'forest', 'wildlife', 'epa ', 'clean air', 'clean water', 'coal', 'solar',
+    'forest', 'wildlife', 'epa', 'clean air', 'clean water', 'clean energy',
+    'coal mining', 'coal-fired', 'solar', 'wind energy', 'natural gas',
+    'oil and gas', 'drilling', 'methane',
   ],
   economy: [
-    'wage', 'taxation', 'tax credit', 'tax deduction', 'economic', 'business',
-    'commerce', 'employment', 'workforce', 'trade', 'tariff', 'small business',
-    'banking', 'consumer', 'retirement', 'pension', 'labor',
+    'wage', 'wages', 'minimum wage', 'taxation', 'tax credit', 'tax deduction',
+    'tax cut', 'economic', 'business', 'businesses', 'commerce', 'employment',
+    'workforce', 'trade', 'tariff', 'tariffs', 'small business', 'banking',
+    'consumer', 'retirement', 'pension', 'labor', 'inflation',
   ],
   healthcare: [
     'health care', 'healthcare', 'medical', 'medicare', 'medicaid', 'drug',
-    'hospital', 'insurance', 'prescription', 'pharmaceutical', 'opioid',
-    'mental health', 'disease', 'vaccine', 'hospice', 'physician',
+    'drugs', 'hospital', 'hospitals', 'insurance', 'prescription',
+    'pharmaceutical', 'opioid', 'mental health', 'disease', 'diseases',
+    'vaccine', 'vaccines', 'hospice', 'physician', 'physicians', 'clinic',
+    'clinics', 'patient', 'patients',
   ],
   technology: [
     'technology', 'cybersecurity', 'data privacy', 'digital', 'internet',
-    'broadband', 'artificial intelligence', 'algorithm', 'semiconductor',
-    'spectrum', 'telecom', '5g', 'platform', 'software',
+    'broadband', 'artificial intelligence', 'algorithm', 'algorithms',
+    'semiconductor', 'spectrum', 'telecom', '5g', 'online platform',
+    'social media', 'software', 'encryption',
   ],
   housing: [
-    'housing', 'rental', 'homeless', 'mortgage', 'tenant', 'zoning',
-    'section 8', 'public housing', 'eviction', 'landlord', 'home loan',
+    'housing', 'rental', 'homeless', 'homelessness', 'mortgage', 'tenant',
+    'tenants', 'zoning', 'section 8', 'public housing', 'eviction', 'landlord',
+    'home loan', 'affordable housing',
   ],
   immigration: [
-    'immigration', 'visa', 'asylum', 'border ', 'refugee', 'deportation',
-    'naturalization', 'dreamer', 'migrant', 'immigrant', 'green card',
-    'customs', 'ice ',
+    'immigration', 'visa', 'visas', 'asylum', 'border security',
+    'border wall', 'border patrol', 'refugee', 'deportation', 'naturalization',
+    'dreamer', 'migrant', 'immigrant', 'immigrants', 'green card',
+    'customs enforcement', 'immigration and customs',
   ],
   civil_rights: [
     'voting', 'civil rights', 'discrimination', 'police', 'racial',
     'disability', 'lgbtq', 'equal pay', 'criminal justice', 'firearm',
-    'incarceration', 'parole', 'voting rights', 'census',
+    'firearms', 'incarceration', 'parole', 'voting rights', 'census',
+    'gerrymandering',
   ],
   community: [
     'americorps', 'volunteer', 'nonprofit', 'community', 'food assistance',
-    'rural', 'snap', 'wic ', 'disaster relief', 'fema', 'agriculture',
-    'farm', 'public service',
+    'rural', 'snap benefits', 'snap program', 'wic program', 'disaster relief',
+    'fema', 'agriculture', 'farm', 'farmer', 'public service',
   ],
 }
+
+// Compile each keyword once. Multi-word phrases keep their literal form (the
+// internal whitespace already provides a boundary on each side). Single-word
+// entries get wrapped with \b ... \b so we don't match inside other words.
+// We escape regex metacharacters ("5g" is safe, but "k-12", "section 8"
+// contain regex-special chars).
+const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/g
+function compileKeyword(kw) {
+  const escaped = kw.replace(REGEX_SPECIALS, '\\$&')
+  // Treat as "single word" only if there's no internal whitespace and no
+  // dash/digit mix — for those (e.g. "k-12", "5g") we still want a left
+  // boundary but a right \b would fail because "5g" ends on a letter
+  // followed by nothing. The \b still works correctly at string edges.
+  const isSimpleWord = /^[a-z]+$/.test(kw)
+  const pattern = isSimpleWord ? `\\b${escaped}\\b` : `\\b${escaped}(?!\\w)`
+  return new RegExp(pattern, 'gi')
+}
+const INTEREST_SECTION_KEYWORD_REGEX = Object.fromEntries(
+  Object.entries(INTEREST_SECTION_KEYWORDS).map(([topic, words]) => [
+    topic,
+    words.map((kw) => ({ kw, re: compileKeyword(kw) })),
+  ])
+)
+
+// Boilerplate we don't want to spend context-window budget pinning. The
+// last section of many bills is a severability clause — generic legal
+// boilerplate that adds nothing to a student's understanding of impact.
+// Also catches trivially short "short title" repeats and construction
+// clauses. If the tail matches, we skip it and consider the prior section.
+const BOILERPLATE_TAIL_PATTERNS = [
+  /\bseverability\b/i,
+  /\bheld\s+invalid\b/i,
+  /\bheld\s+to\s+be\s+unconstitutional\b/i,
+  /\brule\s+of\s+construction\b/i,
+  /\bconstruction\s+of\s+this\s+act\b/i,
+]
+function looksLikeBoilerplateTail(sectionText) {
+  if (!sectionText) return false
+  const snippet = sectionText.slice(0, 800)
+  return BOILERPLATE_TAIL_PATTERNS.some((re) => re.test(snippet))
+}
+
+// Sections shorter than this many words cannot be selected as "interior"
+// fill. Under this floor a handful of keyword hits produces pathologically
+// high density scores (e.g. a 10-word committee header with 2 hits beats
+// a 500-word substantive section with 10 hits). Anchors (section 1 and
+// the chosen tail) are exempt — we always want their structural context.
+const MIN_INTERIOR_SECTION_WORDS = 50
 
 /**
  * Split a long bill into sections and return the ones most relevant to
@@ -236,48 +306,67 @@ export function getRelevantSections(text, interests = [], maxChars = 5000) {
   const sections = text.split(/\s+(?=(?:SEC\.?|SECTION|Sec\.?|§)\s*\d{1,4}\.?\s+[A-Z])/)
   if (sections.length < 4) return null // Not enough structure
 
-  // Collect keywords for the student's interests
-  const keywords = []
+  // Collect compiled regexes for the student's interests. Word-boundary
+  // matching fixes unigram collisions ("coal" ≠ "coalition", "clean" ≠
+  // "cleanse"). See compileKeyword above.
+  const regexes = []
   for (const topic of interests) {
-    for (const kw of INTEREST_SECTION_KEYWORDS[topic] || []) keywords.push(kw)
+    for (const entry of INTEREST_SECTION_KEYWORD_REGEX[topic] || []) regexes.push(entry.re)
   }
-  if (!keywords.length) return null
+  if (!regexes.length) return null
 
   // Score each section by how many keyword hits it contains (density-normalized)
   const scored = sections.map((sec, idx) => {
-    const lower = sec.toLowerCase()
     let hits = 0
-    for (const kw of keywords) {
-      // Cheap includes counting (avoids regex cost on big strings)
-      let from = 0
-      while (true) {
-        const at = lower.indexOf(kw, from)
-        if (at === -1) break
-        hits++
-        from = at + kw.length
-      }
+    for (const re of regexes) {
+      re.lastIndex = 0
+      // Count all non-overlapping matches. matchAll is O(n) over the string
+      // once per keyword; cheaper than the old indexOf loop when keywords
+      // are backed by real regex.
+      // eslint-disable-next-line no-unused-vars
+      for (const _m of sec.matchAll(re)) hits++
     }
-    // Density bias: a 200-word section with 10 hits beats a 2000-word one with 10
     const wordCount = sec.split(/\s+/).length || 1
     const density = hits / wordCount
-    return { idx, sec, hits, density, length: sec.length }
+    return { idx, sec, hits, density, length: sec.length, wordCount }
   })
 
-  // Always include first section (preamble) and last section (effective date).
+  // Always include first section (preamble / short title). For the tail,
+  // prefer a non-boilerplate section: skip severability / construction
+  // clauses and walk backwards to the first substantive section.
   const selected = new Map()
   selected.set(0, scored[0])
-  selected.set(scored.length - 1, scored[scored.length - 1])
+
+  let tailIdx = scored.length - 1
+  while (
+    tailIdx > 0 &&
+    looksLikeBoilerplateTail(scored[tailIdx].sec) &&
+    // Don't walk all the way into the interior — cap at last 3 sections.
+    tailIdx > scored.length - 4
+  ) {
+    tailIdx--
+  }
+  if (tailIdx > 0 && tailIdx !== 0) {
+    selected.set(tailIdx, scored[tailIdx])
+  }
 
   // Rank interior sections by hits * density for the fill.
   // hits alone rewards long rambling sections; density alone penalizes them
   // for being long enough to be informative. Product balances.
+  //
+  // Apply a minimum word floor: tiny sections (TOC entries, committee
+  // headers, one-line references) produce pathologically high density.
+  // A 10-word section with 2 hits would score 0.4; a 500-word section
+  // with 10 hits only scores 0.4 too — but the substantive one is far
+  // more useful to the LLM. Under the floor we drop the candidate entirely.
   const interior = scored
     .slice(1, -1)
-    .filter((s) => s.hits > 0)
+    .filter((s) => s.hits > 0 && s.wordCount >= MIN_INTERIOR_SECTION_WORDS)
     .sort((a, b) => (b.hits * b.density) - (a.hits * a.density))
 
   let totalChars = [...selected.values()].reduce((acc, s) => acc + s.length, 0)
   for (const s of interior) {
+    if (selected.has(s.idx)) continue // tail may have been walked backwards into interior
     if (totalChars + s.length > maxChars) continue
     selected.set(s.idx, s)
     totalChars += s.length
