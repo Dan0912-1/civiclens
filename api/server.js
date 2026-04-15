@@ -1520,7 +1520,7 @@ ABSOLUTE RULES
 5. STATE CONTEXT: if their state already has a relevant law (e.g. CA min wage $16.50/hr), say so and explain how the bill interacts.
 6. REAL NUMBERS only from the bill text or established law you are certain about. NEVER invent wages, salaries, prices, statistics, deadlines, or dollar amounts. No estimating.
 7. If no meaningful impact, say so directly with relevance ≤ 2.
-8. Use only facts from the provided bill text / CRS summary. If no text, say "based on available information" and stay conservative. The bill content below may be STITCHED from multiple fragments — a CONGRESSIONAL RESEARCH SERVICE SUMMARY, a STRUCTURED SUMMARY OF BILL (title/findings/divisions/appropriations/effective date), and either FULL BILL TEXT, BILL TEXT EXCERPTS (with literal "[...N words omitted...]" gap markers for head/middle/tail sampling), or BILL TEXT — SECTIONS RELEVANT TO YOUR INTERESTS (topic-filtered). Treat each labeled block as fragments of the same bill, not as the complete text. ABSENCE of a provision from these fragments does NOT mean it isn't in the bill — do not say "the bill does not address X" unless the CRS summary or STRUCTURED SUMMARY explicitly contradicts X. If ONLY the STRUCTURED SUMMARY is present (no CRS, no bill text), say "based on the bill's structural outline" and keep claims conservative — do not invent specific penalties, dollar amounts, or enforcement mechanisms that aren't in the fragments you were given.
+8. Use only facts from the provided bill text / CRS summary. The BILL block below may be stitched from several labeled fragments (CONGRESSIONAL RESEARCH SERVICE SUMMARY, STRUCTURED SUMMARY OF BILL, and one of FULL BILL TEXT / BILL TEXT EXCERPTS with literal "[...N words omitted...]" gap markers / BILL TEXT — SECTIONS RELEVANT TO YOUR INTERESTS). Each block is a fragment of the same bill, not the full text. A CONTEXT NOTE immediately above the BILL block tells you how confidently to state the bill's purpose: when a CRS summary is present it is authoritative for overall scope and you should summarize confidently from it; when only the structural outline is available, say so and avoid inventing specific penalties, dollar amounts, or enforcement mechanisms. Do not say "the bill does not address X" based on excerpt absence alone. If no bill content is provided at all, say "based on available information" and stay conservative.
 9. Include 2-3 actionable civic_actions with real URLs (congress.gov, senate.gov, house.gov) or specific steps.
 10. NEVER tell the student to take personal action ("delete the app", "change your password") in headline/summary/if_it_passes/if_it_fails. Save action steps for civic_actions.
 11. For short bills (<500 words of source text), summary MUST cover every operative provision: dates, who runs it, deadlines, scope, temporary vs permanent. No cherry-picking.
@@ -1696,7 +1696,7 @@ function buildTrustedBill(reqBill, meta) {
   }
 }
 
-function buildUserPrompt(profile, bill, billContent) {
+function buildUserPrompt(profile, bill, billContent, contextNote = '') {
   const norm = normalizeProfile(profile)
   const employmentLabel =
     norm.employment === 'full_time' ? 'Yes — full-time job'
@@ -1744,7 +1744,7 @@ BILL:
 - Chamber: ${bill.originChamber || 'Congress'}
 - Latest Action: ${bill.latestAction}
 - Date of Last Action: ${bill.latestActionDate}
-${cappedContent ? `\n${cappedContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
+${contextNote ? `\n${contextNote}` : ''}${cappedContent ? `\n\n${cappedContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific student. Follow the JSON schema exactly.`
 }
 
@@ -1817,7 +1817,7 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       } else {
         billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
       }
-      const { billContent, sources } = buildBillContent(billData, {
+      const { billContent, sources, blocks } = buildBillContent(billData, {
         userInterests: Array.isArray(profile?.interests) ? profile.interests : [],
       })
       // Build a TRUSTED bill object using canonical metadata from LegiScan when
@@ -1827,7 +1827,8 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       console.log(`[personalize] ${identity}: sources=[${sources.join(', ')}], contentLen=${billContent.length}`)
 
       const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
-      const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
+      const contextNote = buildContextNote(blocks)
+      const userPrompt = buildUserPrompt(profile, trustedBill, billContent, contextNote)
 
       const MAX_RETRIES = 4
       const billLabel = identity
@@ -2007,12 +2008,13 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   // 3. Fire LLM calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
-    const { billContent, sources } = buildBillContent(billData, {
+    const { billContent, sources, blocks } = buildBillContent(billData, {
       userInterests: Array.isArray(profile?.interests) ? profile.interests : [],
     })
     const trustedBill = buildTrustedBill(bill, billData?.meta)
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
-    const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
+    const contextNote = buildContextNote(blocks)
+    const userPrompt = buildUserPrompt(profile, trustedBill, billContent, contextNote)
 
     const MAX_RETRIES = 4
     let lastError = null
@@ -3513,11 +3515,13 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
 function buildBillContent(billData, { userInterests = [] } = {}) {
   let billContent = ''
   let sources = []
+  const blocks = { crs: false, structured: false, text: false, textStrategy: null }
 
   // Tier 1: CRS Summary (authoritative, federal only)
   if (billData.crsSummary) {
     billContent += `CONGRESSIONAL RESEARCH SERVICE SUMMARY:\n${billData.crsSummary}\n\n`
     sources.push('Congressional Research Service summary')
+    blocks.crs = true
   }
 
   // Tier 2: Pre-computed structured excerpt (short title, findings, divisions,
@@ -3531,6 +3535,7 @@ function buildBillContent(billData, { userInterests = [] } = {}) {
   if (excerpt) {
     billContent += `STRUCTURED SUMMARY OF BILL:\n${excerpt}\n\n`
     sources.push('structured excerpt')
+    blocks.structured = true
   }
 
   // Tier 3: Bill text. Strategy depends on length + whether we have interests.
@@ -3560,13 +3565,38 @@ function buildBillContent(billData, { userInterests = [] } = {}) {
       : strategy === 'topic_sections' ? `topic-filtered sections via ${sourceLabel}`
       : `sampled bill text via ${sourceLabel}`
     sources.push(srcTail)
+    blocks.text = true
+    blocks.textStrategy = strategy
   }
 
   if (!billContent) {
     sources.push('bill title and metadata only')
   }
 
-  return { billContent, sources }
+  return { billContent, sources, blocks }
+}
+
+// Build a one-line CONTEXT NOTE to frame the BILL block for the LLM. This
+// complements rule #8 of the system prompt: rule #8 explains the stitch
+// semantics once, and this note tells the model HOW to weight what it's
+// about to read this specific time. Conditional on which blocks are
+// actually present — prevents the model from over-hedging when the CRS
+// summary is authoritative and avoids inviting hallucination when only
+// the outline is present.
+function buildContextNote(blocks) {
+  if (blocks.crs) {
+    return 'CONTEXT NOTE: The CRS summary below is authoritative for the bill\'s overall purpose and scope. Summarize the bill confidently from it. Use the STRUCTURED SUMMARY and bill-text excerpts for localized specifics that personalize the impact for this student.'
+  }
+  if (blocks.structured && !blocks.text) {
+    return 'CONTEXT NOTE: You are reading only the bill\'s structural outline (title, findings, division headers, appropriation lines, effective date). No full bill text is available. Describe the bill based on this outline; do not invent specific penalties, dollar amounts, or enforcement mechanisms not present in the text.'
+  }
+  if (blocks.structured && blocks.text) {
+    return 'CONTEXT NOTE: You have a STRUCTURED SUMMARY of the bill followed by bill-text excerpts. Describe overall scope from the structured summary; pull specific numbers, dates, and mechanisms from the excerpts.'
+  }
+  if (blocks.text) {
+    return `CONTEXT NOTE: You are reading ${blocks.textStrategy === 'full' ? 'the full bill text' : blocks.textStrategy === 'topic_sections' ? 'sections of the bill selected for relevance to this student\'s interests' : 'head/middle/tail excerpts of a long bill — gaps are marked with [...N words omitted...]'}. Base your analysis on this text.`
+  }
+  return 'CONTEXT NOTE: No bill text available. Base your analysis on the bill title and the latest action, and flag uncertainty explicitly.'
 }
 
 // Fire-and-forget: pre-fetch bill texts for all returned bills.
@@ -3609,9 +3639,12 @@ async function speculativePersonalize(bills, profile) {
     try {
       const type = bill.type?.toLowerCase().replace(/\./g, '') || ''
       const content = await fetchBillContent(bill.congress, type, bill.number, bill.legiscan_bill_id)
-      const billText = content?.text || ''
       const trustedBill = buildTrustedBill(bill, null)
-      const userPrompt = buildUserPrompt(norm, trustedBill, billText)
+      const { billContent, blocks } = buildBillContent(content || {}, {
+        userInterests: Array.isArray(norm?.interests) ? norm.interests : [],
+      })
+      const contextNote = buildContextNote(blocks)
+      const userPrompt = buildUserPrompt(norm, trustedBill, billContent, contextNote)
       const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
       const parsed = extractJson(llmResult.text)
       if (parsed) {

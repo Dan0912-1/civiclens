@@ -263,30 +263,42 @@ const INTEREST_SECTION_KEYWORD_REGEX = Object.fromEntries(
   ])
 )
 
-// Boilerplate we don't want to spend context-window budget pinning. The
-// last section of many bills is a severability clause — generic legal
-// boilerplate that adds nothing to a student's understanding of impact.
-// Also catches trivially short "short title" repeats and construction
-// clauses. If the tail matches, we skip it and consider the prior section.
-const BOILERPLATE_TAIL_PATTERNS = [
-  /\bseverability\b/i,
-  /\bheld\s+invalid\b/i,
-  /\bheld\s+to\s+be\s+unconstitutional\b/i,
-  /\brule\s+of\s+construction\b/i,
-  /\bconstruction\s+of\s+this\s+act\b/i,
-]
-function looksLikeBoilerplateTail(sectionText) {
-  if (!sectionText) return false
-  const snippet = sectionText.slice(0, 800)
-  return BOILERPLATE_TAIL_PATTERNS.some((re) => re.test(snippet))
+// Short-section length penalty. A hard cutoff (e.g. "reject anything under
+// 50 words") blinds us to pathological high-value edges: a naked
+// appropriation like "Sec. 4. $5,000,000 is appropriated to the Department
+// of Energy for solar grid grants." is 13 words of pure policy impact.
+//
+// Instead, multiply the interior score by a soft length factor that
+// squares the ratio. A 20-word section with multiple hits can still
+// survive if its density is exceptional, but a random 10-word
+// administrative header is quadratically suppressed.
+//   words = 10  →  factor = (10/50)^2 = 0.04
+//   words = 25  →  factor = (25/50)^2 = 0.25
+//   words = 50+ →  factor = 1.00 (no penalty)
+const LENGTH_PENALTY_TARGET = 50
+function lengthPenalty(wordCount) {
+  const r = Math.min(1, wordCount / LENGTH_PENALTY_TARGET)
+  return r * r
 }
 
-// Sections shorter than this many words cannot be selected as "interior"
-// fill. Under this floor a handful of keyword hits produces pathologically
-// high density scores (e.g. a 10-word committee header with 2 hits beats
-// a 500-word substantive section with 10 hits). Anchors (section 1 and
-// the chosen tail) are exempt — we always want their structural context.
-const MIN_INTERIOR_SECTION_WORDS = 50
+// Effective-date detector for the tail slot. Most bills bury the effective
+// date in one of the final few sections; we'd rather pin that one than
+// either the severability clause (pure boilerplate) OR a random section
+// near the end. Forward-scan the last 5 sections specifically for this
+// pattern. If none match, return no tail — the LLM can write a good
+// summary without one, but it should NOT miss the effective date just
+// because severability sits in front of it.
+const EFFECTIVE_DATE_PATTERNS = [
+  /\bshall\s+take\s+effect\b/i,
+  /\beffective\s+date\b/i,
+  /\bapplicability\b/i,
+  /\bapplies\s+to\b/i,
+]
+function looksLikeEffectiveDate(sectionText) {
+  if (!sectionText) return false
+  const snippet = sectionText.slice(0, 800)
+  return EFFECTIVE_DATE_PATTERNS.some((re) => re.test(snippet))
+}
 
 /**
  * Split a long bill into sections and return the ones most relevant to
@@ -332,37 +344,46 @@ export function getRelevantSections(text, interests = [], maxChars = 5000) {
   })
 
   // Always include first section (preamble / short title). For the tail,
-  // prefer a non-boilerplate section: skip severability / construction
-  // clauses and walk backwards to the first substantive section.
+  // forward-scan the last 5 sections specifically for an effective-date /
+  // applicability clause; if one matches we pin it, if not we drop the
+  // tail slot entirely rather than pinning severability boilerplate or a
+  // random nearby section. The old walk-backward-through-boilerplate
+  // approach was unreliable when severability + rule-of-construction +
+  // effective-date clustered at the end of a bill.
   const selected = new Map()
   selected.set(0, scored[0])
 
-  let tailIdx = scored.length - 1
-  while (
-    tailIdx > 0 &&
-    looksLikeBoilerplateTail(scored[tailIdx].sec) &&
-    // Don't walk all the way into the interior — cap at last 3 sections.
-    tailIdx > scored.length - 4
-  ) {
-    tailIdx--
+  const lastN = Math.min(5, scored.length)
+  let tailIdx = -1
+  for (let i = scored.length - 1; i >= scored.length - lastN; i--) {
+    if (looksLikeEffectiveDate(scored[i].sec)) {
+      tailIdx = i
+      break
+    }
   }
-  if (tailIdx > 0 && tailIdx !== 0) {
+  if (tailIdx > 0) {
     selected.set(tailIdx, scored[tailIdx])
   }
 
-  // Rank interior sections by hits * density for the fill.
-  // hits alone rewards long rambling sections; density alone penalizes them
-  // for being long enough to be informative. Product balances.
+  // Rank interior sections by (hits × density) × lengthPenalty(wordCount).
   //
-  // Apply a minimum word floor: tiny sections (TOC entries, committee
-  // headers, one-line references) produce pathologically high density.
-  // A 10-word section with 2 hits would score 0.4; a 500-word section
-  // with 10 hits only scores 0.4 too — but the substantive one is far
-  // more useful to the LLM. Under the floor we drop the candidate entirely.
+  // hits × density is mathematically equivalent to hits² / wordCount — a
+  // volume × density product so that a long rambling section can't win
+  // on raw count AND a microscopic section can't win on density alone.
+  //
+  // The length penalty (soft, quadratic) suppresses sections under 50
+  // words WITHOUT excluding them outright. A naked appropriation line
+  // like "Sec. 4. $5M is appropriated for solar grants." is 10 words of
+  // pure policy impact — the old hard cutoff lost those; the soft
+  // penalty lets them survive if the density is strong enough.
   const interior = scored
     .slice(1, -1)
-    .filter((s) => s.hits > 0 && s.wordCount >= MIN_INTERIOR_SECTION_WORDS)
-    .sort((a, b) => (b.hits * b.density) - (a.hits * a.density))
+    .filter((s) => s.hits > 0)
+    .sort((a, b) => {
+      const aScore = (a.hits * a.density) * lengthPenalty(a.wordCount)
+      const bScore = (b.hits * b.density) * lengthPenalty(b.wordCount)
+      return bScore - aScore
+    })
 
   let totalChars = [...selected.values()].reduce((acc, s) => acc + s.length, 0)
   for (const s of interior) {
