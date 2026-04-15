@@ -1707,33 +1707,41 @@ function stripProfileForFeed(profile) {
 }
 
 // Coarse status bucket — cache keys include this so when a bill advances
-// (e.g., "Introduced" → "Passed House" → "Signed into Law") the previously
-// cached present-tense feed summary ("would require...") ages out naturally
-// and a fresh one ("has passed the House and would require...") gets generated
-// on the next request. Transitions are rare enough that we accept the extra
-// LLM call each time a bill moves buckets. 4 buckets keeps churn low while
-// still catching the tense changes that actually matter for feed copy.
-//   pending  — introduced, in committee, on floor calendar
-//   passed   — passed at least one chamber, not yet law
-//   enacted  — signed into law / enrolled
-//   dead     — vetoed, failed, withdrawn, tabled
+// (e.g., "Introduced" → "Passed House" → "Enrolled" → "Signed") the previously
+// cached present-tense feed summary ages out naturally and a fresh one gets
+// generated on the next request. 5 buckets — the split between passed_one and
+// passed_both matters for tense ("would still need Senate debate" vs "awaiting
+// the Governor's signature"), and lumping them forces the LLM into vague hedges.
+//   pending     — introduced, in committee, on floor calendar
+//   passed_one  — passed one chamber, other chamber still debating
+//   passed_both — passed both chambers, awaiting executive signature
+//   enacted     — signed into law / became law without signature
+//   dead        — vetoed, failed, withdrawn, tabled
+// Values align with billSync.normalizeStatus() so cache keys match the DB
+// status_stage column 1:1 when the bill record carries an explicit stage.
 function billStatusBucket(bill) {
   if (!bill) return 'pending'
   const s = typeof bill.statusStage === 'string' ? bill.statusStage.toLowerCase() : ''
   if (s === 'enacted' || s === 'signed') return 'enacted'
   if (s === 'vetoed' || s === 'dead' || s === 'failed') return 'dead'
-  if (s === 'passed') return 'passed'
-  if (s) return 'pending' // any other explicit stage ('introduced', 'committee', 'floor', ...)
-  // Fallback: parse action text when statusStage wasn't set
+  if (s === 'passed_both' || s === 'enrolled') return 'passed_both'
+  if (s === 'passed_one' || s === 'passed') return 'passed_one'
+  if (s) return 'pending' // introduced / in_committee / floor / etc.
+  // Fallback: parse action text when statusStage wasn't set. Precedence matters
+  // because "Became Public Law" contains "law" but must win over generic passed.
   const rawAction = typeof bill.latestAction === 'string'
     ? bill.latestAction
     : (bill.latestAction && bill.latestAction.text) || ''
   const action = rawAction.toLowerCase()
-  // "Became Public Law" is the canonical federal enacted phrasing; also catch
-  // generic "became law", "signed", "enacted", "enrolled".
-  if (/signed|became\s+(public\s+)?law|became\s+[a-z]+\s+law|public\s+law\s+no|enacted|enrolled/.test(action)) return 'enacted'
+  // Enacted must be the executive signing it into law (or explicit "became law"
+  // / "public law" phrasing) — NOT the Speaker signing an enrolled copy, which
+  // is a passed_both event. Match only signatures by president/governor.
+  if (/signed\s+by\s+(the\s+)?(president|governor)|became\s+(public\s+)?law|became\s+[a-z]+\s+law|public\s+law\s+no|\benacted\b/.test(action)) return 'enacted'
   if (/vetoed|failed|withdrawn|tabled/.test(action)) return 'dead'
-  if (/\bpassed\b/.test(action)) return 'passed'
+  // "Presented to the President/Governor", "enrolled", or explicit "passed both chambers"
+  // signals both-chambers complete but executive hasn't acted yet.
+  if (/enrolled|presented\s+to\s+(the\s+)?(president|governor)|to\s+(president|governor)|passed\s+both/.test(action)) return 'passed_both'
+  if (/\bpassed\b/.test(action)) return 'passed_one'
   return 'pending'
 }
 
@@ -1987,16 +1995,35 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     } catch {}
   }
 
+  // Bucket-level correctness counters — catch the bug where two students
+  // accidentally share a feed bucket they shouldn't (e.g. hash collision,
+  // array-ordering inconsistency, state code mismatch). Emitted as a single
+  // structured log line below so ops can aggregate by bucket.
+  let l1Hits = 0, l2Hits = 0, misses = 0, mismatches = 0
+  const studentState = normalizeProfile(profile).state || ''
+
   // Also check in-memory cache
   for (let i = 0; i < bills.length; i++) {
     const bill = bills[i]
     const cacheKey = cacheKeys[i]
     const billId = makeBillId(bill)
 
-    const cached = cachedResults.get(cacheKey) || getCache(cacheKey)
+    const l2 = cachedResults.get(cacheKey)
+    const l1 = l2 ? null : getCache(cacheKey)
+    const cached = l2 || l1
     if (cached) {
+      if (l2) l2Hits++
+      else l1Hits++
+      // Correctness tripwire: if this is a state bill and the requesting
+      // student's state doesn't match the bill's jurisdiction, something is
+      // wrong with the hash. Federal bills are cross-state by design so we
+      // skip the check there.
+      if (bill.isStateBill && bill.state && studentState && bill.state !== studentState) {
+        mismatches++
+      }
       results[billId] = cached
     } else {
+      misses++
       billsToPersonalize.push({
         bill,
         cacheKey,
@@ -2004,6 +2031,9 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         billType: bill.type?.toLowerCase().replace(/\./g, '') || '',
       })
     }
+  }
+  if (mismatches > 0) {
+    console.warn(`[metrics] feed cache-key/payload mismatch: ${mismatches}/${bills.length} bills returned with state mismatch for student state=${studentState}`)
   }
 
   if (!billsToPersonalize.length) {
@@ -2103,12 +2133,14 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         recordAnthropicSuccess()
 
         const parsed = extractJson(llmResult.text)
-        // Use feedProfile here too — relevance adjustment reads employment/grade/
-        // interests, and we want the cached output to be identical for every
-        // student in the same feed bucket. feedProfile zeros employment so
-        // job-conditioned boosts don't fire at this level; detail view still
-        // applies the full-profile adjustment.
-        adjustRelevance(parsed, feedProfile)
+        // Feed path intentionally does NOT run adjustRelevance. The stripped
+        // profile has no employment / family / career signal to adjust against,
+        // so the function would just emit a bucket-average "lie" relevance
+        // score. Instead we let the LLM's raw score pass through unmodified
+        // and feed ranking relies on feed_priority_score (from the nightly
+        // ranker) + this untouched LLM score. adjustRelevance fires only in
+        // /api/personalize when the student taps into the detail view and we
+        // have the rich profile to actually personalize against.
         parsed.sources = sources
         const result = { analysis: parsed }
 
@@ -2176,7 +2208,25 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
 
   if (clientGone) return
-  console.log(`[personalize-batch] ${Object.keys(results).length} ok, ${Object.keys(errors).length} errors`)
+  // Structured metrics line — ops can pattern-match `[metrics] feed-batch` to
+  // build dashboards for: cache hit rate (l1+l2 / total), bucket uniqueness
+  // (feedHash count over time via this line), empty-feed detection (ok=0),
+  // and LLM burn rate (misses per minute). Bucket distribution appears as
+  // space-delimited pairs pending=N passed_one=N etc.
+  const bucketCounts = bills.reduce((acc, b) => {
+    const k = billStatusBucket(b); acc[k] = (acc[k] || 0) + 1; return acc
+  }, {})
+  const bucketStr = Object.entries(bucketCounts).map(([k, v]) => `${k}=${v}`).join(' ')
+  const ok = Object.keys(results).length
+  const err = Object.keys(errors).length
+  console.log(
+    `[metrics] feed-batch feedHash=${feedHash} state=${studentState} grade=${normalizeProfile(profile).grade || ''} `
+    + `total=${bills.length} ok=${ok} err=${err} l1=${l1Hits} l2=${l2Hits} miss=${misses} `
+    + `hitRate=${((l1Hits + l2Hits) / bills.length).toFixed(2)} mismatches=${mismatches} buckets=[${bucketStr}]`
+  )
+  if (ok < 3) {
+    console.warn(`[metrics] empty-feed feedHash=${feedHash} state=${studentState} ok=${ok} — bucket may have thin inventory`)
+  }
   res.json({ results, errors })
 })
 
@@ -3731,7 +3781,7 @@ async function speculativePersonalize(bills, profile) {
       const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
       const parsed = extractJson(llmResult.text)
       if (parsed) {
-        adjustRelevance(parsed, feedProfile)
+        // No adjustRelevance here — see /api/personalize-batch for rationale.
         const result = { analysis: parsed }
         setCache(cacheKey, result)
         setSupabaseCache(cacheKey, identity, String(feedProfile.grade), sortedInterests, result)
