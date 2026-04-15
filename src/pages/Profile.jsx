@@ -216,8 +216,8 @@ export default function Profile() {
           ))}
         </div>
 
-        {/* Sign-in prompt for anonymous users */}
-        {!user && step === 1 && (
+        {/* Sign-in prompt for anonymous users — hidden if under 13 (COPPA) */}
+        {!user && step === 1 && !isUnder13 && (
           <div className={styles.signInPrompt}>
             <p>Create an account to save your profile and bookmarks across sessions.</p>
             <button className={styles.signInBtn} onClick={() => setShowAuth(true)}>

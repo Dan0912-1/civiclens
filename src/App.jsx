@@ -3,6 +3,7 @@ import { Routes, Route, useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
+import { flush as flushOfflineQueue } from './lib/offlineQueue'
 import { getApiBase } from './lib/api'
 import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
@@ -249,6 +250,28 @@ export default function App() {
       .catch(() => {})
     return () => cleanup?.()
   }, [navigate])
+
+  // App foreground/background state — flush offline queue on resume and
+  // dispatch a custom event so pages with in-flight API calls can recover
+  // from zombie loading states (e.g. LLM personalization that finished while
+  // the app was backgrounded and the frontend never got the response).
+  useEffect(() => {
+    let cleanup
+    import('@capacitor/app')
+      .then(({ App }) => {
+        const listener = App.addListener('appStateChange', ({ isActive }) => {
+          if (isActive) {
+            // Flush any requests queued while offline/backgrounded
+            flushOfflineQueue()
+            // Notify pages so they can re-check pending operations
+            window.dispatchEvent(new CustomEvent('ck:app-resumed'))
+          }
+        })
+        cleanup = () => listener.then?.(l => l.remove()) || listener.remove?.()
+      })
+      .catch(() => {})
+    return () => cleanup?.()
+  }, [])
 
   function completeOnboarding() {
     localStorage.setItem('ck_onboarded_v2', '1')

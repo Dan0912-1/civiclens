@@ -305,6 +305,18 @@ export default function BillDetail() {
     }
   }
 
+  // Mobile resilience: if the app was backgrounded while a personalization
+  // request was in-flight, the JS execution pauses and the response may be
+  // lost. On resume, retry if we still have no analysis and no error.
+  useEffect(() => {
+    function onResume() {
+      if (!bill || analysis || personalizationError || noProfile) return
+      retryPersonalization()
+    }
+    window.addEventListener('ck:app-resumed', onResume)
+    return () => window.removeEventListener('ck:app-resumed', onResume)
+  }, [bill, analysis, personalizationError, noProfile])
+
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const displayTitle = bill?.title || detail?.title || `${type.toUpperCase()} ${number}`
   // Build a human-readable bill URL. LegiScan URLs (from passedBill/detail) are
