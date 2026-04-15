@@ -475,6 +475,11 @@ async function getSupabaseCache(key) {
 async function setSupabaseCache(key, billId, grade, interests, response) {
   if (!supabase) return
   try {
+    // 30-day TTL on every write — nightly cron DELETE WHERE expires_at < NOW()
+    // reaps orphaned rows (v8 legacy keys, stale buckets, deleted interest
+    // combos). Cheaper than state-reconciliation logic. See
+    // supabase/add_cache_ttl.sql.
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     await supabase
       .from('personalization_cache')
       .upsert({
@@ -483,6 +488,7 @@ async function setSupabaseCache(key, billId, grade, interests, response) {
         grade,
         interests,
         response,
+        expires_at: expiresAt,
       }, { onConflict: 'cache_key' })
   } catch (err) {
     console.error('Supabase cache write error:', err.message)
@@ -1605,6 +1611,41 @@ function adjustRelevance(parsed, profile) {
   parsed.relevance = Math.min(raw, 3)
 }
 
+// Fail-open fallback for when the LLM queue overflows or every retry fails
+// during a classroom onboarding / rate-limit event. Returns a structurally
+// valid analysis built from the bill's CRS summary (or title as last resort)
+// so the feed keeps rendering instead of showing error cards. personalized
+// is false so the frontend knows to hide the "Specific to you" UI and render
+// a generic-overview treatment; the frontend can retry at its leisure.
+function buildFallbackAnalysis(billData, bill, sources, reason) {
+  const crs = (billData?.crsSummary || '').trim()
+  const title = (bill?.title || '').trim()
+  // Take first 2-3 sentences of CRS as the summary, else fall back to title.
+  let summary = ''
+  if (crs) {
+    const sentences = crs.match(/[^.!?]+[.!?]+/g) || [crs]
+    summary = sentences.slice(0, 3).join(' ').trim().slice(0, 600)
+  } else if (title) {
+    summary = `This bill is titled "${title}". A personalized summary will be available shortly.`
+  } else {
+    summary = 'Personalized summary unavailable. Tap the bill for more details.'
+  }
+  return {
+    analysis: {
+      headline: title || 'Legislation update',
+      summary,
+      if_it_passes: 'Check back soon — a personalized analysis is being generated.',
+      if_it_fails: '',
+      relevance: 5,
+      topic_tag: 'Other',
+      civic_actions: [],
+      sources: sources || [],
+    },
+    personalized: false,
+    fallback_reason: reason || 'llm_unavailable',
+  }
+}
+
 // Sanitize freeform "Other context" text. Previously this also tried to strip
 // personal-name-shaped tokens with a regex, but that filter was both too
 // aggressive (it removed "California", "Catholic", "Asian") and trivially
@@ -1915,7 +1956,10 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
           const parsed = extractJson(llmResult.text)
           adjustRelevance(parsed, profile)
           parsed.sources = sources
-          const personalizeResult = { analysis: parsed }
+          // personalized: true signals the frontend to render the "Specific to
+          // you" detail UI. Fallback paths (CRS-only) set this false so the
+          // UI falls back to a generic-overview treatment.
+          const personalizeResult = { analysis: parsed, personalized: true }
           setCache(cacheKey, personalizeResult)
           setSupabaseCache(cacheKey, billLabel, profile.grade, sortedInterests, personalizeResult)
             .catch(err => console.error('[cache] bg Supabase write failed:', err.message))
@@ -2120,13 +2164,22 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
     const MAX_RETRIES = 4
     let lastError = null
+    // Fail-open helper — wraps buildFallbackAnalysis with consistent metrics
+    // logging so ops can count how often we're serving generic content.
+    const failOpen = (reason) => {
+      console.warn(`[metrics] fallback billId=${billId} reason=${reason}`)
+      const fallback = buildFallbackAnalysis(billData, trustedBill, sources, reason)
+      // Do NOT cache fallbacks — they're emergency content, not the canonical
+      // answer. A fresh request should try the LLM again.
+      return { billId, result: fallback }
+    }
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (clientGone) return { billId, error: 'client closed' }
       if (Date.now() - batchStart > BATCH_BUDGET_MS) {
-        return { billId, error: lastError || 'batch budget exceeded' }
+        return failOpen('batch_budget_exceeded')
       }
       if (!tryConsumeAnthropicQuota()) {
-        return { billId, error: 'service capacity' }
+        return failOpen('quota_exhausted')
       }
       try {
         const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
@@ -2142,7 +2195,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         // /api/personalize when the student taps into the detail view and we
         // have the rich profile to actually personalize against.
         parsed.sources = sources
-        const result = { analysis: parsed }
+        const result = { analysis: parsed, personalized: true }
 
         setCache(cacheKey, result)
         setSupabaseCache(cacheKey, billId, feedProfile.grade, sortedInterests, result)
@@ -2151,6 +2204,13 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         return { billId, result }
       } catch (err) {
         lastError = err.message
+        const isRateLimit = /429|rate.?limit|too many requests/i.test(err.message || '')
+        const isQueueTimeout = /queue timeout/i.test(err.message || '')
+        // Fast-fail to fallback on rate limits or queue overflow — no point
+        // burning retries when the whole system is overloaded.
+        if (isRateLimit || isQueueTimeout) {
+          return failOpen(isRateLimit ? 'rate_limit' : 'queue_timeout')
+        }
         if (attempt < MAX_RETRIES) {
           const delay = Math.min(8000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 400)
           console.log(`[batch] ${err.message} for ${billId}, retry ${attempt + 1}/${MAX_RETRIES} in ${delay}ms`)
@@ -2158,10 +2218,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
           continue
         }
         console.error(`[batch] Failed for ${billId} after ${MAX_RETRIES} retries:`, err.message)
-        return { billId, error: err.message }
+        return failOpen('retries_exhausted')
       }
     }
-    return { billId, error: lastError || 'Max retries exceeded' }
+    return failOpen('max_retries')
   }
 
   // Fire all bills with a rolling concurrency limit. Unlike chunked waves,
@@ -3782,7 +3842,7 @@ async function speculativePersonalize(bills, profile) {
       const parsed = extractJson(llmResult.text)
       if (parsed) {
         // No adjustRelevance here — see /api/personalize-batch for rationale.
-        const result = { analysis: parsed }
+        const result = { analysis: parsed, personalized: true }
         setCache(cacheKey, result)
         setSupabaseCache(cacheKey, identity, String(feedProfile.grade), sortedInterests, result)
         console.log(`[speculative] Pre-personalized ${identity} (${bucket}) via ${llmResult.provider}`)

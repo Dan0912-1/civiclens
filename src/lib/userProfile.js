@@ -37,7 +37,30 @@ export async function getBookmarks(userId) {
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
     if (error) return []
-    return data || []
+    const bookmarks = data || []
+    if (!bookmarks.length) return bookmarks
+
+    // Staleness detection — pull current status_stage for each bookmarked bill
+    // and stamp it onto the row so the UI can render a banner when it drifts
+    // from saved_status_stage. Cheap single query, no JOIN needed since we
+    // already have the bill_id set.
+    const billIds = bookmarks.map(b => b.bill_id).filter(Boolean)
+    if (billIds.length) {
+      const { data: currentStates } = await supabase
+        .from('bills')
+        .select('id, status_stage')
+        .in('id', billIds)
+      const stageMap = new Map((currentStates || []).map(b => [b.id, b.status_stage]))
+      for (const bm of bookmarks) {
+        bm.current_status_stage = stageMap.get(bm.bill_id) || null
+        bm.is_stale = !!(
+          bm.saved_status_stage
+          && bm.current_status_stage
+          && bm.saved_status_stage !== bm.current_status_stage
+        )
+      }
+    }
+    return bookmarks
   } catch {
     return []
   }
@@ -46,9 +69,19 @@ export async function getBookmarks(userId) {
 export async function addBookmark(userId, billId, billData) {
   if (!supabase) return false
   try {
+    // Snapshot the bill's status_stage at bookmark time so Bookmarks.jsx can
+    // detect drift and render a "status changed since you saved this" banner
+    // instead of silently overwriting the student's cached analysis. See
+    // supabase/add_bookmark_saved_status_stage.sql for rationale.
+    const savedStatusStage =
+      billData?.bill?.statusStage
+      || billData?.bill?.status_stage
+      || billData?.statusStage
+      || null
+    const row = { user_id: userId, bill_id: billId, bill_data: billData, saved_status_stage: savedStatusStage }
     const { error } = await supabase
       .from('bookmarks')
-      .upsert({ user_id: userId, bill_id: billId, bill_data: billData }, { onConflict: 'user_id,bill_id' })
+      .upsert(row, { onConflict: 'user_id,bill_id' })
     return !error
   } catch {
     // Network failure — queue for retry when back online

@@ -18,6 +18,21 @@ function isNativePlatform() {
   }
 }
 
+// Turn status_stage enum values into human-readable labels for the staleness
+// banner. Matches the 5-bucket scheme in api/server.js billStatusBucket.
+function prettyStage(stage) {
+  const map = {
+    introduced: 'Introduced',
+    in_committee: 'In Committee',
+    passed_one: 'Passed one chamber',
+    passed_both: 'Passed both chambers',
+    enacted: 'Enacted',
+    vetoed: 'Vetoed',
+    failed: 'Failed',
+  }
+  return map[stage] || stage || 'Unknown'
+}
+
 export default function Bookmarks() {
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
@@ -184,14 +199,32 @@ export default function Bookmarks() {
         ) : (
           <div className={styles.grid}>
             {bookmarks.map((bm, i) => (
-              <BillCard
-                key={bm.bill_id}
-                bill={bm.bill_data.bill}
-                analysis={bm.bill_data.analysis}
-                isBookmarked={true}
-                onToggleBookmark={() => handleRemove(bm.bill_id)}
-                style={{ animationDelay: `${i * 0.08}s` }}
-              />
+              <div key={bm.bill_id} style={{ animationDelay: `${i * 0.08}s` }}>
+                {bm.is_stale && (
+                  <div
+                    role="status"
+                    style={{
+                      background: '#fff5e6',
+                      border: '1px solid #e8a020',
+                      borderRadius: '8px 8px 0 0',
+                      padding: '10px 14px',
+                      marginBottom: '-1px',
+                      fontSize: '0.92rem',
+                      color: '#0d1b2a',
+                    }}
+                  >
+                    ⚠️ Status changed from <strong>{prettyStage(bm.saved_status_stage)}</strong> to{' '}
+                    <strong>{prettyStage(bm.current_status_stage)}</strong> since you saved this. The
+                    analysis below reflects the earlier status. Open the bill for the latest take.
+                  </div>
+                )}
+                <BillCard
+                  bill={bm.bill_data.bill}
+                  analysis={bm.bill_data.analysis}
+                  isBookmarked={true}
+                  onToggleBookmark={() => handleRemove(bm.bill_id)}
+                />
+              </div>
             ))}
           </div>
         )}
