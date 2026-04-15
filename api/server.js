@@ -1676,6 +1676,67 @@ function buildProfileHashInput(profile) {
   return `${norm.grade}-${norm.state || ''}-${norm.employment}-${sortedFamily.join(',')}-${sortedInterests.join('-')}-${sortedSubs.join(',')}-${norm.career || ''}-${norm.additionalContext || ''}`
 }
 
+// Feed-level profile hash — coarse bucket of grade + state + coreInterests only.
+// Drops employment, familySituation, career, subInterests, additionalContext so
+// thousands of unique students converge on a small shared cache. The feed card
+// only has room for a 2-3 sentence hook anyway, so the LLM doesn't need the
+// granular free-form context. Paired with stripProfileForFeed so prompt input
+// matches the hash (otherwise two students in the same bucket could race to
+// populate the cache and either one's richer profile would "win" inconsistently).
+function buildFeedProfileHashInput(profile) {
+  const norm = normalizeProfile(profile)
+  const sortedInterests = (norm.interests || []).slice().sort()
+  return `feed-${norm.grade}-${norm.state || ''}-${sortedInterests.join('-')}`
+}
+
+// Matches the fields included in the feed-level hash. Strips everything the
+// hash drops so the LLM produces the same output for any student that lands
+// in the same bucket. Detail-view (/api/personalize) continues to use the
+// full normalized profile where additionalContext / career / subInterests
+// drive richer personalization.
+function stripProfileForFeed(profile) {
+  const norm = normalizeProfile(profile)
+  return {
+    ...norm,
+    familySituation: [],
+    employment: 'none',
+    subInterests: [],
+    career: '',
+    additionalContext: '',
+  }
+}
+
+// Coarse status bucket — cache keys include this so when a bill advances
+// (e.g., "Introduced" → "Passed House" → "Signed into Law") the previously
+// cached present-tense feed summary ("would require...") ages out naturally
+// and a fresh one ("has passed the House and would require...") gets generated
+// on the next request. Transitions are rare enough that we accept the extra
+// LLM call each time a bill moves buckets. 4 buckets keeps churn low while
+// still catching the tense changes that actually matter for feed copy.
+//   pending  — introduced, in committee, on floor calendar
+//   passed   — passed at least one chamber, not yet law
+//   enacted  — signed into law / enrolled
+//   dead     — vetoed, failed, withdrawn, tabled
+function billStatusBucket(bill) {
+  if (!bill) return 'pending'
+  const s = typeof bill.statusStage === 'string' ? bill.statusStage.toLowerCase() : ''
+  if (s === 'enacted' || s === 'signed') return 'enacted'
+  if (s === 'vetoed' || s === 'dead' || s === 'failed') return 'dead'
+  if (s === 'passed') return 'passed'
+  if (s) return 'pending' // any other explicit stage ('introduced', 'committee', 'floor', ...)
+  // Fallback: parse action text when statusStage wasn't set
+  const rawAction = typeof bill.latestAction === 'string'
+    ? bill.latestAction
+    : (bill.latestAction && bill.latestAction.text) || ''
+  const action = rawAction.toLowerCase()
+  // "Became Public Law" is the canonical federal enacted phrasing; also catch
+  // generic "became law", "signed", "enacted", "enrolled".
+  if (/signed|became\s+(public\s+)?law|became\s+[a-z]+\s+law|public\s+law\s+no|enacted|enrolled/.test(action)) return 'enacted'
+  if (/vetoed|failed|withdrawn|tabled/.test(action)) return 'dead'
+  if (/\bpassed\b/.test(action)) return 'passed'
+  return 'pending'
+}
+
 // Build a trusted bill object from req.body bill + canonical LegiScan meta.
 // Attacker-controlled fields (title, latestAction, latestActionDate) come
 // from `meta` when available, falling back to req.body only if LegiScan
@@ -1767,11 +1828,13 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const profileHash = crypto.createHash('md5').update(
     buildProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
-  // v8 cache key — keyed on canonical bill identity (legiscan_bill_id when
+  // v9 cache key — keyed on canonical bill identity (legiscan_bill_id when
   // available) so an attacker can't poison the cache by submitting fake
-  // metadata under a real bill's type/number/congress.
+  // metadata under a real bill's type/number/congress. Includes statusBucket
+  // so stale present-tense summaries age out when a bill advances stages.
   const identity = billIdentityKey(bill)
-  const cacheKey = `v8-personalize-${identity}-${profileHash}`
+  const bucket = billStatusBucket(bill)
+  const cacheKey = `v9-detail-${identity}-${bucket}-${profileHash}`
 
   const cached = (await getSupabaseCache(cacheKey)) || getCache(cacheKey)
   if (cached) return res.json(cached)
@@ -1893,17 +1956,24 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
 
   const sortedInterests = (normalizeProfile(profile).interests || []).slice().sort()
-  const profileHash = crypto.createHash('md5').update(
-    buildProfileHashInput(profile)
+  // Feed endpoint uses the LEAN hash (grade + state + coreInterests only) so
+  // thousands of students with the same core profile share one cache entry.
+  // The prompt input below is also stripped to match — otherwise the first
+  // student to miss would "win" the bucket with their richer context.
+  const feedHash = crypto.createHash('md5').update(
+    buildFeedProfileHashInput(profile)
   ).digest('hex').slice(0, 12)
+  const feedProfile = stripProfileForFeed(profile)
   const results = {}
   const errors = {}
   const billsToPersonalize = [] // { bill, cacheKey, billType }
 
-  // v8 cache key — keyed on canonical bill identity (legiscan_bill_id when
+  // v9 cache key — keyed on canonical bill identity (legiscan_bill_id when
   // available) so attacker-supplied metadata can't poison cache entries.
+  // Includes statusBucket so stale present-tense summaries age out when a
+  // bill advances stages (Introduced → Passed House → Signed into Law).
   const cacheKeys = bills.map(b =>
-    `v8-personalize-${billIdentityKey(b)}-${profileHash}`
+    `v9-feed-${billIdentityKey(b)}-${billStatusBucket(b)}-${feedHash}`
   )
 
   let cachedResults = new Map()
@@ -2009,12 +2079,14 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   // 3. Fire LLM calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
     const { billContent, sources, blocks } = buildBillContent(billData, {
-      userInterests: Array.isArray(profile?.interests) ? profile.interests : [],
+      userInterests: Array.isArray(feedProfile?.interests) ? feedProfile.interests : [],
     })
     const trustedBill = buildTrustedBill(bill, billData?.meta)
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
     const contextNote = buildContextNote(blocks)
-    const userPrompt = buildUserPrompt(profile, trustedBill, billContent, contextNote)
+    // Use the stripped feed profile so output is consistent for every student
+    // sharing this cache bucket — matches what buildFeedProfileHashInput keys on.
+    const userPrompt = buildUserPrompt(feedProfile, trustedBill, billContent, contextNote)
 
     const MAX_RETRIES = 4
     let lastError = null
@@ -2031,12 +2103,17 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         recordAnthropicSuccess()
 
         const parsed = extractJson(llmResult.text)
-        adjustRelevance(parsed, profile)
+        // Use feedProfile here too — relevance adjustment reads employment/grade/
+        // interests, and we want the cached output to be identical for every
+        // student in the same feed bucket. feedProfile zeros employment so
+        // job-conditioned boosts don't fire at this level; detail view still
+        // applies the full-profile adjustment.
+        adjustRelevance(parsed, feedProfile)
         parsed.sources = sources
         const result = { analysis: parsed }
 
         setCache(cacheKey, result)
-        setSupabaseCache(cacheKey, billId, profile.grade, sortedInterests, result)
+        setSupabaseCache(cacheKey, billId, feedProfile.grade, sortedInterests, result)
           .catch(err => console.error('[cache] bg batch Supabase write failed:', err.message))
 
         return { billId, result }
@@ -3625,12 +3702,18 @@ async function prefetchBillTexts(bills) {
 // After serving the feed, fire background Claude calls for top N bills so
 // personalization is cached before the user taps them. Respects hourly cap.
 async function speculativePersonalize(bills, profile) {
-  const norm = normalizeProfile(profile)
+  // Pre-warm the FEED cache (not detail cache) — this runs after feed serve
+  // to cover bills the user is likely to see next pagination/refresh. Detail
+  // view regenerates on-tap with the rich profile, so no value in pre-warming
+  // that per-student key speculatively.
+  const feedProfile = stripProfileForFeed(profile)
+  const feedHashInput = buildFeedProfileHashInput(profile)
+  const feedHash = require('crypto').createHash('md5').update(feedHashInput).digest('hex').slice(0, 12)
+  const sortedInterests = (feedProfile.interests || []).slice().sort()
   for (const bill of bills) {
     const identity = billIdentityKey(bill)
-    const hashInput = buildProfileHashInput(norm)
-    const hash = require('crypto').createHash('md5').update(hashInput).digest('hex').slice(0, 12)
-    const cacheKey = `v8-personalize-${identity}-${hash}`
+    const bucket = billStatusBucket(bill)
+    const cacheKey = `v9-feed-${identity}-${bucket}-${feedHash}`
     // Skip if already cached
     const cached = getCache(cacheKey) || await getSupabaseCache(cacheKey)
     if (cached) continue
@@ -3641,18 +3724,18 @@ async function speculativePersonalize(bills, profile) {
       const content = await fetchBillContent(bill.congress, type, bill.number, bill.legiscan_bill_id)
       const trustedBill = buildTrustedBill(bill, null)
       const { billContent, blocks } = buildBillContent(content || {}, {
-        userInterests: Array.isArray(norm?.interests) ? norm.interests : [],
+        userInterests: sortedInterests,
       })
       const contextNote = buildContextNote(blocks)
-      const userPrompt = buildUserPrompt(norm, trustedBill, billContent, contextNote)
+      const userPrompt = buildUserPrompt(feedProfile, trustedBill, billContent, contextNote)
       const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
       const parsed = extractJson(llmResult.text)
       if (parsed) {
-        adjustRelevance(parsed, norm)
+        adjustRelevance(parsed, feedProfile)
         const result = { analysis: parsed }
         setCache(cacheKey, result)
-        setSupabaseCache(cacheKey, identity, String(norm.grade), (norm.interests || []).slice().sort(), result)
-        console.log(`[speculative] Pre-personalized ${identity} via ${llmResult.provider}`)
+        setSupabaseCache(cacheKey, identity, String(feedProfile.grade), sortedInterests, result)
+        console.log(`[speculative] Pre-personalized ${identity} (${bucket}) via ${llmResult.provider}`)
       }
     } catch (err) {
       console.error(`[speculative] Failed for ${bill.type}${bill.number}:`, err.message)
