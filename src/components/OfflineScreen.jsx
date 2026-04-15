@@ -22,7 +22,7 @@ export default function OfflineScreen() {
   return (
     <div className={styles.banner}>
       <span className={styles.text}>
-        &#9888; You're offline — showing cached content
+        &#9888; You're offline. Showing cached content.
       </span>
       <button
         className={styles.dismiss}

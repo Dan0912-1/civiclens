@@ -66,7 +66,7 @@ export default function CreateClassroomModal({ onClose, onCreated }) {
     <div className={styles.overlay} onClick={onClose}>
       <div ref={modalRef} className={styles.modal} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <h2>Create a Classroom</h2>
-        <p>Give your class a name. Students will join using a code — no account needed.</p>
+        <p>Give your class a name. Students will join using a code. No account needed.</p>
 
         <form onSubmit={handleSubmit}>
           <label htmlFor="classroom-name" className={styles.label || undefined} style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Classroom name</label>
@@ -75,7 +75,7 @@ export default function CreateClassroomModal({ onClose, onCreated }) {
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="e.g. AP Government — Period 3"
+            placeholder="e.g. AP Government, Period 3"
             className={styles.input}
             maxLength={100}
             autoFocus

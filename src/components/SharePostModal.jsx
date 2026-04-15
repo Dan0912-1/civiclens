@@ -152,7 +152,7 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
           <textarea
             id="perspective"
             className={styles.textarea}
-            placeholder="What do you think about this bill? One line is enough — we'll work it into the drafts."
+            placeholder="What do you think about this bill? One line is enough. We'll work it into the drafts."
             value={perspective}
             onChange={e => setPerspective(e.target.value.slice(0, 500))}
             rows={3}

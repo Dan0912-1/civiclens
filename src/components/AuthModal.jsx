@@ -188,9 +188,12 @@ export default function AuthModal({ isOpen, onClose }) {
                 setResetSent(true)
               }
             }}>
+              <label htmlFor="auth-reset-email" className={styles.visuallyHidden}>Email</label>
               <input
+                id="auth-reset-email"
                 type="email"
                 placeholder="Email"
+                aria-label="Email"
                 className={styles.input}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -231,18 +234,24 @@ export default function AuthModal({ isOpen, onClose }) {
             </div>
 
             <form className={styles.form} onSubmit={handleSubmit}>
+              <label htmlFor="auth-email" className={styles.visuallyHidden}>Email</label>
               <input
+                id="auth-email"
                 type="email"
                 placeholder="Email"
+                aria-label="Email"
                 className={styles.input}
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 autoComplete="email"
                 required
               />
+              <label htmlFor="auth-password" className={styles.visuallyHidden}>Password</label>
               <input
+                id="auth-password"
                 type="password"
                 placeholder="Password"
+                aria-label="Password"
                 className={styles.input}
                 value={password}
                 onChange={e => setPassword(e.target.value)}

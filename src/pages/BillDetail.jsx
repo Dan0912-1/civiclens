@@ -631,7 +631,7 @@ export default function BillDetail() {
                 const WEB_ORIGIN = 'https://capitolkey.vercel.app'
                 const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
                 const shareUrl = `${origin}/bill/${congress}/${type.toLowerCase()}/${number}`
-                const text = `${displayTitle} — ${analysis?.headline || ''}\n${shareUrl}`
+                const text = `${displayTitle}: ${analysis?.headline || ''}\n${shareUrl}`
                 if (navigator.share) {
                   try { await navigator.share({ title: displayTitle, text, url: shareUrl }) } catch {}
                 } else {

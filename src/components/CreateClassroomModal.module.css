@@ -18,6 +18,15 @@
   width: 100%;
 }
 
+@media (max-width: 480px) {
+  .overlay {
+    padding: var(--space-sm);
+  }
+  .modal {
+    padding: 20px;
+  }
+}
+
 .modal h2 {
   font-family: var(--font-display);
   font-size: 1.25rem;

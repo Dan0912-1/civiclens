@@ -9,7 +9,7 @@ const DEMO_BILLS = [
   {
     tag: 'Education', tagColor: '#1A3557', tagBg: 'transparent',
     chamber: 'House',
-    title: 'H.R. 2847 — Student Loan Refinancing Act',
+    title: 'H.R. 2847: Student Loan Refinancing Act',
     summary: 'Reduces federal student loan interest to 4.5% for borrowers in qualifying income brackets. Estimated fiscal impact: $12.3B over 10 years.',
     relevance: 9,
     chips: ['119th Congress', 'Fiscal Note Attached', 'Ways & Means'],
@@ -17,7 +17,7 @@ const DEMO_BILLS = [
   {
     tag: 'Healthcare', tagColor: '#1F4D3A', tagBg: 'transparent',
     chamber: 'Senate',
-    title: 'CT HB 6941 — School Mental Health Services',
+    title: 'CT HB 6941: School Mental Health Services',
     summary: 'Mandates a licensed counselor on-site in every Connecticut public school. Appropriates $48M from the General Fund for FY26.',
     relevance: 8,
     chips: ['CT Gen. Assembly', 'Public Health Cmte', 'Reported'],
@@ -25,7 +25,7 @@ const DEMO_BILLS = [
   {
     tag: 'Economy', tagColor: '#6B4A1A', tagBg: 'transparent',
     chamber: 'House',
-    title: 'H.R. 603 — Raise the Wage Act',
+    title: 'H.R. 603: Raise the Wage Act',
     summary: 'Increases federal minimum wage to $17.00/hr by 2028 in phased increments. Applies to employers with 15+ FTE.',
     relevance: 9,
     chips: ['119th Congress', 'Edu. & Workforce', 'In Committee'],
@@ -253,7 +253,7 @@ export default function Home() {
       {/* CTA */}
       <section className={styles.ctaSection}>
         <h2>Ready to see what's happening?</h2>
-        <p>No account needed — set your state and interests to get started.</p>
+        <p>No account needed. Set your state and interests to get started.</p>
         <button
           className={styles.ctaPrimary}
           onClick={() => navigate('/profile')}

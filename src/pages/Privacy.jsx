@@ -45,7 +45,7 @@ export default function Privacy() {
             third party for marketing or advertising purposes. Your profile data
             is sent to our AI providers (Groq and Anthropic) solely for generating
             personalized bill explanations. Your data is anonymized before
-            processing — no name, email, or account ID is included. No other
+            processing. No name, email, or account ID is included. No other
             third party receives your data.
           </p>
         </div>
@@ -56,13 +56,13 @@ export default function Privacy() {
             CapitolKey uses the following third-party services to operate:
           </p>
           <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.75, paddingLeft: '1.25rem', marginTop: '0.5rem' }}>
-            <li><strong>Supabase</strong> — authentication, database, and user data storage (hosted on AWS)</li>
-            <li><strong>Groq (Qwen3-32B)</strong> — primary AI provider for personalized bill explanations (anonymized profile data only)</li>
-            <li><strong>Anthropic Claude AI</strong> — backup AI provider for bill explanations</li>
-            <li><strong>LegiScan</strong> — provides federal and state legislation data</li>
-            <li><strong>Google OAuth / Apple Sign-In</strong> — optional account authentication</li>
-            <li><strong>Firebase Cloud Messaging</strong> — push notifications on mobile (if enabled)</li>
-            <li><strong>Resend</strong> — email notifications (if enabled)</li>
+            <li><strong>Supabase</strong>: authentication, database, and user data storage (hosted on AWS)</li>
+            <li><strong>Groq (Qwen3-32B)</strong>: primary AI provider for personalized bill explanations (anonymized profile data only)</li>
+            <li><strong>Anthropic Claude AI</strong>: backup AI provider for bill explanations</li>
+            <li><strong>LegiScan</strong>: provides federal and state legislation data</li>
+            <li><strong>Google OAuth / Apple Sign-In</strong>: optional account authentication</li>
+            <li><strong>Firebase Cloud Messaging</strong>: push notifications on mobile (if enabled)</li>
+            <li><strong>Resend</strong>: email notifications (if enabled)</li>
           </ul>
           <p>
             These services may process limited data as necessary to provide their
@@ -150,10 +150,10 @@ export default function Privacy() {
             one, you have the right to:
           </p>
           <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.75, paddingLeft: '1.25rem', marginTop: '0.5rem' }}>
-            <li><strong>Access</strong> — request a copy of your stored data</li>
-            <li><strong>Correction</strong> — update your profile information at any time</li>
-            <li><strong>Deletion</strong> — request complete removal of your account and data</li>
-            <li><strong>Opt out</strong> — disable email and push notifications at any time</li>
+            <li><strong>Access</strong>: request a copy of your stored data</li>
+            <li><strong>Correction</strong>: update your profile information at any time</li>
+            <li><strong>Deletion</strong>: request complete removal of your account and data</li>
+            <li><strong>Opt out</strong>: disable email and push notifications at any time</li>
           </ul>
           <p>
             To exercise any of these rights, contact us at the email below.

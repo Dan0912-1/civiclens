@@ -11,7 +11,7 @@ const SLIDES = [
   {
     eyebrow: 'Method',
     title: 'Data-Driven Analysis. Verified Sources.',
-    body: 'Every bill is filtered by jurisdiction, status, sponsor, and committee — then contextualized for your state and grade level.',
+    body: 'Every bill is filtered by jurisdiction, status, sponsor, and committee, then contextualized for your state and grade level.',
   },
   {
     eyebrow: 'Standard',

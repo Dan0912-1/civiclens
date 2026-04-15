@@ -20,11 +20,11 @@ export default function About() {
             your future student loan interest rate. Some will change the minimum
             wage you earn at your part-time job. Some will shape the environment
             you inherit. But the only tools that track this legislation were built
-            for lawyers, lobbyists, and political professionals — not for you.
+            for lawyers, lobbyists, and political professionals, not for you.
           </p>
           <p>
             CapitolKey changes that. We take real legislation, pull the bills most
-            relevant to your life, and explain them in plain English — what changes
+            relevant to your life, and explain them in plain English. What changes
             if they pass, what stays the same if they fail, and how you can make
             your voice heard.
           </p>
@@ -37,7 +37,7 @@ export default function About() {
             <p>
               CapitolKey is <strong>strictly nonpartisan</strong>. We never tell
               you whether a bill is good or bad. We never advocate a position. We
-              explain impact as fact — what would concretely change for someone
+              explain impact as fact: what would concretely change for someone
               with your profile. The civic actions we suggest (contacting your
               representative, attending a hearing, registering to vote) are
               available to everyone regardless of political view.

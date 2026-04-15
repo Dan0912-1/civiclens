@@ -10,7 +10,7 @@ const STANDARDS = [
   {
     code: 'D2.Civ.2',
     title: 'Participation and Deliberation',
-    desc: 'The civic actions feature shows students concrete ways to participate — contacting representatives, attending hearings, and registering to vote.',
+    desc: 'The civic actions feature shows students concrete ways to participate: contacting representatives, attending hearings, and registering to vote.',
   },
   {
     code: 'D2.Civ.3',
@@ -33,7 +33,7 @@ const LESSONS = [
   {
     num: '01',
     title: 'How a Bill Becomes Law',
-    desc: 'Students use the bill status tracker to find three bills at different stages — introduced, in committee, and passed. They compare the legislative journey of each and identify what must happen next for each bill to advance.',
+    desc: 'Students use the bill status tracker to find three bills at different stages: introduced, in committee, and passed. They compare the legislative journey of each and identify what must happen next for each bill to advance.',
   },
   {
     num: '02',
@@ -65,7 +65,7 @@ export default function Educators() {
           <h1>For Educators</h1>
           <p>
             Bring real legislation into your classroom. CapitolKey gives students
-            a nonpartisan, plain-language window into the laws shaping their lives —
+            a nonpartisan, plain-language window into the laws shaping their lives,
             aligned to the standards you already teach.
           </p>
         </div>
@@ -109,7 +109,7 @@ export default function Educators() {
           <h2>Getting Started</h2>
           <p>
             CapitolKey classrooms let you organize students, assign bills, and
-            monitor engagement — all from your teacher dashboard.
+            monitor engagement, all from your teacher dashboard.
           </p>
           <div className={styles.stepsGrid}>
             {STEPS.map(s => (

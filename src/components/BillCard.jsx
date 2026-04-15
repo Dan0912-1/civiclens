@@ -47,7 +47,7 @@ function RelevanceMeter({ score }) {
 const WEB_ORIGIN = 'https://capitolkey.vercel.app'
 
 function shareBill(bill, analysis) {
-  const text = `${bill.title} — ${analysis?.headline || ''}`
+  const text = `${bill.title}: ${analysis?.headline || ''}`
   // Always use the production web URL so shared links work for recipients
   const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
   const url = `${origin}/bill/${bill.congress}/${bill.type.toLowerCase()}/${bill.number}`

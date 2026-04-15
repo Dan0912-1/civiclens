@@ -418,7 +418,7 @@ export default function Results() {
           </div>
           <h1 className={styles.heading}>Your Legislation</h1>
           <p className={styles.subhead}>
-            Real bills — explained for your life.
+            Real bills, explained for your life.
           </p>
           <button className={styles.editBtn} onClick={() => navigate('/profile')}>
             ← Edit my profile
