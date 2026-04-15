@@ -591,7 +591,12 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
 // ─── Main sync orchestrator ────────────────────────────────────────────────
 
 async function runDailySync(supabase, config) {
-  const { congressApiKey, openStatesApiKey, legiscanApiKey, states } = config
+  // legiscanApiKey intentionally NOT used in bulk sync anymore. LegiScan's
+  // 30K/month quota is reserved for:
+  //   1. runtime fetch when a student clicks Personalize on a search result
+  //   2. on-demand text backfill when a teacher pins a bill via classroom assignment
+  // See api/server.js — fetchBillTextFromLegiScan and pinBillForAssignment.
+  const { congressApiKey, openStatesApiKey, states } = config
   const startTime = Date.now()
   const results = {}
 
@@ -599,7 +604,7 @@ async function runDailySync(supabase, config) {
   console.log('[sync] Daily bill sync starting at', new Date().toISOString())
   console.log('[sync] ═══════════════════════════════════════════════')
 
-  // Phase 1: Federal (Congress.gov)
+  // Phase 1: Federal metadata + text (Congress.gov — unlimited)
   if (congressApiKey) {
     try {
       results.congress = await syncCongressGov(supabase, congressApiKey)
@@ -609,7 +614,7 @@ async function runDailySync(supabase, config) {
     }
   }
 
-  // Phase 2: State bills (Open States)
+  // Phase 2: State metadata (Open States)
   if (openStatesApiKey) {
     try {
       results.openstates = await syncOpenStates(supabase, openStatesApiKey, { states })
@@ -617,20 +622,8 @@ async function runDailySync(supabase, config) {
       console.error('[sync] Open States sync failed:', err.message)
       results.openstates = { error: err.message }
     }
-  }
 
-  // Phase 3: Text gap-fill (LegiScan)
-  if (legiscanApiKey) {
-    try {
-      results.legiscan = await syncLegiScanTexts(supabase, legiscanApiKey)
-    } catch (err) {
-      console.error('[sync] LegiScan text sync failed:', err.message)
-      results.legiscan = { error: err.message }
-    }
-  }
-
-  // Phase 4: State backfill (spread over ~12 days)
-  if (openStatesApiKey) {
+    // Phase 3: State backfill (spread over ~12 days)
     try {
       results.stateBackfill = await runStateBackfill(supabase, openStatesApiKey)
     } catch (err) {
@@ -638,9 +631,9 @@ async function runDailySync(supabase, config) {
       results.stateBackfill = { error: err.message }
     }
 
-    // Phase 5: Fetch text for state bills that are missing it
+    // Phase 4: State text via Open States + legislature HTML scrape
     try {
-      // Open States quota is 1,000/day; reserve ~200 for state metadata sync/backfill
+      // Open States quota is 1,000/day; reserve ~200 for metadata + backfill
       results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 600 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
@@ -1037,6 +1030,97 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
   return { synced, calls }
 }
 
+// ─── Change-hash refresh: catch amendments on hot bills ─────────────────────
+// Bills that already have text can still become stale — amendments, new
+// versions, etc. Running this daily for pinned bills + the top ~200 most
+// recently-active feed-eligible bills keeps the cache honest without burning
+// the whole Congress.gov budget.
+//
+// Strategy:
+//   1. Pinned bills (classroom assignments): always check, they're small in
+//      number and students are actively reading them.
+//   2. Top feed-eligible federal bills by recency: re-pull Congress.gov text
+//      index; if latest version's action_date > our text_refreshed_at, refetch.
+//
+// State bills are skipped here — Open States quota is already saturated by
+// the daily sync. The daily sync's existing `backfillStateTexts` will catch
+// state changes on its own rotation.
+
+async function refreshHotBillTexts(supabase, congressApiKey, options = {}) {
+  if (!supabase || !congressApiKey) return { checked: 0, refreshed: 0 }
+  const { maxFederal = 200 } = options
+  const BASE = 'https://api.congress.gov/v3'
+  const headers = { 'X-Api-Key': congressApiKey }
+
+  // Pull pinned bills + top-recent feed-eligible federal bills
+  const { data: pinned } = await supabase
+    .from('bills')
+    .select('id, bill_type, bill_number, session, jurisdiction, latest_action_date, text_refreshed_at')
+    .gt('pinned_classroom_count', 0)
+    .eq('jurisdiction', 'US')
+
+  const { data: topFederal } = await supabase
+    .from('bills')
+    .select('id, bill_type, bill_number, session, jurisdiction, latest_action_date, text_refreshed_at')
+    .eq('feed_eligible', true)
+    .eq('jurisdiction', 'US')
+    .order('latest_action_date', { ascending: false })
+    .limit(maxFederal)
+
+  // De-dupe by id (pinned bills may already be in topFederal)
+  const byId = new Map()
+  for (const row of [...(pinned || []), ...(topFederal || [])]) {
+    if (row.jurisdiction === 'US' && !byId.has(row.id)) byId.set(row.id, row)
+  }
+  const candidates = [...byId.values()]
+  if (!candidates.length) return { checked: 0, refreshed: 0 }
+
+  console.log(`[refresh] Checking ${candidates.length} hot federal bills for text updates`)
+  let checked = 0
+  let refreshed = 0
+
+  for (const bill of candidates) {
+    checked++
+    // If we already refreshed this bill within the last 24h, skip
+    if (bill.text_refreshed_at && Date.now() - new Date(bill.text_refreshed_at).getTime() < 86400000) continue
+    // If the bill hasn't had legislative action in 90 days, skip — text won't change
+    if (bill.latest_action_date && Date.now() - new Date(bill.latest_action_date).getTime() > 90 * 86400000) continue
+
+    try {
+      const textUrl = `${BASE}/bill/${bill.session}/${bill.bill_type}/${bill.bill_number}/text?format=json`
+      const resp = await fetch(textUrl, { headers })
+      if (!resp.ok) continue
+      const data = await resp.json()
+      const latest = data.textVersions?.[0]
+      if (!latest) continue
+
+      // Re-fetch text content
+      const fmt = latest.formats?.find(f => f.type === 'Formatted Text') || latest.formats?.[0]
+      if (!fmt?.url) continue
+      const txtResp = await fetch(fmt.url, { headers })
+      if (!txtResp.ok) continue
+      const fullText = (await txtResp.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+      const wordCount = fullText.split(/\s+/).length
+
+      await supabase.from('bills').update({
+        full_text: fullText,
+        text_word_count: wordCount,
+        text_version: latest.type || 'Unknown',
+        text_refreshed_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+      }).eq('id', bill.id)
+
+      refreshed++
+      await sleep(500)
+    } catch (err) {
+      console.error(`[refresh] Error for bill ${bill.id}:`, err.message)
+    }
+  }
+
+  console.log(`[refresh] ${refreshed}/${checked} hot bills had text updates applied`)
+  return { checked, refreshed }
+}
+
 // ─── Utilities ─────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
@@ -1050,6 +1134,7 @@ export {
   fetchBillText,
   runStateBackfill,
   backfillStateTexts,
+  refreshHotBillTexts,
   extractTextFromHtml,
   classifyTopics,
   normalizeStatus,

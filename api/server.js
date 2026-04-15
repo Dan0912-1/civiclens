@@ -11,7 +11,8 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
-import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts } from './billSync.js'
+import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
+import { runRanker } from './billRanker.js'
 // pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
@@ -718,6 +719,100 @@ function transformLegiScanStateBill(hit, searchTerm = '') {
   }
 }
 
+// ─── Classroom pin helpers ────────────────────────────────────────────────────
+// When a teacher assigns a bill, we bump pinned_classroom_count so the ranker
+// keeps it feed-eligible even if it wouldn't score highly on its own. This
+// means the 30 students in the class all get cached personalization instead
+// of each triggering a LegiScan fallback.
+//
+// Bill IDs arrive from the frontend as "ls-12345" (LegiScan) or
+// "hr123-119" (Congress). This helper resolves the synthetic ID to a bills
+// row UUID, and kicks off a text backfill if the row is missing.
+
+function parseFrontendBillId(billId) {
+  if (!billId) return null
+  if (billId.startsWith('ls-')) {
+    const n = parseInt(billId.slice(3), 10)
+    return Number.isFinite(n) ? { legiscan_bill_id: n } : null
+  }
+  // Congress format: "<type><number>-<congress>" e.g. "hr1234-119" or "s42-119"
+  const m = billId.match(/^([a-z]+)(\d+)-(\d+)$/i)
+  if (m) {
+    const [, type, number, congress] = m
+    return {
+      congress_bill_id: `${congress}-${type.toLowerCase()}-${number}`,
+    }
+  }
+  return null
+}
+
+async function findBillRow(billId) {
+  if (!supabase) return null
+  const parsed = parseFrontendBillId(billId)
+  if (!parsed) return null
+
+  const q = supabase.from('bills').select('id, legiscan_bill_id, congress_bill_id, openstates_id, full_text, pinned_classroom_count, bill_type, bill_number, session, jurisdiction')
+  if (parsed.legiscan_bill_id) {
+    const { data } = await q.eq('legiscan_bill_id', parsed.legiscan_bill_id).maybeSingle()
+    return data || null
+  }
+  if (parsed.congress_bill_id) {
+    const { data } = await q.eq('congress_bill_id', parsed.congress_bill_id).maybeSingle()
+    return data || null
+  }
+  return null
+}
+
+async function pinBillForAssignment(billId, billData) {
+  if (!supabase) return
+  try {
+    const row = await findBillRow(billId)
+    if (!row) {
+      // Bill isn't in our DB yet. Log it; the daily sync will pick it up when
+      // the underlying API surfaces it. We don't block assignment creation.
+      console.log(`[pin] Bill ${billId} not in local DB; skipping pin (will cache on next sync)`)
+      return
+    }
+    // Increment pin count and force feed_eligible so ranker keeps it.
+    await supabase.from('bills').update({
+      pinned_classroom_count: (row.pinned_classroom_count || 0) + 1,
+      feed_eligible: true,
+    }).eq('id', row.id)
+
+    // If this pinned bill is missing text, kick off an on-demand fetch so the
+    // 30 students don't each trigger a LegiScan fallback on their next load.
+    if (!row.full_text && row.legiscan_bill_id && LEGISCAN_KEY) {
+      fetchBillTextFromLegiScan(row.legiscan_bill_id).then(async (result) => {
+        if (result?.text) {
+          await supabase.from('bills').update({
+            full_text: result.text,
+            text_word_count: result.wordCount || 0,
+            text_version: result.version || null,
+            synced_at: new Date().toISOString(),
+          }).eq('id', row.id)
+          console.log(`[pin] Backfilled text for pinned bill ${billId}`)
+        }
+      }).catch(err => console.error(`[pin] Text backfill error for ${billId}:`, err.message))
+    }
+  } catch (err) {
+    console.error(`[pin] Error pinning ${billId}:`, err.message)
+  }
+}
+
+async function unpinBillForAssignment(billId) {
+  if (!supabase) return
+  try {
+    const row = await findBillRow(billId)
+    if (!row) return
+    const next = Math.max(0, (row.pinned_classroom_count || 0) - 1)
+    await supabase.from('bills').update({
+      pinned_classroom_count: next,
+    }).eq('id', row.id)
+  } catch (err) {
+    console.error(`[pin] Error unpinning ${billId}:`, err.message)
+  }
+}
+
 // ─── Local bills DB query ─────────────────────────────────────────────────────
 // Queries the pre-populated bills table instead of hitting LegiScan at runtime.
 // Returns bills in the same shape that transformLegiScanBill/StateBill produces.
@@ -726,12 +821,15 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
 
   try {
     // Fetch federal bills matching user's interest topics
+    // Filter on feed_eligible so the feed only sees curated bills with full_text.
+    // Ordering by feed_priority_score surfaces stage+recency+depth winners first.
     const { data: federalBills, error: fedErr } = await supabase
       .from('bills')
       .select('*')
       .eq('jurisdiction', 'US')
+      .eq('feed_eligible', true)
       .overlaps('topics', interests)
-      .order('updated_at', { ascending: false })
+      .order('feed_priority_score', { ascending: false })
       .limit(30)
 
     if (fedErr) { console.error('[localDB] Federal query error:', fedErr.message); return [] }
@@ -743,8 +841,9 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
       .from('bills')
       .select('*')
       .eq('jurisdiction', 'US')
+      .eq('feed_eligible', true)
       .overlaps('topics', discoveryTopics.slice(0, 3))
-      .order('updated_at', { ascending: false })
+      .order('feed_priority_score', { ascending: false })
       .limit(10)
 
     // Fetch state bills if applicable
@@ -754,8 +853,9 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
         .from('bills')
         .select('*')
         .eq('jurisdiction', userState)
+        .eq('feed_eligible', true)
         .overlaps('topics', interests)
-        .order('updated_at', { ascending: false })
+        .order('feed_priority_score', { ascending: false })
         .limit(20)
       stateBills = data || []
     }
@@ -2817,14 +2917,23 @@ if (supabase) {
   // Runs at 5:00 AM UTC (before bill-update and before school hours)
   const OPENSTATES_KEY = process.env.OPENSTATES_API_KEY
   if (CONGRESS_API_KEY || OPENSTATES_KEY) {
-    cron.schedule('0 5 * * *', () => {
-      runDailySync(supabase, {
-        congressApiKey: CONGRESS_API_KEY,
-        openStatesApiKey: OPENSTATES_KEY,
-        legiscanApiKey: LEGISCAN_KEY,
-      }).catch(err => console.error('[bill-sync] Unhandled cron error:', err))
+    cron.schedule('0 5 * * *', async () => {
+      try {
+        await runDailySync(supabase, {
+          congressApiKey: CONGRESS_API_KEY,
+          openStatesApiKey: OPENSTATES_KEY,
+          // legiscanApiKey intentionally omitted — reserved for runtime fallback
+        })
+        // Refresh text for pinned + top-active federal bills (catches amendments)
+        await refreshHotBillTexts(supabase, CONGRESS_API_KEY)
+        // Re-rank now that ingestion + refresh are done
+        await runRanker(supabase)
+      } catch (err) {
+        console.error('[bill-sync] Unhandled cron error:', err)
+      }
     })
     console.log('   Bill sync cron: ✓ scheduled (daily 5:00 AM UTC)')
+    console.log('   Feed ranker:    ✓ runs after each sync')
 
     // On startup: check if backfill is needed (bills table empty)
     setTimeout(() => {
@@ -4673,6 +4782,11 @@ app.post('/api/classroom/:id/assignments', classroomLimiter, async (req, res) =>
       .insert(row).select('id, bill_id, bill_data, instructions, due_date, created_at').single()
     if (error) throw error
 
+    // Pin bill for ranker protection + backfill text if missing. Non-blocking.
+    pinBillForAssignment(billId, billData).catch(err =>
+      console.error('[assignment] pin error:', err.message)
+    )
+
     res.json({ assignment })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
@@ -4686,8 +4800,16 @@ app.post('/api/classroom/:id/assignments', classroomLimiter, async (req, res) =>
 app.delete('/api/classroom/:id/assignments/:assignmentId', classroomLimiter, async (req, res) => {
   try {
     await requireClassroomTeacher(req, req.params.id)
+    // Read bill_id before deleting so we can decrement the pin count
+    const { data: toDelete } = await supabase.from('classroom_assignments')
+      .select('bill_id').eq('id', req.params.assignmentId).eq('classroom_id', req.params.id).maybeSingle()
     await supabase.from('classroom_assignments')
       .delete().eq('id', req.params.assignmentId).eq('classroom_id', req.params.id)
+    if (toDelete?.bill_id) {
+      unpinBillForAssignment(toDelete.bill_id).catch(err =>
+        console.error('[assignment] unpin error:', err.message)
+      )
+    }
     res.json({ deleted: true })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
