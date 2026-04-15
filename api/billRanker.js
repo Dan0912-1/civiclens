@@ -193,17 +193,31 @@ async function runRanker(supabase, options = {}) {
   if (verbose) console.log('[ranker] Starting feed ranker at', new Date().toISOString())
 
   // Fetch all bills that could possibly be eligible (has text, has topics).
-  // This is cheaper than pulling the full 33K rows — hard filters at SQL level.
-  const { data: candidates, error } = await supabase
-    .from('bills')
-    .select('id, jurisdiction, bill_type, bill_number, title, topics, status_stage, latest_action_date, updated_at, text_word_count, full_text, pinned_classroom_count')
-    .not('full_text', 'is', null)
-    .gte('text_word_count', 150)
-
-  if (error) {
-    console.error('[ranker] Query error:', error.message)
-    return { error: error.message }
+  // PostgREST caps single responses at 1000 rows, so paginate with ranges.
+  // Skip full_text from the select (huge field; we only need word_count for scoring
+  // and the hard filter)
+  const PAGE = 1000
+  let candidates = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('bills')
+      .select('id, jurisdiction, bill_type, bill_number, title, topics, status_stage, latest_action_date, updated_at, text_word_count, pinned_classroom_count')
+      .not('full_text', 'is', null)
+      .gte('text_word_count', 150)
+      .order('id') // stable ordering for pagination
+      .range(from, from + PAGE - 1)
+    if (error) {
+      console.error('[ranker] Query error:', error.message)
+      return { error: error.message }
+    }
+    if (!data?.length) break
+    candidates = candidates.concat(data)
+    if (data.length < PAGE) break
+    from += PAGE
   }
+  // Post-query: treat full_text presence as true since we filtered on it
+  for (const b of candidates) b.full_text = true
 
   if (verbose) console.log(`[ranker] Pulled ${candidates.length} candidates with text`)
 

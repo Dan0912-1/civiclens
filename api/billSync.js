@@ -89,19 +89,22 @@ const SUBJECT_TO_TOPIC = {
 }
 
 // Keyword-based fallback: if subject mapping doesn't match, scan title
+// AND the first 500 words of full_text (which carries far more signal than
+// titles alone — many real bills have bland "Protecting Americans Act"-style
+// titles but their text reveals the actual policy area).
 const TITLE_KEYWORDS_TO_TOPIC = [
-  { keywords: ['student', 'school', 'education', 'teacher', 'college', 'university', 'tuition', 'pell grant'], topic: 'education' },
-  { keywords: ['climate', 'environment', 'clean energy', 'carbon', 'pollution', 'renewable', 'electric vehicle', 'wildlife'], topic: 'environment' },
-  { keywords: ['minimum wage', 'workforce', 'small business', 'unemployment', 'tax', 'cost of living', 'wage'], topic: 'economy' },
-  { keywords: ['health', 'mental', 'medicaid', 'drug', 'insurance', 'telehealth', 'substance'], topic: 'healthcare' },
-  { keywords: ['artificial intelligence', 'data privacy', 'broadband', 'social media', 'cyber', 'algorithm', 'internet'], topic: 'technology' },
-  { keywords: ['housing', 'rent', 'homeless', 'mortgage', 'tenant', 'zoning'], topic: 'housing' },
-  { keywords: ['immigration', 'daca', 'visa', 'asylum', 'citizen', 'border', 'refugee', 'deportat'], topic: 'immigration' },
-  { keywords: ['voting', 'civil rights', 'discrimination', 'police', 'racial', 'disability', 'lgbtq', 'equal pay'], topic: 'civil_rights' },
-  { keywords: ['americorps', 'volunteer', 'nonprofit', 'community', 'food assistance', 'library', 'rural'], topic: 'community' },
+  { keywords: ['student', 'school', 'education', 'teacher', 'college', 'university', 'tuition', 'pell grant', 'scholarship', 'curriculum', 'classroom', 'literacy', 'stem', 'k-12', 'preschool', 'kindergarten', 'academic'], topic: 'education' },
+  { keywords: ['climate', 'environment', 'clean energy', 'carbon', 'pollution', 'renewable', 'electric vehicle', 'wildlife', 'energy', 'solar', 'wind power', 'emission', 'greenhouse', 'conservation', 'forest', 'endangered', 'national park', 'epa ', 'toxic', 'clean water', 'clean air', 'coal', 'oil', 'natural gas', 'offshore drilling'], topic: 'environment' },
+  { keywords: ['minimum wage', 'workforce', 'small business', 'unemployment', 'tax', 'cost of living', 'wage', 'inflation', 'trade', 'tariff', 'banking', 'consumer protection', 'bankruptcy', 'credit card', 'economic', 'fiscal', 'budget', 'deficit', 'commerce', 'retirement', 'social security', 'pension', 'labor union', 'industry'], topic: 'economy' },
+  { keywords: ['health', 'mental', 'medicaid', 'drug', 'insurance', 'telehealth', 'substance', 'medicare', 'hospital', 'physician', 'prescription', 'pharmaceutical', 'opioid', 'fentanyl', 'addiction', 'disease', 'cancer', 'diabetes', 'abortion', 'reproductive', 'medical', 'nursing', 'hospice', 'vaccine', 'epidemic', 'pandemic'], topic: 'healthcare' },
+  { keywords: ['artificial intelligence', 'data privacy', 'broadband', 'social media', 'cyber', 'algorithm', 'internet', ' ai ', 'machine learning', 'deepfake', 'digital', 'software', 'technology', 'semiconductor', 'quantum', 'spectrum', 'telecom', '5g', 'blockchain', 'cryptocurrency'], topic: 'technology' },
+  { keywords: ['housing', 'rent', 'homeless', 'mortgage', 'tenant', 'zoning', 'affordable housing', 'section 8', 'public housing', 'eviction', 'real estate', 'landlord', 'home loan', 'first-time buyer'], topic: 'housing' },
+  { keywords: ['immigration', 'daca', 'visa', 'asylum', 'citizen', 'border', 'refugee', 'deportat', 'naturalization', 'dreamer', 'undocumented', 'migrant', 'ice ', 'immigrant', 'green card', 'guest worker', 'customs'], topic: 'immigration' },
+  { keywords: ['voting', 'civil rights', 'discrimination', 'police', 'racial', 'disability', 'lgbtq', 'equal pay', 'criminal justice', 'gun ', 'firearm', 'second amendment', 'incarceration', 'prison', 'parole', 'death penalty', 'hate crime', 'free speech', 'privacy rights', 'voting rights', 'elections', 'census', 'ballot', 'veteran benefits'], topic: 'civil_rights' },
+  { keywords: ['americorps', 'volunteer', 'nonprofit', 'community', 'food assistance', 'library', 'rural', 'snap', 'food stamp', 'wic ', 'disaster relief', 'fema', 'agriculture', 'farm', 'rural development', 'public service', 'charity', 'philanthropy', 'senior center', 'childcare'], topic: 'community' },
 ]
 
-function classifyTopics(subjects, title) {
+function classifyTopics(subjects, title, fullText = null) {
   const topics = new Set()
 
   // 1. Map known subjects
@@ -122,12 +125,26 @@ function classifyTopics(subjects, title) {
     }
   }
 
-  // 2. Keyword fallback from title if no subjects matched
-  if (topics.size === 0 && title) {
-    const lowerTitle = title.toLowerCase()
+  // 2. Keyword scan from title + first 800 words of full_text if provided.
+  // We always run this (not just when subjects fail) so full-text signal can
+  // add topics that subject tags missed. Multi-topic bills score better.
+  const corpus = [
+    (title || '').toLowerCase(),
+    fullText ? fullText.toLowerCase().split(/\s+/).slice(0, 800).join(' ') : '',
+  ].join(' ')
+  if (corpus.trim()) {
     for (const { keywords, topic } of TITLE_KEYWORDS_TO_TOPIC) {
-      if (keywords.some(kw => lowerTitle.includes(kw))) {
-        topics.add(topic)
+      // Require at least 2 keyword hits if classifying from full_text to avoid
+      // single-mention false positives. Title alone needs only 1.
+      const titleLower = (title || '').toLowerCase()
+      const titleHit = keywords.some(kw => titleLower.includes(kw))
+      if (titleHit) { topics.add(topic); continue }
+      if (fullText) {
+        let hits = 0
+        for (const kw of keywords) {
+          if (corpus.includes(kw)) hits++
+          if (hits >= 2) { topics.add(topic); break }
+        }
       }
     }
   }
