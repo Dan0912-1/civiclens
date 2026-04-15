@@ -27,14 +27,23 @@ const CEREMONIAL_TITLE_PATTERNS = [
   /^commemorating /i,
   /^celebrating /i,
   /^congratulating /i,
-  /^expressing (?:the sense|support|gratitude|sympathy)/i,
+  /^expressing (?:the sense|gratitude|sympathy|condolences|thanks|appreciation)/i,
   /^a resolution honoring /i,
   /^a resolution recognizing /i,
   /^a resolution commemorating /i,
+  /^a resolution expressing /i,
+  /^resolution of sympathy/i,
+  /^in memoriam/i,
+  /^in memory of /i,
+  /^mourning (?:the death|the passing)/i,
   /post office/i,
   /^naming /i,
   /^renaming /i,
-  /national .* (?:day|week|month)/i, // "National X Awareness Month"
+  /national .* (?:day|week|month) (?:of|for|awareness)/i,
+  /designating .* (?:highway|bridge|building|post office|federal building)/i,
+  /^a concurrent resolution honoring/i,
+  /^a concurrent resolution recognizing/i,
+  /^a concurrent resolution commemorating/i,
 ]
 
 function passesHardFilter(bill) {
@@ -65,15 +74,21 @@ function scoreStage(bill) {
 }
 
 // Recency: days since last legislative action (out of 25)
+// Enacted bills never drop below 8 points regardless of age — a landmark law
+// from last year is still civically important for a high schooler learning how
+// their government works. Without this floor, a newly introduced doomed-to-fail
+// bill (score 6 + 25 = 31) outranks an actually-passed law from 400 days ago
+// (score 25 + 0 = 25), which is exactly backwards for civic education.
 function scoreRecency(bill) {
   const actionDate = bill.latest_action_date || bill.updated_at
-  if (!actionDate) return 0
+  const isEnacted = bill.status_stage === 'enacted'
+  if (!actionDate) return isEnacted ? 8 : 0
   const days = (Date.now() - new Date(actionDate).getTime()) / 86400000
   if (days <= 30) return 25
   if (days <= 90) return 18
   if (days <= 180) return 10
   if (days <= 365) return 4
-  return 0
+  return isEnacted ? 8 : 0
 }
 
 // Text depth: longer bills have more substantive content (out of 15)
@@ -139,6 +154,26 @@ function computeScore(bill, interactionCount = 0) {
   )
 }
 
+// ─── Daily tie-break jitter ──────────────────────────────────────────────────
+// Hundreds of bills tie at the same integer score. Without a tie-breaker the
+// same bills always win based on insertion order, so students see the exact
+// same cohort day after day. A deterministic hash of (bill id + today's date)
+// produces a stable-for-24h but rotating-daily fractional jitter in [0,1)
+// that naturally rotates tied bills in and out of the hot pool across days.
+// This also solves the "no discovery decay" concern without needing
+// per-user view tracking.
+function dailyJitter(billId, dateStr) {
+  // Simple FNV-1a hash — fast, deterministic, no deps
+  const s = `${billId}|${dateStr}`
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  // Normalize to [0, 1)
+  return h / 4294967296
+}
+
 // ─── Stratified selection ────────────────────────────────────────────────────
 // Goals:
 //  - Federal quota: top 2,000 (shared across all students)
@@ -165,7 +200,7 @@ function selectTopBillsForState(bills, quota) {
     const topicBills = bills
       .filter((b) => b.topics?.includes(topic))
       .filter((b) => !selected.has(b.id))
-      .sort((a, b) => b._score - a._score)
+      .sort((a, b) => b._effective - a._effective)
       .slice(0, PER_TOPIC_MIN)
     for (const b of topicBills) selected.add(b.id)
   }
@@ -175,7 +210,7 @@ function selectTopBillsForState(bills, quota) {
   if (remaining > 0) {
     const fillers = bills
       .filter((b) => !selected.has(b.id))
-      .sort((a, b) => b._score - a._score)
+      .sort((a, b) => b._effective - a._effective)
       .slice(0, remaining)
     for (const b of fillers) selected.add(b.id)
   }
@@ -233,8 +268,11 @@ async function runRanker(supabase, options = {}) {
   }
   if (verbose) console.log(`[ranker] ${viewCounts.size} bills have view history`)
 
-  // Score every candidate; strip the full_text field now (we don't need it
-  // past scoring and it's huge — keeps subsequent array ops fast)
+  // Score every candidate. Add a daily tie-breaker jitter so bills at the same
+  // integer score rotate in/out of the hot pool across days instead of being
+  // arbitrarily locked in by insertion order. The jitter is deterministic for
+  // the full 24h period so within a single run all ordering is stable.
+  const todayIso = new Date().toISOString().slice(0, 10)
   const scored = []
   for (const bill of candidates) {
     const billId = makeBillIdKey(bill)
@@ -247,6 +285,11 @@ async function runRanker(supabase, options = {}) {
       topics: bill.topics,
       pinned_classroom_count: bill.pinned_classroom_count || 0,
       _score: score,
+      _jitter: dailyJitter(bill.id, todayIso),
+      // Effective score used for ordering: integer score + fractional jitter.
+      // Stored as a real number for sort comparisons; only the integer part
+      // is persisted to feed_priority_score so the DB column stays an int.
+      _effective: score + dailyJitter(bill.id, todayIso),
     })
   }
 
@@ -255,7 +298,7 @@ async function runRanker(supabase, options = {}) {
   // ── Federal selection ──
   const federal = scored
     .filter((b) => b.jurisdiction === 'US')
-    .sort((a, b) => b._score - a._score)
+    .sort((a, b) => b._effective - a._effective)
 
   const federalSelected = new Set(federal.slice(0, FEDERAL_QUOTA).map((b) => b.id))
   if (verbose) console.log(`[ranker] Federal: ${federalSelected.size} / ${federal.length} selected`)
@@ -294,7 +337,7 @@ async function runRanker(supabase, options = {}) {
   if (finalEligible.size < TOTAL_TARGET) {
     const leftover = scored
       .filter((b) => !finalEligible.has(b.id))
-      .sort((a, b) => b._score - a._score)
+      .sort((a, b) => b._effective - a._effective)
       .slice(0, TOTAL_TARGET - finalEligible.size)
     for (const b of leftover) finalEligible.add(b.id)
     if (verbose) console.log(`[ranker] Added ${leftover.length} overflow bills`)
@@ -302,22 +345,24 @@ async function runRanker(supabase, options = {}) {
 
   if (verbose) console.log(`[ranker] FINAL selected: ${finalEligible.size}`)
 
-  // ── Write back: feed_eligible + feed_priority_score ──
-  // Supabase has no single-statement UPDATE with IN array over 15K items,
-  // so batch into updates of ~500 at a time.
+  // ── Blue/green write: no outage window ──
+  // Old approach (set all to false, then flip winners) had a 10-15s window
+  // where feed_eligible was empty. Instead:
+  //   1. Promote new winners with a fresh feed_ranked_at timestamp
+  //   2. Only after all winners are written, demote anything eligible whose
+  //      feed_ranked_at is older than the new timestamp
+  // During the promote phase, old and new winners coexist — users see valid
+  // results the whole time, and the old set is only cleared after the new set
+  // is guaranteed in place.
   const scoreById = new Map(scored.map((b) => [b.id, b._score]))
+  const newRankedAt = new Date().toISOString()
   const selectedIds = [...finalEligible]
-  const eligibleUpdates = selectedIds
 
-  // Step 1: mark all bills not-eligible (cheap, sets everything to baseline)
-  await supabase.from('bills').update({ feed_eligible: false }).neq('id', '00000000-0000-0000-0000-000000000000')
-
-  // Step 2: flip selected bills to eligible + set score, in batches
   const BATCH = 500
   let written = 0
-  for (let i = 0; i < eligibleUpdates.length; i += BATCH) {
-    const batch = eligibleUpdates.slice(i, i + BATCH)
-    // Group bills by score so we can do one UPDATE per unique score value
+  for (let i = 0; i < selectedIds.length; i += BATCH) {
+    const batch = selectedIds.slice(i, i + BATCH)
+    // Group by score so we can do one UPDATE per unique score value
     const scoreBuckets = new Map()
     for (const id of batch) {
       const s = scoreById.get(id) || 0
@@ -330,17 +375,27 @@ async function runRanker(supabase, options = {}) {
         .update({
           feed_eligible: true,
           feed_priority_score: score,
-          feed_ranked_at: new Date().toISOString(),
+          feed_ranked_at: newRankedAt,
         })
         .in('id', ids)
-      if (upErr) console.error('[ranker] Update error:', upErr.message)
+      if (upErr) console.error('[ranker] Promote error:', upErr.message)
       else written += ids.length
     }
   }
 
+  // Demote: anything currently eligible but not in the new winners set.
+  // Identified by feed_ranked_at < newRankedAt (winners were just timestamped).
+  const { error: demoteErr, count: demoted } = await supabase
+    .from('bills')
+    .update({ feed_eligible: false }, { count: 'exact' })
+    .eq('feed_eligible', true)
+    .lt('feed_ranked_at', newRankedAt)
+
+  if (demoteErr) console.error('[ranker] Demote error:', demoteErr.message)
+
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   if (verbose) {
-    console.log(`[ranker] Wrote ${written} eligibility updates in ${elapsed}s`)
+    console.log(`[ranker] Promoted ${written} winners, demoted ${demoted || 0} previous in ${elapsed}s`)
     console.log('[ranker] ═══════════════════════════════════════')
   }
 
