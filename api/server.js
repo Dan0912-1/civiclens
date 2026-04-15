@@ -13,6 +13,7 @@ import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
 import { runRanker } from './billRanker.js'
+import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 // pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
@@ -1704,15 +1705,14 @@ function buildUserPrompt(profile, bill, billContent) {
   const familyLabel = norm.familySituation.length
     ? norm.familySituation.join(', ')
     : 'Not specified'
-  // Cap bill content to ~8000 chars (~2000 tokens). This preserves the full
-  // text of short and medium bills (which the prompt's "comprehensive coverage"
-  // rule requires) while bounding TTFT on omnibus / multi-thousand-word bills
-  // that would otherwise dump 10k+ input tokens at the model. Only the long
-  // tail of bills hits this limit; for those, the LegiScan source link in the
-  // UI still gives users the full text.
-  const cappedContent = billContent && billContent.length > 8000
-    ? billContent.slice(0, 8000) + '\n\n[bill text truncated — see source link for full text]'
-    : billContent
+  // buildBillContent already picks a context-appropriate text strategy:
+  // full text for short bills, head+middle+tail smart truncation for long
+  // bills without interest signal, or topic-filtered sections when we have
+  // the student's interests. Each mode is already bounded at ~4K words
+  // (~6K chars of raw text on top of CRS summary + structured excerpt), so
+  // we no longer need the outer 8K char cap that used to re-truncate back
+  // down to table-of-contents boilerplate on omnibus bills.
+  const cappedContent = billContent
   const ageGuess = gradeToAge(norm.grade)
   let gradeLine
   if (!norm.grade) {
@@ -1817,7 +1817,9 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       } else {
         billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
       }
-      const { billContent, sources } = buildBillContent(billData)
+      const { billContent, sources } = buildBillContent(billData, {
+        userInterests: Array.isArray(profile?.interests) ? profile.interests : [],
+      })
       // Build a TRUSTED bill object using canonical metadata from LegiScan when
       // available. This is the C1 fix — req.body.bill.title is no longer the
       // source of truth for the prompt or for what we cache.
@@ -2005,7 +2007,9 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
 
   // 3. Fire LLM calls with concurrency limit and retry on transient failures
   async function personalizeOneBill({ bill, cacheKey, billId, billData }) {
-    const { billContent, sources } = buildBillContent(billData)
+    const { billContent, sources } = buildBillContent(billData, {
+      userInterests: Array.isArray(profile?.interests) ? profile.interests : [],
+    })
     const trustedBill = buildTrustedBill(bill, billData?.meta)
     const systemPrompt = PERSONALIZE_SYSTEM_PROMPT
     const userPrompt = buildUserPrompt(profile, trustedBill, billContent)
@@ -3506,27 +3510,56 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
 }
 
 // Build the content string for the personalization prompt
-function buildBillContent(billData) {
+function buildBillContent(billData, { userInterests = [] } = {}) {
   let billContent = ''
   let sources = []
 
+  // Tier 1: CRS Summary (authoritative, federal only)
   if (billData.crsSummary) {
     billContent += `CONGRESSIONAL RESEARCH SERVICE SUMMARY:\n${billData.crsSummary}\n\n`
     sources.push('Congressional Research Service summary')
   }
 
+  // Tier 2: Pre-computed structured excerpt (short title, findings, divisions,
+  // section 2, appropriations, effective date). This is what actually handles
+  // omnibus bills — the LLM gets the organized synopsis before the raw text.
+  // If the caller didn't provide one but we have text, extract inline (cheap
+  // regex pass on the text). Sync-time extraction still populates the DB column
+  // so repeated runs don't re-extract.
+  const excerpt = billData.structuredExcerpt
+    || (billData.text ? extractStructuredExcerpt(billData.text) : null)
+  if (excerpt) {
+    billContent += `STRUCTURED SUMMARY OF BILL:\n${excerpt}\n\n`
+    sources.push('structured excerpt')
+  }
+
+  // Tier 3: Bill text. Strategy depends on length + whether we have interests.
+  //   - Short bills: full text
+  //   - Long bills + user interests with section structure: topic-filtered sections
+  //   - Long bills otherwise: head + middle + tail smart truncation
   if (billData.text) {
     const sourceLabel = billData.version?.includes('openstates') || billData.version === 'scraped_html'
       ? 'state legislature website'
       : billData.version === 'local' ? 'local database' : 'LegiScan'
-    if (billData.wordCount <= BILL_TEXT_WORD_LIMIT) {
-      billContent += `FULL BILL TEXT (${billData.version}):\n${billData.text}\n`
-      sources.push(`full bill text via ${sourceLabel}`)
-    } else {
-      const truncated = billData.text.split(/\s+/).slice(0, BILL_TEXT_WORD_LIMIT).join(' ')
-      billContent += `BILL TEXT (first ${BILL_TEXT_WORD_LIMIT} words of ${billData.wordCount.toLocaleString()}, ${billData.version}):\n${truncated}\n`
-      sources.push(`bill text via ${sourceLabel}`)
+
+    const { content, strategy } = pickBillContent(billData.text, {
+      maxWords: BILL_TEXT_WORD_LIMIT,
+      userInterests,
+    })
+
+    const labelByStrategy = {
+      full: `FULL BILL TEXT (${billData.version})`,
+      topic_sections: `BILL TEXT — SECTIONS RELEVANT TO YOUR INTERESTS (${userInterests.join(', ')})`,
+      smart_truncate: `BILL TEXT EXCERPTS (head + middle + tail of ${billData.wordCount.toLocaleString()} words, ${billData.version})`,
     }
+    const label = labelByStrategy[strategy] || `BILL TEXT (${billData.version})`
+    billContent += `${label}:\n${content}\n`
+
+    const srcTail =
+      strategy === 'full' ? `full bill text via ${sourceLabel}`
+      : strategy === 'topic_sections' ? `topic-filtered sections via ${sourceLabel}`
+      : `sampled bill text via ${sourceLabel}`
+    sources.push(srcTail)
   }
 
   if (!billContent) {

@@ -8,6 +8,8 @@
  * bills that changed since last sync.
  */
 
+import { extractStructuredExcerpt } from './billExcerpt.js'
+
 // ─── Topic classification ──────────────────────────────────────────────────
 // Maps raw subjects from Congress.gov and Open States to our app interest keys.
 // Congress.gov uses "policyArea" (single string) and "subjects" (array).
@@ -297,6 +299,7 @@ async function syncCongressGov(supabase, congressApiKey, options = {}) {
                 full_text: fullText,
                 text_word_count: wordCount,
                 text_version: latest.type || 'Unknown',
+                structured_excerpt: fullText ? extractStructuredExcerpt(fullText) : null,
                 synced_at: new Date().toISOString(),
               })
               .eq('id', bill.id)
@@ -578,6 +581,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
                   full_text: cleanText,
                   text_word_count: wordCount,
                   text_version: latestText.type || 'Unknown',
+                  structured_excerpt: extractStructuredExcerpt(cleanText),
                   synced_at: new Date().toISOString(),
                 })
                 .eq('id', bill.id)
@@ -788,6 +792,7 @@ async function fetchBillText(supabase, bill) {
           full_text: fullText,
           text_word_count: wordCount,
           text_version: 'scraped_html',
+          structured_excerpt: extractStructuredExcerpt(fullText),
           synced_at: new Date().toISOString(),
         })
         .eq('id', bill.id)
@@ -1123,6 +1128,7 @@ async function refreshHotBillTexts(supabase, congressApiKey, options = {}) {
         full_text: fullText,
         text_word_count: wordCount,
         text_version: latest.type || 'Unknown',
+        structured_excerpt: extractStructuredExcerpt(fullText),
         text_refreshed_at: new Date().toISOString(),
         synced_at: new Date().toISOString(),
       }).eq('id', bill.id)
