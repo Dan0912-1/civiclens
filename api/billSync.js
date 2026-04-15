@@ -241,7 +241,7 @@ async function syncCongressGov(supabase, congressApiKey, options = {}) {
     .eq('jurisdiction', 'US')
     .is('full_text', null)
     .order('updated_at', { ascending: false })
-    .limit(100) // Process 100 per run max
+    .limit(500) // Congress.gov is unlimited — pull aggressively per run
 
   if (needText?.length) {
     console.log(`[sync:congress] Fetching text for ${needText.length} bills`)
@@ -300,7 +300,7 @@ async function syncCongressGov(supabase, congressApiKey, options = {}) {
     .is('crs_summary', null)
     .not('full_text', 'is', null) // Only for bills we already have text for
     .order('updated_at', { ascending: false })
-    .limit(50)
+    .limit(200)
 
   if (needSummary?.length) {
     console.log(`[sync:congress] Fetching summaries for ${needSummary.length} bills`)
@@ -640,7 +640,8 @@ async function runDailySync(supabase, config) {
 
     // Phase 5: Fetch text for state bills that are missing it
     try {
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 30 })
+      // Open States quota is 1,000/day; reserve ~200 for state metadata sync/backfill
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 600 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
