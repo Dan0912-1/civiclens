@@ -32,7 +32,11 @@ const env = {
   FRONTEND_URL: process.env.FRONTEND_URL || 'http://localhost:5173',
 }
 
-const child = spawn(process.execPath, ['api/server.js'], {
+// Match production's start command exactly (npm start uses --import
+// ./instrument.js so Sentry's OpenTelemetry hooks wrap Express before
+// server.js imports it). If instrument.js has a syntax or import error,
+// this smoke will catch it before it hits Railway.
+const child = spawn(process.execPath, ['--import', './instrument.js', 'api/server.js'], {
   env,
   stdio: ['ignore', 'pipe', 'pipe'],
 })

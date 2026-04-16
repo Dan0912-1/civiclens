@@ -1,19 +1,12 @@
 // api/server.js — CapitolKey Backend
 // All API keys live here, never in the frontend
 
-// Sentry must be imported and initialized before any other modules that we
-// want instrumented (express, etc.). Safe no-op when SENTRY_DSN isn't set,
-// so local dev and misconfigured envs just don't report.
+// Sentry is initialized in ./instrument.js, preloaded via `node --import`
+// (see package.json "start"/"server" scripts). That ordering is required
+// so Sentry's OpenTelemetry hooks wrap Express before it gets imported.
+// Here we just import the SDK surface we use (captureException,
+// setupExpressErrorHandler).
 import * as Sentry from '@sentry/node'
-if (process.env.SENTRY_DSN) {
-  Sentry.init({
-    dsn: process.env.SENTRY_DSN,
-    environment: process.env.NODE_ENV || 'development',
-    tracesSampleRate: 0.1,
-    // Don't capture PII (student profiles, bill text). Errors only.
-    sendDefaultPii: false,
-  })
-}
 
 import express from 'express'
 import helmet from 'helmet'
