@@ -1,0 +1,20 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appIDs": ["S6AS72Z2CF.com.danieljacius.capitolkey"],
+        "components": [
+          { "/": "/bill/*", "comment": "Bill detail pages" },
+          { "/": "/bookmarks", "comment": "Saved bills" },
+          { "/": "/bookmarks/*" },
+          { "/": "/results", "comment": "Personalized feed" },
+          { "/": "/results/*" },
+          { "/": "/search", "comment": "Search" },
+          { "/": "/search/*" },
+          { "/": "/classroom/*", "comment": "Classroom pages" }
+        ]
+      }
+    ]
+  }
+}

@@ -21,9 +21,6 @@
       "splashFullScreen": true,
       "splashImmersive": true
     }
-  },
-  "deepLinks": {
-    "associatedDomains": ["applinks:capitolkey.vercel.app"],
-    "pathPrefix": ["/bill/"]
   }
 }
+

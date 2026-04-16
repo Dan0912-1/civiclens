@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { saveProfile } from '../lib/userProfile'
@@ -194,11 +194,16 @@ export default function Profile() {
   const isUnder13 = ageValid && ageNum < 13
 
   // Drop the COPPA lock the moment a user self-reports as under 13.
-  // This prevents the back-button-and-change-age bypass.
-  if (isUnder13 && !coppaLocked) {
-    setCoppaLock()
-    setCoppaLocked(true)
-  }
+  // This prevents the back-button-and-change-age bypass. Runs in an effect
+  // instead of during render so it doesn't trip React 18's "cannot update
+  // state during render" warning, which can also double-invoke setState in
+  // StrictMode.
+  useEffect(() => {
+    if (isUnder13 && !coppaLocked) {
+      setCoppaLock()
+      setCoppaLocked(true)
+    }
+  }, [isUnder13, coppaLocked])
 
   function canAdvance() {
     if (step === 1) return !coppaLocked && profile.state && ageValid && ageNum >= 13

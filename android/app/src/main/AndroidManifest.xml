@@ -22,6 +22,36 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- App Links: route https://capitolkey.vercel.app/bill/*, etc. to this app.
+                 autoVerify=true tells Android to hit /.well-known/assetlinks.json on
+                 first install and, if the signing-key SHA-256 matches, open these
+                 URLs in CapitolKey instead of the browser picker. If the assetlinks
+                 file isn't published yet, the filter still works — Android just
+                 shows the "open with" chooser like a normal VIEW intent. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="capitolkey.vercel.app" />
+                <data android:host="capitolkey.org" />
+                <data android:host="www.capitolkey.org" />
+                <data android:pathPrefix="/bill/" />
+                <data android:pathPrefix="/bookmarks" />
+                <data android:pathPrefix="/results" />
+                <data android:pathPrefix="/search" />
+                <data android:pathPrefix="/classroom" />
+            </intent-filter>
+
+            <!-- Custom scheme for Supabase OAuth callback — kept separate from
+                 the https App Links filter so it isn't part of autoVerify. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.danieljacius.capitolkey" />
+            </intent-filter>
+
         </activity>
 
         <provider

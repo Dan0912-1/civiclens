@@ -8,5 +8,11 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:capitolkey.vercel.app</string>
+		<string>applinks:capitolkey.org</string>
+		<string>applinks:www.capitolkey.org</string>
+	</array>
 </dict>
 </plist>
