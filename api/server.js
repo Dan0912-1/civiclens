@@ -47,6 +47,60 @@ function extractJson(raw) {
   throw new Error('Unbalanced JSON in response')
 }
 
+// Validate and coerce a parsed personalize response into the shape the
+// frontend requires. Rejects responses missing required fields, and
+// normalizes loose types (relevance as string, single civic_action as a
+// string, etc.) so the UI doesn't have to handle LLM drift.
+//
+// Reject-or-repair posture: coerce what we can, throw when the output is
+// actually broken. Callers then either retry or fall back to CRS-only.
+const REQUIRED_TEXT_FIELDS = ['headline', 'summary', 'if_it_passes', 'if_it_fails', 'topic_tag']
+const VALID_TOPIC_TAGS = new Set([
+  'Education','Healthcare','Economy','Environment','Technology',
+  'Housing','Civil Rights','Immigration','Community','Other'
+])
+function validatePersonalizeShape(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('validation: response not an object')
+  }
+  for (const f of REQUIRED_TEXT_FIELDS) {
+    const v = parsed[f]
+    if (typeof v !== 'string' || v.trim().length === 0) {
+      throw new Error(`validation: missing or empty "${f}"`)
+    }
+  }
+  // Relevance: coerce to number, clamp to 1-10
+  let rel = parsed.relevance
+  if (typeof rel === 'string') rel = Number(rel)
+  if (!Number.isFinite(rel)) throw new Error('validation: "relevance" is not numeric')
+  rel = Math.max(1, Math.min(10, Math.round(rel)))
+  parsed.relevance = rel
+
+  // Topic tag must be in the approved set (matches TAG_COLORS on the
+  // frontend); unknown tags get silently downgraded rather than crashing
+  // the UI.
+  if (!VALID_TOPIC_TAGS.has(parsed.topic_tag)) {
+    parsed.topic_tag = 'Other'
+  }
+
+  // civic_actions: accept string (split), array of strings, or missing
+  // (default empty). Always emit array of strings, max 5, max 200 chars
+  // each, deduped.
+  let actions = parsed.civic_actions
+  if (typeof actions === 'string') {
+    actions = actions.split(/\r?\n|•|\*/).map(s => s.trim()).filter(Boolean)
+  }
+  if (!Array.isArray(actions)) actions = []
+  actions = actions
+    .map(a => (typeof a === 'string' ? a.trim() : ''))
+    .filter(Boolean)
+    .map(a => a.slice(0, 200))
+    .slice(0, 5)
+  parsed.civic_actions = Array.from(new Set(actions))
+
+  return parsed
+}
+
 const app = express()
 
 // Trust Railway's reverse proxy so express-rate-limit reads the real client IP
@@ -205,6 +259,18 @@ function recordAnthropicSuccess() {
   _anthropicCallLog.push(Date.now())
 }
 
+// Separate Groq counter so Groq calls don't eat the Anthropic hourly cap.
+// Previously callers would call recordAnthropicSuccess() unconditionally
+// after callLLM(), which both double-counted Haiku calls and charged
+// every Groq call against Anthropic's budget.
+const _groqCallLog = []
+function recordGroqSuccess() {
+  _groqCallLog.push(Date.now())
+  // Trim anything older than an hour so the array doesn't grow unbounded.
+  const cutoff = Date.now() - 60 * 60 * 1000
+  while (_groqCallLog.length && _groqCallLog[0] < cutoff) _groqCallLog.shift()
+}
+
 // ─── Claude circuit breaker ────────────────────────────────────────────────
 // When Claude returns 429, set a shared backoff so all requests fast-fail
 // instead of each retrying independently (thundering herd).
@@ -307,6 +373,7 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
     }
     const data = await resp.json()
     const text = data.choices?.[0]?.message?.content || ''
+    recordGroqSuccess()
     return {
       text,
       usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
@@ -460,10 +527,15 @@ function setCache(key, data, ttl) {
 async function getSupabaseCache(key) {
   if (!supabase) return null
   try {
+    // Enforce expires_at at read time — the nightly DELETE cron is
+    // defense-in-depth, not correctness. A stale row surviving between
+    // cron runs would otherwise be served as if fresh.
+    const nowIso = new Date().toISOString()
     const { data, error } = await supabase
       .from('personalization_cache')
-      .select('response')
+      .select('response, expires_at')
       .eq('cache_key', key)
+      .gt('expires_at', nowIso)
       .single()
     if (error || !data) return null
     return data.response
@@ -1962,10 +2034,16 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
           throw Object.assign(new Error('Service temporarily at capacity'), { statusCode: 503 })
         }
         try {
+          // callLLM internally records success against the correct provider
+          // (recordAnthropicSuccess for Haiku, recordGroqSuccess for Groq).
+          // Don't re-count here — it would double-charge Haiku and charge
+          // Groq against the Anthropic hourly cap.
           const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
-          recordAnthropicSuccess()
 
-          const parsed = extractJson(llmResult.text)
+          // Schema-validate before caching. A missing headline / summary /
+          // relevance is worse than a retry — we'd poison the cache for every
+          // future student hitting the same bucket.
+          const parsed = validatePersonalizeShape(extractJson(llmResult.text))
           adjustRelevance(parsed, profile)
           parsed.sources = sources
           // personalized: true signals the frontend to render the "Specific to
@@ -2210,10 +2288,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
         return failOpen('quota_exhausted')
       }
       try {
+        // See /api/personalize: callLLM handles provider-correct accounting.
         const llmResult = await callLLM({ system: systemPrompt, userPrompt, timeoutMs: 30000 })
-        recordAnthropicSuccess()
 
-        const parsed = extractJson(llmResult.text)
+        const parsed = validatePersonalizeShape(extractJson(llmResult.text))
         // Feed path intentionally does NOT run adjustRelevance. The stripped
         // profile has no employment / family / career signal to adjust against,
         // so the function would just emit a bucket-average "lie" relevance
@@ -3910,7 +3988,13 @@ async function speculativePersonalize(bills, profile) {
       const contextNote = buildContextNote(blocks)
       const userPrompt = buildUserPrompt(feedProfile, trustedBill, billContent, contextNote)
       const llmResult = await callLLM({ system: PERSONALIZE_SYSTEM_PROMPT, userPrompt, timeoutMs: 30000 })
-      const parsed = extractJson(llmResult.text)
+      let parsed
+      try {
+        parsed = validatePersonalizeShape(extractJson(llmResult.text))
+      } catch (e) {
+        console.log(`[speculative] validation failed for ${bill.type}${bill.number}: ${e.message}`)
+        parsed = null
+      }
       if (parsed) {
         // No adjustRelevance here — see /api/personalize-batch for rationale.
         const result = { analysis: parsed, personalized: true }

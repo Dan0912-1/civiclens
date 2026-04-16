@@ -1,6 +1,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- CapitolKey — Auth Tables Migration
+-- CapitolKey — Auth-adjacent tables (bookmarks)
 -- Run this once in your Supabase project via: Dashboard → SQL Editor → New query
+--
+-- user_profiles has been moved to create_profiles_table.sql — running both
+-- files on a fresh DB used to error on the duplicate CREATE and duplicate
+-- policy names. create_profiles_table.sql is now the canonical source.
 --
 -- Prerequisites:
 --   1. Enable Google OAuth:  Auth → Providers → Google → toggle on
@@ -12,28 +16,6 @@
 --      VITE_SUPABASE_URL      = https://your-project.supabase.co
 --      VITE_SUPABASE_ANON_KEY = your-anon-key   (Settings → API → anon/public)
 -- ─────────────────────────────────────────────────────────────────────────────
-
--- User profiles (stores the civicProfile JSON for logged-in users)
-create table user_profiles (
-  id         uuid primary key references auth.users(id) on delete cascade,
-  profile    jsonb not null default '{}',
-  updated_at timestamptz not null default now()
-);
-
-alter table user_profiles enable row level security;
-
-create policy "Users can read own profile"
-  on user_profiles for select
-  using (auth.uid() = id);
-
-create policy "Users can insert own profile"
-  on user_profiles for insert
-  with check (auth.uid() = id);
-
-create policy "Users can update own profile"
-  on user_profiles for update
-  using (auth.uid() = id);
-
 
 -- Bookmarks (stores saved bills for logged-in users)
 create table bookmarks (
