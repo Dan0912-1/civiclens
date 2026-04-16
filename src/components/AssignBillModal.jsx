@@ -303,18 +303,24 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
         ) : (
           <div className={styles.assignForm}>
             <div className={styles.selectedBill}>
-              <div className={styles.resultHeader}>
-                <span className={styles.resultBillNum}>
-                  {selected.type || selected.bill_type} {selected.number || selected.bill_number}
-                </span>
-                <span className={styles.resultMeta}>
+              <div className={styles.selectedBillHeader}>
+                <div className={styles.selectedBillIdGroup}>
+                  <span className={styles.resultBillNum}>
+                    {selected.type || selected.bill_type} {selected.number || selected.bill_number}
+                  </span>
                   <span className={styles.badge}>
                     {selected.state && selected.state !== 'US' ? selected.state : 'Federal'}
                   </span>
-                </span>
+                </div>
+                <button
+                  type="button"
+                  className={styles.changeBtn}
+                  onClick={() => setSelected(null)}
+                >
+                  Change
+                </button>
               </div>
               <span className={styles.resultTitle}>{selected.title}</span>
-              <button className={styles.changeBtn} onClick={() => setSelected(null)}>Change</button>
             </div>
 
             <label className={styles.label}>

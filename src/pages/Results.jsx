@@ -30,6 +30,10 @@ export default function Results() {
   const [interactionSummary, setInteractionSummary] = useState(null)
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
   const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
+  // Backend may return _meta when the personalized pipeline fell back to a
+  // broader query or when external sources failed entirely. Drives the
+  // banner + empty-state copy below.
+  const [billsMeta, setBillsMeta] = useState(null)
   const prevUserRef = useRef(null)
 
   const { refreshing, pullProgress } = usePullToRefresh(
@@ -260,6 +264,7 @@ export default function Results() {
     const isCancelled = cancelled ?? (() => false)
     setLoadingBills(true)
     setBillError('')
+    setBillsMeta(null)
     setSettledBills(new Set())
     setFailedBills(new Set())
     setVisibleCount(BILLS_PER_PAGE)
@@ -289,6 +294,7 @@ export default function Results() {
       if (isCancelled()) return
       if (data.bills) {
         setBills(data.bills)
+        setBillsMeta(data._meta || null)
 
         // Two-wave personalization: render the first 3 federal + first 3 state
         // bills as quickly as possible, then personalize the next 3 per
@@ -513,6 +519,15 @@ export default function Results() {
           </div>
         )}
 
+        {/* Fallback / degraded banner — surfaces when the personalized pipeline
+            fell back to broader results or when external sources failed. */}
+        {!loadingBills && !billError && billsMeta?.fallback && (
+          <div className={styles.fallbackBanner} role="status">
+            <strong>Showing general legislation.</strong>{' '}
+            {billsMeta.reason || 'Personalized matches were unavailable for your filters.'}
+          </div>
+        )}
+
         {/* Bill cards */}
         {!loadingBills && !billError && (
           <>
@@ -554,10 +569,36 @@ export default function Results() {
           </>
         )}
 
-        {/* Empty state */}
+        {/* Empty state — three flavors:
+            1. Service degraded (external sources failed) → show retry
+            2. Topic filter narrowed everything out → suggest reset to "All"
+            3. Nothing in this tab at all → suggest the other tab           */}
         {!loadingBills && !billError && filteredBills.length === 0 && (
           <div className={styles.empty}>
-            <p>No bills found for this filter. Try selecting "All".</p>
+            {billsMeta?.degraded ? (
+              <>
+                <p><strong>Bill data is temporarily unavailable.</strong></p>
+                <p>{billsMeta.reason || 'Our data sources are not responding right now.'}</p>
+                <button className={styles.retryBtn} onClick={() => fetchBills()}>Try again</button>
+              </>
+            ) : activeFilter !== 'All' ? (
+              <>
+                <p>No <strong>{activeFilter}</strong> bills in this view.</p>
+                <button className={styles.retryBtn} onClick={() => setActiveFilter('All')}>
+                  Show all topics
+                </button>
+              </>
+            ) : allFilteredBills.length === 0 && bills.length > 0 ? (
+              <>
+                <p>No {activeTab === 'federal' ? 'federal' : (profile.state || 'state')} bills right now.</p>
+                <p>Try the {activeTab === 'federal' ? (profile.state || 'state') : 'federal'} tab — your other view has results.</p>
+              </>
+            ) : (
+              <>
+                <p>No bills loaded yet.</p>
+                <button className={styles.retryBtn} onClick={() => fetchBills()}>Refresh</button>
+              </>
+            )}
           </div>
         )}
 
