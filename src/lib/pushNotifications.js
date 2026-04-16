@@ -2,6 +2,10 @@ import { getApiBase } from './api'
 
 let registered = false
 let _navigate = null
+// Captured when the device registers with FCM/APNs so signOut can revoke the
+// subscription server-side without the caller having to shuttle the token
+// around. Cleared in teardownPushNotifications / resetPushState.
+let currentDeviceToken = null
 
 // Allow the app to inject a React Router navigate function
 export function setPushNavigate(navigateFn) {
@@ -45,6 +49,7 @@ export async function initPushNotifications(userId, token) {
   // Add listeners BEFORE register() to avoid race condition where
   // the native platform fires the registration event synchronously
   PushNotifications.addListener('registration', async ({ value: deviceToken }) => {
+    currentDeviceToken = deviceToken
     const platform = Capacitor.getPlatform() // 'ios' or 'android'
     try {
       await fetch(`${getApiBase()}/api/push/register`, {
@@ -81,26 +86,31 @@ export async function initPushNotifications(userId, token) {
 }
 
 export async function teardownPushNotifications(token, deviceToken) {
+  // Fall back to the token captured at registration time so callers (sign-out)
+  // don't need to plumb it through themselves.
+  const effectiveDeviceToken = deviceToken || currentDeviceToken
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
     await PushNotifications.removeAllListeners()
-    if (deviceToken && token) {
+    if (effectiveDeviceToken && token) {
       await fetch(`${getApiBase()}/api/push/register`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ token: deviceToken }),
+        body: JSON.stringify({ token: effectiveDeviceToken }),
       })
     }
   } catch {
     // non-fatal
   }
   registered = false
+  currentDeviceToken = null
 }
 
 // Reset listener state on sign-out (even without device token)
 export function resetPushState() {
   registered = false
+  currentDeviceToken = null
 }

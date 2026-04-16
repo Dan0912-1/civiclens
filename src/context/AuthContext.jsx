@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
-import { resetPushState } from '../lib/pushNotifications'
+import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
@@ -256,6 +256,20 @@ export function AuthProvider({ children }) {
 
   async function handleSignOut() {
     if (!supabase) return
+    // Revoke the FCM/APNs subscription on the backend BEFORE the JWT is
+    // invalidated. resetPushState alone just clears the in-memory flag; the
+    // server row survives and the old device keeps receiving pushes for the
+    // logged-out user. Pull the access token from the current session so
+    // the DELETE /api/push/register call passes auth.
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token
+      if (accessToken) {
+        await teardownPushNotifications(accessToken)
+      }
+    } catch {
+      // non-fatal — sign-out should still proceed
+    }
     await supabase.auth.signOut()
     // Clear all app-specific storage to prevent data leakage between users
     sessionStorage.removeItem('civicProfile')

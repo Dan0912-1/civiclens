@@ -18,6 +18,16 @@ import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 // v1 debug-on-import quirk is gone in v2, so we can import normally.
 import { PDFParse } from 'pdf-parse'
 import compression from 'compression'
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+// Read version from package.json so /api/version never drifts from what we
+// actually shipped. Previously this endpoint was hardcoded to 1.0.0 while
+// package.json sat at 1.1.0 — force-update checks were comparing the wrong
+// number.
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'))
 
 process.on('unhandledRejection', (reason) => { console.error('[unhandledRejection]', reason) })
 
@@ -992,17 +1002,22 @@ app.get('/api/health', (req, res) => {
 
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
-// Bump MIN_VERSION when you ship a breaking API change.
-const CURRENT_VERSION = '1.0.0'
+// currentVersion is sourced from package.json so it moves every release
+// without a manual edit. MIN_VERSION is the floor the client must meet —
+// bump it explicitly when you ship a breaking API change so older builds
+// get force-updated.
+const CURRENT_VERSION = pkg.version
 const MIN_VERSION = '1.0.0'
+const IOS_APP_STORE_URL = 'https://apps.apple.com/app/capitolkey/id6743539498'
+const ANDROID_PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.danieljacius.capitolkey'
 
 app.get('/api/version', (req, res) => {
   res.json({
     currentVersion: CURRENT_VERSION,
     minVersion: MIN_VERSION,
     updateUrl: {
-      ios: 'https://apps.apple.com/app/capitolkey/id0000000000',
-      android: 'https://play.google.com/store/apps/details?id=com.danieljacius.capitolkey',
+      ios: IOS_APP_STORE_URL,
+      android: ANDROID_PLAY_STORE_URL,
     },
   })
 })
