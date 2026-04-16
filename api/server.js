@@ -2612,10 +2612,12 @@ async function requireAuth(req) {
 // ─── Interaction tracking (interest refinement) ─────────────────────────────
 
 const VALID_ACTION_TYPES = new Set(['view_detail', 'expand_card', 'bookmark'])
-const VALID_TOPIC_TAGS = new Set([
-  'Education', 'Healthcare', 'Economy', 'Environment',
-  'Technology', 'Housing', 'Civil Rights', 'Immigration', 'Community', 'Other',
-])
+// VALID_TOPIC_TAGS lives at the top of this file (declared next to
+// validatePersonalizeShape) and is reused here for interaction-row
+// validation. Previously this block re-declared it, which booted fine
+// locally but crashed on Railway with "Identifier 'VALID_TOPIC_TAGS' has
+// already been declared" because ESM modules are stricter than the dev
+// REPL about top-level redeclaration.
 const MAX_INTERACTIONS_PER_REQUEST = 25
 
 app.post('/api/interactions', authLimiter, async (req, res) => {
