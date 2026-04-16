@@ -7,6 +7,7 @@ import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, getMyClassrooms, createAssignment } from '../lib/classroom'
+import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -94,7 +95,7 @@ export default function BillDetail() {
   useEffect(() => {
     if (trackedRef.current || !analysis) return
     trackedRef.current = true
-    const billId = `${type.toUpperCase()}${number}-${congress}`
+    const billId = makeCongressBillId(type, number, congress)
     const doTrack = async () => {
       let token = null
       if (user && supabase) {
@@ -113,9 +114,13 @@ export default function BillDetail() {
   // Check if bill is bookmarked
   useEffect(() => {
     if (!user) return
-    const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
+    const bId = bill?.legiscan_bill_id
+      ? makeBillId(bill)
+      : makeCongressBillId(type, number, congress)
     getBookmarks(user.id).then(bms => {
-      setBookmarked(bms.some(b => b.bill_id === bId))
+      // Use case-insensitive compare so legacy uppercase bookmarks still match
+      // the new canonical lowercase id produced by makeCongressBillId.
+      setBookmarked(bms.some(b => sameBillId(b.bill_id, bId)))
     })
   }, [user, bill, congress, type, number])
 
@@ -160,8 +165,8 @@ export default function BillDetail() {
     const token = session?.data?.session?.access_token
     if (!token) return
     const billId = bill?.legiscan_bill_id
-      ? `ls-${bill.legiscan_bill_id}`
-      : `${type.toUpperCase()}${number}-${congress}`
+      ? makeBillId(bill)
+      : makeCongressBillId(type, number, congress)
     try {
       await createAssignment(token, classroom.id, {
         billId,
@@ -246,9 +251,9 @@ export default function BillDetail() {
     if (!bill || analysis || skipPersonalization) return
     let cancelled = false
     // Capture the in-flight bill identity; abort if the route changes.
-    const requestBillId = `${bill.type?.toUpperCase()}${bill.number}-${bill.congress}`
-    const currentRouteId = `${type.toUpperCase()}${number}-${congress}`
-    if (requestBillId !== currentRouteId) return
+    const requestBillId = makeBillId(bill)
+    const currentRouteId = makeCongressBillId(type, number, congress)
+    if (!sameBillId(requestBillId, currentRouteId)) return
 
     async function run() {
       const stored = sessionStorage.getItem('civicProfile')
@@ -621,7 +626,9 @@ export default function BillDetail() {
                   if (bookmarkBusy) return
                   setBookmarkBusy(true)
                   try {
-                    const bId = bill?.legiscan_bill_id ? `ls-${bill.legiscan_bill_id}` : `${type.toUpperCase()}${number}-${congress}`
+                    const bId = bill?.legiscan_bill_id
+                      ? makeBillId(bill)
+                      : makeCongressBillId(type, number, congress)
                     if (bookmarked) {
                       const ok = await removeBookmark(user.id, bId)
                       if (ok) { setBookmarked(false); showToast('Bookmark removed') }

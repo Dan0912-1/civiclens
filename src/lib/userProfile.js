@@ -42,23 +42,62 @@ export async function getBookmarks(userId) {
 
     // Staleness detection — pull current status_stage for each bookmarked bill
     // and stamp it onto the row so the UI can render a banner when it drifts
-    // from saved_status_stage. Cheap single query, no JOIN needed since we
-    // already have the bill_id set.
-    const billIds = bookmarks.map(b => b.bill_id).filter(Boolean)
-    if (billIds.length) {
-      const { data: currentStates } = await supabase
-        .from('bills')
-        .select('id, status_stage')
-        .in('id', billIds)
-      const stageMap = new Map((currentStates || []).map(b => [b.id, b.status_stage]))
-      for (const bm of bookmarks) {
-        bm.current_status_stage = stageMap.get(bm.bill_id) || null
-        bm.is_stale = !!(
-          bm.saved_status_stage
-          && bm.current_status_stage
-          && bm.saved_status_stage !== bm.current_status_stage
-        )
+    // from saved_status_stage.
+    //
+    // bookmarks.bill_id is a SYNTHETIC id (`ls-<legiscan_id>` for state bills
+    // and LegiScan-backed federal bills, `<type><num>-<congress>` for
+    // Congress.gov-backed federal bills). bills.id is a UUID. Previously we
+    // queried bills.in('id', billIds) which never matched, so is_stale was
+    // always false. We now resolve by the cross-reference columns the sync
+    // job maintains: legiscan_bill_id (int) and congress_bill_id (text like
+    // "119-hr-123").
+    const legiscanIds = []
+    const congressIds = []
+    for (const b of bookmarks) {
+      const id = String(b.bill_id || '')
+      if (id.startsWith('ls-')) {
+        const n = Number(id.slice(3))
+        if (Number.isFinite(n)) legiscanIds.push(n)
+      } else {
+        // Lowercase form: `hr123-119`. Convert to bills.congress_bill_id
+        // canonical form: `119-hr-123`.
+        const m = id.match(/^([a-z]+)(\d+)-(\d+)$/i)
+        if (m) congressIds.push(`${m[3]}-${m[1].toLowerCase()}-${m[2]}`)
       }
+    }
+
+    const stageByLegiscan = new Map()
+    const stageByCongress = new Map()
+    if (legiscanIds.length) {
+      const { data } = await supabase
+        .from('bills')
+        .select('legiscan_bill_id, status_stage')
+        .in('legiscan_bill_id', legiscanIds)
+      for (const row of (data || [])) stageByLegiscan.set(row.legiscan_bill_id, row.status_stage)
+    }
+    if (congressIds.length) {
+      const { data } = await supabase
+        .from('bills')
+        .select('congress_bill_id, status_stage')
+        .in('congress_bill_id', congressIds)
+      for (const row of (data || [])) stageByCongress.set(row.congress_bill_id, row.status_stage)
+    }
+
+    for (const bm of bookmarks) {
+      const id = String(bm.bill_id || '')
+      let current = null
+      if (id.startsWith('ls-')) {
+        current = stageByLegiscan.get(Number(id.slice(3))) || null
+      } else {
+        const m = id.match(/^([a-z]+)(\d+)-(\d+)$/i)
+        if (m) current = stageByCongress.get(`${m[3]}-${m[1].toLowerCase()}-${m[2]}`) || null
+      }
+      bm.current_status_stage = current
+      bm.is_stale = !!(
+        bm.saved_status_stage
+        && bm.current_status_stage
+        && bm.saved_status_stage !== bm.current_status_stage
+      )
     }
     return bookmarks
   } catch {
@@ -84,8 +123,21 @@ export async function addBookmark(userId, billId, billData) {
       .upsert(row, { onConflict: 'user_id,bill_id' })
     return !error
   } catch {
-    // Network failure — queue for retry when back online
-    enqueue('supabase:bookmarks', 'POST', { user_id: userId, bill_id: billId, bill_data: billData })
+    // Network failure — queue for retry when back online.
+    // Pass the computed savedStatusStage through so the replay path can
+    // stamp it too; otherwise offline-created bookmarks would lose the
+    // staleness baseline and never be flagged as drifted.
+    const savedStatusStage =
+      billData?.bill?.statusStage
+      || billData?.bill?.status_stage
+      || billData?.statusStage
+      || null
+    enqueue('supabase:bookmarks', 'POST', {
+      user_id: userId,
+      bill_id: billId,
+      bill_data: billData,
+      saved_status_stage: savedStatusStage,
+    })
     return false
   }
 }

@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { createAssignment } from '../lib/classroom'
+import { makeBillId } from '../lib/billId'
 import styles from './AssignBillModal.module.css'
 
 const API = getApiBase()
@@ -38,11 +39,6 @@ const TOPIC_CHIPS = [
   'Education', 'Healthcare', 'Climate', 'Immigration', 'Gun Policy', 'Student Loans',
   'Technology', 'Economy', 'Civil Rights',
 ]
-
-function makeBillId(bill) {
-  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
-  return `${bill.type || bill.bill_type}${bill.number || bill.bill_number}-${bill.congress}`
-}
 
 export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
   const [query, setQuery] = useState('')

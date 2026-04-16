@@ -8,15 +8,11 @@ import { supabase } from '../lib/supabase'
 import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
+import { makeBillId } from '../lib/billId'
 import styles from './Results.module.css'
 
 const API_BASE = getApiBase()
 const BILLS_PER_PAGE = 3
-
-function makeBillId(bill) {
-  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
-  return `${bill.type}${bill.number}-${bill.congress}`
-}
 
 export default function Results() {
   const navigate = useNavigate()

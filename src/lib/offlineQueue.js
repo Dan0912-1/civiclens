@@ -50,13 +50,19 @@ async function replaySupabaseBookmark(item) {
   const body = JSON.parse(item.body)
 
   if (item.method === 'POST') {
-    // upsert bookmark
+    // upsert bookmark. Preserve saved_status_stage if the enqueuer stored
+    // it (addBookmark does) — otherwise replayed rows lose the staleness
+    // baseline and the "status changed since you saved this" banner never
+    // fires for offline-created bookmarks.
+    const row = {
+      user_id: body.user_id,
+      bill_id: body.bill_id,
+      bill_data: body.bill_data,
+    }
+    if (body.saved_status_stage != null) row.saved_status_stage = body.saved_status_stage
     const { error } = await supabase
       .from('bookmarks')
-      .upsert(
-        { user_id: body.user_id, bill_id: body.bill_id, bill_data: body.bill_data },
-        { onConflict: 'user_id,bill_id' },
-      )
+      .upsert(row, { onConflict: 'user_id,bill_id' })
     if (error) return null // treat Supabase errors as non-retryable
     return true
   }

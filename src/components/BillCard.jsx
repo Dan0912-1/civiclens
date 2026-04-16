@@ -2,12 +2,30 @@ import { useState, useRef, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
+import { makeBillId } from '../lib/billId'
 import styles from './BillCard.module.css'
 
 function haptic(style = 'Light') {
   import('@capacitor/haptics')
     .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
     .catch(() => {})
+}
+
+// Map either numeric (Congress.gov legacy shape, 1-5) or string stage
+// (synced bills table: "introduced" ... "enacted"/"vetoed") to the 1-5
+// position used by the progress dots. 0 means "no progress to render".
+const STAGE_STRINGS = {
+  introduced:   1,
+  in_committee: 2,
+  passed_one:   3,
+  passed_both:  4,
+  enacted:      5,
+  vetoed:       5, // treat a veto as "terminal/5" for progress purposes
+}
+function normalizeStage(stage) {
+  if (typeof stage === 'number') return stage
+  if (!stage) return 0
+  return STAGE_STRINGS[String(stage).toLowerCase()] || 0
 }
 
 const TAG_COLORS = {
@@ -91,9 +109,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
   const swipeStart = useRef(null)
   const navigate = useNavigate()
   const { user } = useAuth()
-  const billId = bill.legiscan_bill_id
-    ? `ls-${bill.legiscan_bill_id}`
-    : `${bill.type}${bill.number}-${bill.congress}`
+  const billId = makeBillId(bill)
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
 
@@ -169,17 +185,22 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         </span>
       </div>
 
-      {/* Mini progress dots */}
-      {bill.statusStage > 0 && (
-        <div className={styles.miniProgress} title={['Introduced','Committee','Floor Vote','Passed','Signed'][bill.statusStage - 1]}>
-          {[1,2,3,4,5].map(s => (
-            <div key={s} className={`${styles.miniDot} ${bill.statusStage >= s ? styles.miniDotReached : ''} ${bill.statusStage === s ? styles.miniDotCurrent : ''}`} />
-          ))}
-          <span className={styles.miniStageLabel}>
-            {['Introduced','Committee','Floor Vote','Passed','Signed'][bill.statusStage - 1]}
-          </span>
-        </div>
-      )}
+      {/* Mini progress dots. Accepts either a numeric stage (1-5, legacy
+          Congress.gov shape) or the normalized string stage stored in the
+          bills table ("introduced", "in_committee", "passed_one",
+          "passed_both", "enacted", "vetoed"). */}
+      {normalizeStage(bill.statusStage) > 0 && (() => {
+        const n = normalizeStage(bill.statusStage)
+        const labels = ['Introduced','Committee','Floor Vote','Passed','Signed']
+        return (
+          <div className={styles.miniProgress} title={labels[n - 1]}>
+            {[1,2,3,4,5].map(s => (
+              <div key={s} className={`${styles.miniDot} ${n >= s ? styles.miniDotReached : ''} ${n === s ? styles.miniDotCurrent : ''}`} />
+            ))}
+            <span className={styles.miniStageLabel}>{labels[n - 1]}</span>
+          </div>
+        )
+      })()}
 
       {/* Title — clickable to detail page */}
       <h3 className={styles.title}>

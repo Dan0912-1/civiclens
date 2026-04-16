@@ -6,6 +6,7 @@ import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { supabase } from '../lib/supabase'
 import BillCard from '../components/BillCard.jsx'
+import { makeBillId } from '../lib/billId'
 import styles from './Search.module.css'
 
 const API_BASE = getApiBase()
@@ -46,11 +47,6 @@ const SUGGESTION_CHIPS = [
   'Immigration',
   'Education',
 ]
-
-function makeBillId(bill) {
-  if (bill.legiscan_bill_id) return `ls-${bill.legiscan_bill_id}`
-  return `${bill.type}${bill.number}-${bill.congress}`
-}
 
 export default function Search() {
   const [searchParams, setSearchParams] = useSearchParams()
