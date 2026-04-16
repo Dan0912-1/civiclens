@@ -38,16 +38,16 @@ FEATURES:
 CapitolKey is a civic education tool built for American high school students. It was created by a student who serves on his town's Board of Education and believes every student deserves access to the same civic information that policy professionals have.
 
 ## Promotional Text (170 chars max, can be updated without new review)
-See how real bills in Congress affect your life — personalized to your state and interests. Nonpartisan. Plain English. Built by a student.
+See how real bills in Congress affect your life, personalized to your state and interests. Nonpartisan. Plain English. Built by a student.
 
 ## Privacy Policy URL
-https://capitolkey.vercel.app/privacy
+https://capitolkey.org/privacy
 
 ## Terms of Service URL
-https://capitolkey.vercel.app/terms
+https://capitolkey.org/terms
 
 ## Support URL
-https://capitolkey.vercel.app/contact
+https://capitolkey.org/contact
 
 ## Age Rating
 13+ (matches our COPPA-compliant eligibility policy)

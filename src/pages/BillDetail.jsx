@@ -647,7 +647,7 @@ export default function BillDetail() {
             <button
               className={styles.footerBtn}
               onClick={async () => {
-                const WEB_ORIGIN = 'https://capitolkey.vercel.app'
+                const WEB_ORIGIN = 'https://capitolkey.org'
                 const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
                 const shareUrl = `${origin}/bill/${congress}/${type.toLowerCase()}/${number}`
                 const text = `${displayTitle}: ${analysis?.headline || ''}\n${shareUrl}`

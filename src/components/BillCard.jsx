@@ -62,7 +62,7 @@ function RelevanceMeter({ score }) {
 // Production web origin used when the app runs inside Capacitor (whose own
 // origin is capacitor://localhost, not a shareable URL). Falls back to the
 // current origin on web.
-const WEB_ORIGIN = 'https://capitolkey.vercel.app'
+const WEB_ORIGIN = 'https://capitolkey.org'
 
 function shareBill(bill, analysis) {
   const text = `${bill.title}: ${analysis?.headline || ''}`

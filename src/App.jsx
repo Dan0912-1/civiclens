@@ -47,7 +47,7 @@ function PageLoader() {
 }
 
 const PAGE_TITLES = {
-  '/': 'CapitolKey — Legislation That Affects You',
+  '/': 'CapitolKey: Legislation That Affects You',
   '/profile': 'Set Up Your Feed | CapitolKey',
   '/results': 'Your Legislation | CapitolKey',
   '/search': 'Search Bills | CapitolKey',
