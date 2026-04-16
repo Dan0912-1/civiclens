@@ -10,6 +10,10 @@
     "server": "node --env-file=.env api/server.js",
     "start": "node api/server.js",
     "cap:sync": "vite build && cap sync",
+    "check:backend": "find api -type f -name '*.js' -not -path 'api/node_modules/*' -exec node --check {} +",
+    "check:dupes": "node scripts/ci-duplicate-scan.mjs",
+    "smoke:backend": "node scripts/ci-boot-smoke.mjs",
+    "verify": "npm run check:backend && npm run check:dupes && npm run smoke:backend && npm run build",
     "postinstall": "bash scripts/patch-apple-signin.sh"
   },
   "dependencies": {
