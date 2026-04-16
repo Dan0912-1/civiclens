@@ -132,7 +132,7 @@ export default function Home() {
             <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Nonpartisan</span>
             <span className={styles.trustSep}>·</span>
-            <span><span className={styles.trustCheck}>✓</span>Updated Hourly</span>
+            <span><span className={styles.trustCheck}>✓</span>Updated Daily</span>
           </div>
         </div>
 

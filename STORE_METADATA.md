@@ -47,10 +47,10 @@ https://capitolkey.vercel.app/privacy
 https://capitolkey.vercel.app/terms
 
 ## Support URL
-mailto:support@capitolkey.app
+https://capitolkey.vercel.app/contact
 
 ## Age Rating
-4+ (no objectionable content)
+13+ (matches our COPPA-compliant eligibility policy)
 
 ## Copyright
 2026 CapitolKey
