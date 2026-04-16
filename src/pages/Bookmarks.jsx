@@ -177,7 +177,7 @@ export default function Bookmarks() {
         <div className={styles.notifBar}>
           <div>
             <div className={styles.notifLabel}>Email notifications</div>
-            <div className={styles.notifDesc}>Get emailed when a saved bill changes status on Congress.gov</div>
+            <div className={styles.notifDesc}>Get emailed when a saved bill changes status in Congress or your state legislature</div>
           </div>
           <button
             className={styles.toggle}

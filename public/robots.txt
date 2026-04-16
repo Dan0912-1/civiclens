@@ -2,5 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /settings
+Disallow: /admin
 
-Sitemap: https://capitolkey.vercel.app/sitemap.xml
+Sitemap: https://capitolkey.org/sitemap.xml

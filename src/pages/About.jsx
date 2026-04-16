@@ -61,7 +61,7 @@ export default function About() {
               },
               {
                 name: 'Privacy-first design',
-                desc: 'No account required \u2014 your profile stays in your browser by default. Optional sign-in stores your profile and bookmarks securely in our database, never shared or sold.',
+                desc: 'No account required. Your profile stays in your browser by default. Optional sign-in stores your profile and bookmarks securely in our database, never shared or sold.',
                 badge: 'Privacy'
               },
             ].map(t => (

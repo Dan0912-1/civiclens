@@ -76,6 +76,7 @@ export default function Nav() {
                   <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved Bills</button>
                 )}
                 <button className={styles.dropItem} onClick={() => handleNav('/classroom')}>Classrooms</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/educators')}>For Educators</button>
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/settings')}>Settings</button>
                 )}
@@ -83,7 +84,7 @@ export default function Nav() {
                 <button className={styles.dropItem} onClick={() => handleNav('/contact')}>Contact Us</button>
                 <div className={styles.dropDivider} />
                 <button className={styles.dropItem} onClick={() => handleNav('/privacy')}>Privacy Policy</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/terms')}>Terms Of Service</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/terms')}>Terms of Service</button>
                 <div className={styles.dropDivider} />
                 {user ? (
                   <button
