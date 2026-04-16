@@ -315,20 +315,47 @@
   border-radius: 1px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  position: relative;
+  gap: 6px;
+}
+
+.selectedBillHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.selectedBillIdGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .changeBtn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  font-size: 0.72rem;
-  color: var(--amber);
-  text-decoration: underline;
-  background: none;
-  border: none;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--navy);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  padding: 5px 10px;
   cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.changeBtn:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.changeBtn:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
 }
 
 .label {

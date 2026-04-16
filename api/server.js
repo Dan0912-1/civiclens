@@ -1141,6 +1141,12 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
   const cachedFeed = getCache(feedCacheKey)
   if (!userId && cachedFeed) return res.json(cachedFeed)
 
+  // Track whether external data sources actually responded with anything.
+  // Used to distinguish a legitimately narrow filter (sources work, no matches)
+  // from a fully degraded service (sources unreachable). Drives _meta in the
+  // response and the frontend's empty-state copy.
+  const fetchStats = { attempts: 0, failures: 0, localDbReturned: 0 }
+
   try {
     // ── 1. Fetch interaction history server-side for auth'd users ──
     const { interactionMap, topicCounts } = await getUserInteractions(userId)
@@ -1172,6 +1178,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       allBills = await dedup(`feed-${feedCacheKey}`, async () => {
         if (supabase) {
           const localBills = await fetchBillsFromLocalDB(interests, state, discoveryTerms, searchTerms)
+          fetchStats.localDbReturned = localBills.length
           if (localBills.length >= 5) {
             console.log(`[legislation] Local DB hit: ${localBills.length} bills for ${feedCacheKey}`)
             return localBills
@@ -1181,49 +1188,36 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
         }
 
         // ── Fallback: Fetch from LegiScan (used during backfill period) ──
-        const federalFetches = searchTerms.slice(0, 6).map(term =>
-          cachedLegiscanSearchRaw('US', term)
+        const trackedSearch = (state, term, opts = {}) => {
+          fetchStats.attempts++
+          return cachedLegiscanSearchRaw(state, term)
             .then(data => {
               if (!data.searchresult) return []
               return Object.values(data.searchresult)
                 .filter(r => r.bill_id)
-                .slice(0, 20)
-                .map(hit => transformLegiScanBill(hit, term))
+                .slice(0, opts.limit || 20)
+                .map(hit => opts.transform(hit, term))
             })
             .catch(err => {
-              console.error(`LegiScan searchRaw error for US "${term}":`, err.message)
-              return []
-            })
-        )
-
-        const discoveryFetches = discoveryTerms.map(term =>
-          cachedLegiscanSearchRaw('US', term)
-            .then(data => {
-              if (!data.searchresult) return []
-              return Object.values(data.searchresult)
-                .filter(r => r.bill_id)
-                .slice(0, 10)
-                .map(hit => ({ ...transformLegiScanBill(hit, term), _isDiscovery: true }))
-            })
-            .catch(err => {
-              console.error(`LegiScan discovery search error "${term}":`, err.message)
-              return []
-            })
-        )
-
-        const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
-          cachedLegiscanSearchRaw(state, term)
-            .then(data => {
-              if (!data.searchresult) return []
-              return Object.values(data.searchresult)
-                .filter(r => r.bill_id)
-                .slice(0, 10)
-                .map(hit => transformLegiScanStateBill(hit, term))
-            })
-            .catch(err => {
+              fetchStats.failures++
               console.error(`LegiScan searchRaw error for ${state} "${term}":`, err.message)
               return []
             })
+        }
+
+        const federalFetches = searchTerms.slice(0, 6).map(term =>
+          trackedSearch('US', term, { limit: 20, transform: transformLegiScanBill })
+        )
+
+        const discoveryFetches = discoveryTerms.map(term =>
+          trackedSearch('US', term, {
+            limit: 10,
+            transform: (hit, t) => ({ ...transformLegiScanBill(hit, t), _isDiscovery: true }),
+          })
+        )
+
+        const stateFetches = state && state !== 'US' ? searchTerms.slice(0, 6).map(term =>
+          trackedSearch(state, term, { limit: 10, transform: transformLegiScanStateBill })
         ) : []
 
         const [federalResults, discoveryResults, stateResults] = await Promise.all([
@@ -1251,7 +1245,83 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
 
     // Also deduplicate companion bills (same bill in Senate vs House) and
     // amended versions by comparing normalized titles
-    const unique = deduplicateCompanionBills(uniqueById)
+    let unique = deduplicateCompanionBills(uniqueById)
+
+    // ── 4b. Never-empty fallback ──────────────────────────────────────────────
+    // If the personalized + state pipeline yielded zero bills, broaden the
+    // query before giving up. Two layers, in order:
+    //   a. Drop interest filter — pull most-recent feed-eligible bills from
+    //      local DB (works whenever Supabase is reachable, even with an empty
+    //      curated topic match)
+    //   b. Single broad LegiScan search — last-resort if local DB is empty
+    //      AND LegiScan is reachable
+    // Anything found this way is flagged so the response carries _meta.fallback
+    // and the frontend can tell the user these aren't personalized matches.
+    let fallbackUsed = null
+    if (unique.length === 0 && !cachedFeed) {
+      // Layer A: broad local DB pull, no interest filter
+      if (supabase) {
+        try {
+          const { data: anyBills } = await supabase
+            .from('bills')
+            .select('*')
+            .eq('feed_eligible', true)
+            .order('updated_at', { ascending: false })
+            .limit(20)
+          if (anyBills && anyBills.length) {
+            unique = anyBills.map(row => {
+              const isState = row.jurisdiction !== 'US'
+              return {
+                congress: isState ? 0 : parseInt(row.session, 10) || 119,
+                type: row.bill_type,
+                number: row.bill_number,
+                title: row.title || '',
+                originChamber: row.origin_chamber || 'House',
+                latestAction: row.latest_action || 'No recent action',
+                latestActionDate: row.latest_action_date || '',
+                url: row.url || '',
+                updateDate: row.updated_at || '',
+                searchTerm: (row.topics || [])[0] || '',
+                legiscan_bill_id: row.legiscan_bill_id || null,
+                state: row.jurisdiction,
+                isStateBill: isState,
+                statusStage: row.status_stage || 'introduced',
+                _localText: row.full_text || null,
+                _localCrsSummary: row.crs_summary || null,
+                _localTextWordCount: row.text_word_count || 0,
+                _localTextVersion: row.text_version || null,
+              }
+            })
+            fallbackUsed = 'local_recent'
+            console.log(`[legislation] Fallback A (local recent) returned ${unique.length} bills`)
+          }
+        } catch (err) {
+          console.error('[legislation] Fallback A query error:', err.message)
+        }
+      }
+
+      // Layer B: single broad LegiScan call
+      if (unique.length === 0) {
+        try {
+          fetchStats.attempts++
+          const data = await cachedLegiscanSearchRaw('US', 'education')
+          if (data && data.searchresult) {
+            const broadHits = Object.values(data.searchresult)
+              .filter(r => r.bill_id)
+              .slice(0, 20)
+              .map(hit => transformLegiScanBill(hit, 'education'))
+            if (broadHits.length) {
+              unique = broadHits
+              fallbackUsed = 'broad_search'
+              console.log(`[legislation] Fallback B (broad LegiScan) returned ${unique.length} bills`)
+            }
+          }
+        } catch (err) {
+          fetchStats.failures++
+          console.error('[legislation] Fallback B LegiScan error:', err.message)
+        }
+      }
+    }
 
     // ── 5. Build scoring context ──
     const interestTerms = new Set()
@@ -1319,10 +1389,31 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     }, 0)
     console.log(`[diversity] topics=${topicSet.size} entropy=${entropy.toFixed(2)} discovery=${discoveryCount}/${total_} reasons=${balanced.map(b => b.recommendReason?.slice(0, 12) || '?').join(',')}`)
 
-    const result = { bills: balanced }
+    // Build _meta so the client can render an honest empty/degraded state
+    // instead of a misleading "0 of 0 · try selecting All" when the underlying
+    // data sources actually failed.
+    const meta = {}
+    if (fallbackUsed) {
+      meta.fallback = fallbackUsed
+      meta.reason = fallbackUsed === 'local_recent'
+        ? 'No bills matched your interests; showing recent legislation instead.'
+        : 'Personalized bills unavailable; showing general legislation.'
+    }
+    if (balanced.length === 0) {
+      meta.degraded = true
+      meta.reason = fetchStats.attempts > 0 && fetchStats.failures === fetchStats.attempts
+        ? 'Bill data sources are temporarily unavailable.'
+        : 'No bills matched your filters and no fallback was available.'
+    }
 
-    // Shared feed cache with 4-hour TTL (bills change slowly)
-    setCache(feedCacheKey, result, FEED_CACHE_TTL)
+    const result = Object.keys(meta).length ? { bills: balanced, _meta: meta } : { bills: balanced }
+
+    // Shared feed cache with 4-hour TTL (bills change slowly).
+    // Never cache empty results or fallback responses — those would freeze a
+    // bad state for everyone hitting this key for the next 4 hours.
+    if (balanced.length > 0 && !fallbackUsed) {
+      setCache(feedCacheKey, result, FEED_CACHE_TTL)
+    }
 
     res.json(result)
 
