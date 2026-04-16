@@ -344,58 +344,58 @@ export function AuthProvider({ children }) {
 
   async function handleSignOut() {
     if (!supabase) return
-    // Revoke the FCM/APNs subscription on the backend BEFORE the JWT is
-    // invalidated. resetPushState alone just clears the in-memory flag; the
-    // server row survives and the old device keeps receiving pushes for the
-    // logged-out user.
-    //
-    // Both getSession() and signOut() can hang on an orphaned Supabase
-    // LocalLock (see getSessionSafe in src/lib/supabase.js). Every await
-    // here is bounded by a timeout, and we always fall through to manually
-    // purging the sb-*-auth-token storage + forcing user=null so the UI
-    // updates even if supabase-js never resolves.
-    try {
-      const session = await getSessionSafe()
-      const accessToken = session?.access_token
-      if (accessToken) {
-        await Promise.race([
-          teardownPushNotifications(accessToken),
-          new Promise((r) => setTimeout(r, 2000)),
-        ])
-      }
-    } catch {
-      // non-fatal — sign-out should still proceed
-    }
 
-    try {
-      await Promise.race([
-        supabase.auth.signOut({ scope: 'local' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 2000)),
-      ])
-    } catch {
-      // supabase-js hung or errored — wipe the auth tokens by hand so the
-      // next render treats us as signed out.
-      try {
-        const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'))
-        keys.forEach((k) => localStorage.removeItem(k))
-      } catch {}
-    }
-
-    // Force user state to null in case onAuthStateChange never fires
-    // (it won't if we fell through the signOut timeout above).
+    // Update the UI FIRST so sign-out feels instant. Everything below — push
+    // teardown, supabase signOut, storage wipe — runs in the background with
+    // its own timeouts. Previously we awaited all of that before flipping
+    // setUser(null), which left the UI in a signed-in state for up to 4s
+    // while the Supabase auth lock drained.
     setUser(null)
-
-    // Clear all app-specific storage to prevent data leakage between users
     sessionStorage.removeItem('civicProfile')
     sessionStorage.removeItem('civicInteractions')
     sessionStorage.removeItem('ck_joined_classrooms')
     localStorage.removeItem('ck_offline_queue')
     resetPushState()
-
-    // Belt-and-suspenders: if supabase-js timed out above, onAuthStateChange
-    // may never fire and other tabs won't hear about the sign-out. Post the
-    // event on our own channel so they reload either way.
+    // Tell peer tabs immediately so they also drop state without waiting on
+    // the local teardown to finish.
     broadcastAuthChange('SIGNED_OUT')
+
+    // Revoke the FCM/APNs subscription on the backend BEFORE the JWT is
+    // invalidated. The in-memory reset above is not enough — the server row
+    // survives and the old device keeps receiving pushes for the logged-out
+    // user.
+    //
+    // Both getSession() and signOut() can hang on an orphaned Supabase
+    // LocalLock (see getSessionSafe in src/lib/supabase.js). Every await is
+    // bounded by a timeout, and we fall through to manually purging
+    // sb-*-auth-token storage so persisted state matches the in-memory
+    // setUser(null) above even if supabase-js never resolves.
+    ;(async () => {
+      try {
+        const session = await getSessionSafe()
+        const accessToken = session?.access_token
+        if (accessToken) {
+          await Promise.race([
+            teardownPushNotifications(accessToken),
+            new Promise((r) => setTimeout(r, 2000)),
+          ])
+        }
+      } catch {
+        // non-fatal
+      }
+
+      try {
+        await Promise.race([
+          supabase.auth.signOut({ scope: 'local' }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 2000)),
+        ])
+      } catch {
+        try {
+          const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'))
+          keys.forEach((k) => localStorage.removeItem(k))
+        } catch {}
+      }
+    })()
   }
 
   return (
