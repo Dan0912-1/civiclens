@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react'
+import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase, getSessionSafe, withAuthTimeout, broadcastAuthChange, onAuthBroadcast } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
 import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
@@ -41,6 +41,10 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Tracks whether onAuthStateChange has already delivered a session so the
+  // mount-time getSession race doesn't clobber a valid user with null when
+  // its 3s timeout arm fires.
+  const authResolvedRef = useRef(false)
 
   useEffect(() => {
     if (!supabase) {
@@ -63,7 +67,11 @@ export function AuthProvider({ children }) {
       sessionLoader,
       new Promise((r) => setTimeout(() => r(null), 3000)),
     ]).then((session) => {
-      setUser(session?.user ?? null)
+      // If onAuthStateChange already resolved the session, don't overwrite it.
+      // Otherwise the 3s-timeout arm can null a valid user mid-hydration.
+      if (!authResolvedRef.current) {
+        setUser(session?.user ?? null)
+      }
       setLoading(false)
       cleanOAuthParams()
     })
@@ -78,7 +86,11 @@ export function AuthProvider({ children }) {
     }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      authResolvedRef.current = true
       setUser(session?.user ?? null)
+      // Once supabase has fired any event we trust its view — flip loading off
+      // even if the mount-time race is still in flight.
+      setLoading(false)
       cleanOAuthParams()
 
       // Tell other tabs so they reload and pick up the new session (or the
@@ -130,17 +142,29 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  // Cross-tab auth coordination. If another tab signs in or out, reload
-  // this tab so it picks up the fresh session (or clears a stale one).
-  // This prevents the "Tab A is signed in as X, Tab B signs in as Y,
-  // Tab A still shows X" class of bugs.
+  // Cross-tab auth coordination. If another tab signs in or out, re-read
+  // the session in-place so we pick up the fresh one (or clear a stale one)
+  // without a full page reload — reloads interrupted navigation and caused
+  // protected pages like /settings to briefly render their signed-out
+  // fallback while the AuthProvider rehydrated.
   useEffect(() => {
-    return onAuthBroadcast((msg) => {
+    return onAuthBroadcast(async (msg) => {
       if (!msg?.event) return
-      if (msg.event === 'SIGNED_IN' || msg.event === 'SIGNED_OUT') {
+      if (msg.event === 'SIGNED_OUT') {
+        setUser(null)
+        sessionStorage.removeItem('civicProfile')
+        sessionStorage.removeItem('civicInteractions')
+        sessionStorage.removeItem('ck_joined_classrooms')
+        localStorage.removeItem('ck_offline_queue')
+        resetPushState()
+        return
+      }
+      if (msg.event === 'SIGNED_IN') {
         // Small delay so the tab that fired the broadcast can finish
-        // writing localStorage before we reload.
-        setTimeout(() => { window.location.reload() }, 150)
+        // writing localStorage before we read it.
+        await new Promise((r) => setTimeout(r, 150))
+        const session = await getSessionSafe()
+        setUser(session?.user ?? null)
       }
     })
   }, [])

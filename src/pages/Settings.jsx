@@ -9,10 +9,22 @@ const API_BASE = getApiBase()
 
 export default function Settings() {
   const navigate = useNavigate()
-  const { user, signOut } = useAuth()
+  const { user, loading, signOut } = useAuth()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState('')
+
+  if (loading) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.container}>
+          <div className={styles.loading}>
+            <div className={styles.spinner} />
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   if (!user) {
     return (

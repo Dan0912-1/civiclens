@@ -13,7 +13,7 @@ import styles from './ClassroomDetail.module.css'
 export default function ClassroomDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
   const [classroom, setClassroom] = useState(null)
   const [assignments, setAssignments] = useState([])
   const [stats, setStats] = useState(null)
@@ -27,9 +27,10 @@ export default function ClassroomDetail() {
   const [completionsLoading, setCompletionsLoading] = useState(false)
 
   useEffect(() => {
+    if (authLoading) return
     if (!user) { navigate('/'); return }
     loadData()
-  }, [user, id])
+  }, [user, authLoading, id])
 
   async function getToken() {
     try {
