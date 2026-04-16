@@ -14,9 +14,20 @@ import { billUpdateEmail } from './emailTemplates.js'
 import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
 import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
-// pdf-parse v2 exports a PDFParse class via its package entry (ESM). The old
-// v1 debug-on-import quirk is gone in v2, so we can import normally.
-import { PDFParse } from 'pdf-parse'
+// pdf-parse v2 pulls in pdfjs-dist, which references browser-only globals
+// (DOMMatrix, Path2D, ImageData) at module-evaluation time. On Vercel's Node
+// serverless runtime those globals do not exist, so a top-level import crashes
+// the function during cold start — taking down /api/health and every other
+// endpoint even though most have nothing to do with PDFs. Load it lazily the
+// first time a PDF actually needs parsing. Railway's long-lived Node also
+// tolerates this fine.
+let _PDFParsePromise = null
+function loadPDFParse() {
+  if (!_PDFParsePromise) {
+    _PDFParsePromise = import('pdf-parse').then(m => m.PDFParse)
+  }
+  return _PDFParsePromise
+}
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -3648,6 +3659,7 @@ async function extractTextFromLegiScanDoc(textData) {
   }
   if (mime.includes('pdf')) {
     try {
+      const PDFParse = await loadPDFParse()
       const parser = new PDFParse({ data: new Uint8Array(decoded) })
       const parsed = await parser.getText()
       await parser.destroy().catch(() => {})
@@ -3663,6 +3675,7 @@ async function extractTextFromLegiScanDoc(textData) {
   // Unknown mime — try PDF first (many bills are PDF with an odd mime),
   // then fall through to treating it as text.
   try {
+    const PDFParse = await loadPDFParse()
     const parser = new PDFParse({ data: new Uint8Array(decoded) })
     const parsed = await parser.getText()
     await parser.destroy().catch(() => {})
