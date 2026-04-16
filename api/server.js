@@ -1908,10 +1908,12 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       } else if (bill.isStateBill && !bill._localText) {
         // State bill missing text — try on-demand fetch from Open States
         let stateText = null
+        let stateScores = null
+        let stateExcerpt = null
         if (supabase) {
           const { data: dbBill } = await supabase
             .from('bills')
-            .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text')
+            .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text, section_topic_scores, structured_excerpt')
             .eq('jurisdiction', bill.state)
             .eq('bill_type', billType)
             .eq('bill_number', bill.number)
@@ -1919,12 +1921,14 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
             .single()
           if (dbBill?.full_text) {
             stateText = dbBill.full_text
+            stateScores = dbBill.section_topic_scores || null
+            stateExcerpt = dbBill.structured_excerpt || null
           } else if (dbBill?.openstates_id) {
             stateText = await fetchBillText(supabase, dbBill)
           }
         }
         billData = stateText
-          ? { text: stateText, wordCount: stateText.split(/\s+/).length, version: 'openstates_html', crsSummary: null, crsVersion: '' }
+          ? { text: stateText, wordCount: stateText.split(/\s+/).length, version: 'openstates_html', crsSummary: null, crsVersion: '', sectionTopicScores: stateScores, structuredExcerpt: stateExcerpt }
           : { text: null, wordCount: 0, version: '', crsSummary: null, crsVersion: '' }
       } else {
         billData = await fetchBillContent(bill.congress, billType, bill.number, bill.legiscan_bill_id)
@@ -2117,20 +2121,36 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     if (b.bill.isStateBill && !b.bill._localText && supabase) {
       const { data: dbBill } = await supabase
         .from('bills')
-        .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text')
+        .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text, section_topic_scores, structured_excerpt')
         .eq('jurisdiction', b.bill.state)
         .eq('bill_type', b.billType)
         .eq('bill_number', b.bill.number)
         .limit(1)
         .single()
       if (dbBill?.full_text) {
-        const billData = { text: dbBill.full_text, wordCount: dbBill.full_text.split(/\s+/).length, version: 'local', crsSummary: null, crsVersion: '' }
+        const billData = {
+          text: dbBill.full_text,
+          wordCount: dbBill.full_text.split(/\s+/).length,
+          version: 'local',
+          crsSummary: null,
+          crsVersion: '',
+          sectionTopicScores: dbBill.section_topic_scores || null,
+          structuredExcerpt: dbBill.structured_excerpt || null,
+        }
         return { ...b, billData }
       }
       if (dbBill?.openstates_id) {
         const text = await fetchBillText(supabase, dbBill)
         if (text) {
-          const billData = { text, wordCount: text.split(/\s+/).length, version: 'openstates_html', crsSummary: null, crsVersion: '' }
+          const billData = {
+            text,
+            wordCount: text.split(/\s+/).length,
+            version: 'openstates_html',
+            crsSummary: null,
+            crsVersion: '',
+            sectionTopicScores: dbBill?.section_topic_scores || null,
+            structuredExcerpt: dbBill?.structured_excerpt || null,
+          }
           return { ...b, billData }
         }
       }
@@ -3618,6 +3638,33 @@ async function fetchBillTextFromLegiScan(legiscanBillId, existingBillData = null
 
 // Fetch bill content, checking caches first, then LegiScan
 // Accepts either legiscanBillId (preferred) or congress/type/number (legacy)
+// Fetch precomputed topic scores (+ structured_excerpt for good measure)
+// from bills table. Small single-row read; cached indirectly via the L1
+// billData wrapper that holds the result of fetchBillContent.
+async function fetchBillPrecomputes(legiscanBillId, congress, type, number, jurisdiction) {
+  if (!supabase) return { sectionTopicScores: null, structuredExcerpt: null }
+  try {
+    let query = supabase.from('bills').select('section_topic_scores, structured_excerpt').limit(1)
+    if (legiscanBillId) {
+      query = query.eq('legiscan_bill_id', legiscanBillId)
+    } else if (jurisdiction && type && number) {
+      query = query
+        .eq('jurisdiction', jurisdiction)
+        .eq('bill_type', (type || '').toLowerCase().replace(/\./g, ''))
+        .eq('bill_number', number)
+    } else {
+      return { sectionTopicScores: null, structuredExcerpt: null }
+    }
+    const { data } = await query.maybeSingle()
+    return {
+      sectionTopicScores: data?.section_topic_scores || null,
+      structuredExcerpt: data?.structured_excerpt || null,
+    }
+  } catch {
+    return { sectionTopicScores: null, structuredExcerpt: null }
+  }
+}
+
 async function fetchBillContent(congress, type, number, legiscanBillId) {
   // Normalize cache key: always prefer legiscanId when available to prevent
   // the same bill being cached under two different keys
@@ -3632,12 +3679,17 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
   let dbCached = await getBillTextFromSupabase(canonicalKey)
   if (!dbCached && alternateKey) dbCached = await getBillTextFromSupabase(alternateKey)
   if (dbCached && (dbCached.bill_text || dbCached.crs_summary) && !isStaleBillTextCache(dbCached)) {
+    // Fetch precomputes alongside — these live in the bills table, not the
+    // bill_text_cache, so a separate lookup is needed. Cheap indexed read.
+    const precomputes = await fetchBillPrecomputes(legiscanBillId, congress, type, number, 'US')
     const result = {
       text: dbCached.bill_text || null,
       wordCount: dbCached.word_count || 0,
       version: dbCached.version || '',
       crsSummary: dbCached.crs_summary || null,
       crsVersion: dbCached.crs_version || '',
+      sectionTopicScores: precomputes.sectionTopicScores,
+      structuredExcerpt: precomputes.structuredExcerpt,
     }
     setCache(canonicalKey, result)
     return result
@@ -3665,6 +3717,11 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
     }
   }
 
+  // Also fetch precomputed topic scores + structured excerpt from bills
+  // table. These get populated at sync time; reading them here lets the
+  // personalize path short-circuit the live regex pass.
+  const precomputes = await fetchBillPrecomputes(legiscanBillId, congress, type, number, 'US')
+
   const result = {
     text: textResult?.text || null,
     wordCount: textResult?.wordCount || 0,
@@ -3672,6 +3729,8 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
     crsSummary: null, // LegiScan doesn't have CRS summaries
     crsVersion: '',
     meta: textResult?.meta || null, // canonical title/action from LegiScan
+    sectionTopicScores: precomputes.sectionTopicScores,
+    structuredExcerpt: precomputes.structuredExcerpt,
   }
 
   // Only cache GOOD results. A transient LegiScan failure or a degraded
@@ -3737,6 +3796,10 @@ function buildBillContent(billData, { userInterests = [] } = {}) {
     const { content, strategy } = pickBillContent(billData.text, {
       maxWords: BILL_TEXT_WORD_LIMIT,
       userInterests,
+      // Pass precomputed scores if the sync job populated them. When valid
+      // this short-circuits the live regex pass in getRelevantSections —
+      // turns a CPU-bound N×M loop into a JSONB lookup + sum.
+      precomputedScores: billData.sectionTopicScores || null,
     })
 
     const labelByStrategy = {
