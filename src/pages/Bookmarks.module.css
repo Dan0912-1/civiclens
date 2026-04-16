@@ -18,10 +18,23 @@
 .pullSpinnerActive {
   width: 24px;
   height: 24px;
+  border-radius: 50%;
+  /* Fallback for browsers without @property support */
   border: 3px solid var(--border);
   border-top-color: var(--navy);
-  border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+/* Progress-fill on top when the browser supports conic-gradient + mask.
+   Arc grows from 0° to 360° to visually "complete the circle". */
+@supports (background: conic-gradient(red, blue)) and ((mask: radial-gradient(#000, transparent)) or (-webkit-mask: radial-gradient(#000, transparent))) {
+  .pullSpinnerActive {
+    border: none;
+    background: conic-gradient(var(--navy) var(--ck-fill, 0deg), var(--border) 0deg);
+    -webkit-mask: radial-gradient(circle, transparent calc(50% - 3px), #000 calc(50% - 2px));
+            mask: radial-gradient(circle, transparent calc(50% - 3px), #000 calc(50% - 2px));
+    animation: ck-spinner-fill 1.4s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+  }
 }
 
 @keyframes spin {
@@ -70,6 +83,8 @@
   padding: var(--space-3xl) var(--space-xl);
   color: var(--text-muted);
   animation: fadeUp 0.5s ease forwards;
+  max-width: 440px;
+  margin: 0 auto;
 }
 
 .empty h2 {
@@ -79,6 +94,40 @@
 
 .empty p {
   margin-bottom: var(--space-lg);
+}
+
+.emptyIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto var(--space-lg);
+  border-radius: 50%;
+  background: var(--cream-dark);
+  color: var(--amber);
+}
+
+.emptyIcon svg {
+  width: 30px;
+  height: 30px;
+}
+
+.emptyTitle {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: var(--space-sm);
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.emptyBody {
+  color: var(--text-secondary);
+  font-size: 0.98rem;
+  line-height: 1.55;
+  margin-bottom: var(--space-xl);
 }
 
 .ctaBtn {

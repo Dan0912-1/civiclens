@@ -157,8 +157,9 @@ export default function Bookmarks() {
           </p>
         </div>
 
-        {/* Notification preferences */}
-        {isNative && (
+        {/* Notification preferences — hidden when empty since they're meaningless
+            without saved bills to watch. Shown once the user has bookmarks. */}
+        {bookmarks.length > 0 && isNative && (
           <div className={styles.notifBar}>
             <div>
               <div className={styles.notifLabel}>Push notifications</div>
@@ -174,26 +175,37 @@ export default function Bookmarks() {
             </button>
           </div>
         )}
-        <div className={styles.notifBar}>
-          <div>
-            <div className={styles.notifLabel}>Email notifications</div>
-            <div className={styles.notifDesc}>Get emailed when a saved bill changes status in Congress or your state legislature</div>
+        {bookmarks.length > 0 && (
+          <div className={styles.notifBar}>
+            <div>
+              <div className={styles.notifLabel}>Email notifications</div>
+              <div className={styles.notifDesc}>Get emailed when a saved bill changes status in Congress or your state legislature</div>
+            </div>
+            <button
+              className={styles.toggle}
+              data-on={emailNotif}
+              onClick={toggleEmailNotif}
+              aria-label={emailNotif ? 'Disable email notifications' : 'Enable email notifications'}
+            >
+              <div className={styles.toggleKnob} />
+            </button>
           </div>
-          <button
-            className={styles.toggle}
-            data-on={emailNotif}
-            onClick={toggleEmailNotif}
-            aria-label={emailNotif ? 'Disable email notifications' : 'Enable email notifications'}
-          >
-            <div className={styles.toggleKnob} />
-          </button>
-        </div>
+        )}
 
         {bookmarks.length === 0 ? (
           <div className={styles.empty}>
-            <p>No bookmarked bills yet. Browse your legislation and bookmark bills you want to track.</p>
+            <div className={styles.emptyIcon} aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"
+                      stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <h2 className={styles.emptyTitle}>No saved bills yet</h2>
+            <p className={styles.emptyBody}>
+              Bookmark bills from your legislation feed to track them here. We'll let you know when their status changes.
+            </p>
             <button className={styles.ctaBtn} onClick={() => navigate('/results')}>
-              View my legislation
+              Browse legislation
             </button>
           </div>
         ) : (

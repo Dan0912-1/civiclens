@@ -18,10 +18,21 @@
 .pullSpinnerActive {
   width: 24px;
   height: 24px;
+  border-radius: 50%;
+  /* Fallback for browsers without @property support */
   border: 3px solid var(--border);
   border-top-color: var(--navy);
-  border-radius: 50%;
   animation: spin 0.8s linear infinite;
+}
+
+@supports (background: conic-gradient(red, blue)) and ((mask: radial-gradient(#000, transparent)) or (-webkit-mask: radial-gradient(#000, transparent))) {
+  .pullSpinnerActive {
+    border: none;
+    background: conic-gradient(var(--navy) var(--ck-fill, 0deg), var(--border) 0deg);
+    -webkit-mask: radial-gradient(circle, transparent calc(50% - 3px), #000 calc(50% - 2px));
+            mask: radial-gradient(circle, transparent calc(50% - 3px), #000 calc(50% - 2px));
+    animation: ck-spinner-fill 1.4s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+  }
 }
 
 @keyframes spin {
