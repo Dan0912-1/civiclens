@@ -2870,12 +2870,23 @@ app.delete('/api/account', authLimiter, async (req, res) => {
 
     // Best-effort: explicitly clean tables that may not have cascade FKs
     // (cache rows, feedback, etc.) — ignore errors so deletion never blocks.
+    //
+    // classroom_assignments.assigned_by references auth.users(id) WITHOUT
+    // `on delete cascade`, so a teacher who has ever posted an assignment
+    // can't be deleted by admin.deleteUser until these rows are cleared
+    // first. Their classrooms cascade-delete via owner_id, which cleans
+    // assignments in those classrooms — this handles the remaining case
+    // where the teacher made an assignment in another teacher's classroom
+    // (classrooms can have co-teachers via classroom_members.role).
+    // A migration to add `on delete cascade` to assigned_by lives in
+    // supabase/add_cascade_classroom_assignments.sql.
     const userId = user.id
     await Promise.allSettled([
       supabase.from('bookmarks').delete().eq('user_id', userId),
       supabase.from('bill_interactions').delete().eq('user_id', userId),
       supabase.from('push_tokens').delete().eq('user_id', userId),
       supabase.from('user_profiles').delete().eq('id', userId),
+      supabase.from('classroom_assignments').delete().eq('assigned_by', userId),
     ])
 
     // Final step: delete the auth user. Service-role key is required.

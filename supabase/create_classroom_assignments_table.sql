@@ -4,7 +4,7 @@ create table if not exists classroom_assignments (
   classroom_id  uuid not null references classrooms(id) on delete cascade,
   bill_id       text not null,
   bill_data     jsonb not null default '{}',
-  assigned_by   uuid not null references auth.users(id),
+  assigned_by   uuid not null references auth.users(id) on delete cascade,
   instructions  text check (instructions is null or char_length(instructions) <= 500),
   due_date      date,
   created_at    timestamptz not null default now()
