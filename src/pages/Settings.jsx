@@ -53,27 +53,41 @@ export default function Settings() {
         return
       }
 
-      const resp = await fetch(`${API_BASE}/api/account`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
+      // Bound the request so a stalled backend can't leave the button on
+      // "Deleting..." forever. 15s covers the worst realistic cascade-
+      // delete path (Supabase admin API + related-table cleanup) with
+      // margin.
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 15000)
+      let resp
+      try {
+        resp = await fetch(`${API_BASE}/api/account`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeoutId)
+      }
 
       if (resp.ok) {
-        sessionStorage.clear()
-        // Don't await signOut: the access token was just revoked
-        // server-side, and supabase.auth.signOut() can hang with a dead
-        // token. Fire-and-forget; handleSignOut has its own timeouts
-        // and will force user=null regardless.
-        signOut().catch((err) => console.error('[delete-account] signOut:', err))
+        // signOut() now clears user state synchronously before its async
+        // teardown — no need to fire-and-forget or await completion.
+        signOut()
         navigate('/')
       } else {
         const data = await resp.json().catch(() => ({}))
-        setError(data.error || 'Failed to delete account. Please try again.')
+        console.error('[delete-account] server error:', resp.status, data)
+        setError(data.error || `Failed to delete account (${resp.status}). Please try again.`)
         setDeleting(false)
       }
     } catch (err) {
       console.error('[delete-account] error:', err)
-      setError('Network error. Please check your connection and try again.')
+      if (err?.name === 'AbortError') {
+        setError('The request timed out. Please try again.')
+      } else {
+        setError('Network error. Please check your connection and try again.')
+      }
       setDeleting(false)
     }
   }
