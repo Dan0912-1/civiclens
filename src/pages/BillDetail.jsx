@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
@@ -99,7 +99,7 @@ export default function BillDetail() {
     const doTrack = async () => {
       let token = null
       if (user && supabase) {
-        const { data: { session } } = await supabase.auth.getSession()
+        const session = await getSessionSafe()
         token = session?.access_token
       }
       trackInteraction(user?.id, token, {

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { supabase, getSessionSafe } from '../lib/supabase'
+import { supabase, getSessionSafe, withAuthTimeout, broadcastAuthChange, onAuthBroadcast } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
 import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
 import { Capacitor } from '@capacitor/core'
@@ -49,11 +49,22 @@ export function AuthProvider({ children }) {
     }
 
     // Let Supabase process OAuth params FIRST (code= for PKCE, access_token for implicit)
-    // Do NOT strip URL params before getSession — Supabase needs them to exchange the code
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    // Do NOT strip URL params before getSession — Supabase needs them to exchange the code.
+    //
+    // If OAuth params are present, we *must* let supabase.auth.getSession() run so it can
+    // exchange the code. Otherwise, use getSessionSafe which bypasses the lock on timeout —
+    // this stops Tab B from hanging forever in loading=true when Tab A holds the lock.
+    const hasOAuthParams = window.location.hash.includes('access_token')
+      || window.location.search.includes('code=')
+    const sessionLoader = hasOAuthParams
+      ? supabase.auth.getSession().then(({ data }) => data?.session ?? null).catch(() => null)
+      : getSessionSafe()
+    Promise.race([
+      sessionLoader,
+      new Promise((r) => setTimeout(() => r(null), 3000)),
+    ]).then((session) => {
       setUser(session?.user ?? null)
       setLoading(false)
-      // Clean up OAuth params from URL AFTER session is established
       cleanOAuthParams()
     })
 
@@ -69,6 +80,14 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user ?? null)
       cleanOAuthParams()
+
+      // Tell other tabs so they reload and pick up the new session (or the
+      // absence of one). SIGNED_IN and SIGNED_OUT are the auth changes other
+      // tabs care about; TOKEN_REFRESHED happens on every tick and shouldn't
+      // reload peer tabs.
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        broadcastAuthChange(event)
+      }
 
       // Auto-create profile row for new OAuth sign-ups so they don't appear "profileless"
       if (event === 'SIGNED_IN' && session?.user) {
@@ -111,6 +130,21 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Cross-tab auth coordination. If another tab signs in or out, reload
+  // this tab so it picks up the fresh session (or clears a stale one).
+  // This prevents the "Tab A is signed in as X, Tab B signs in as Y,
+  // Tab A still shows X" class of bugs.
+  useEffect(() => {
+    return onAuthBroadcast((msg) => {
+      if (!msg?.event) return
+      if (msg.event === 'SIGNED_IN' || msg.event === 'SIGNED_OUT') {
+        // Small delay so the tab that fired the broadcast can finish
+        // writing localStorage before we reload.
+        setTimeout(() => { window.location.reload() }, 150)
+      }
+    })
+  }, [])
+
   // On native: listen for deep-link callback after Google OAuth
   useEffect(() => {
     if (!isNative || !supabase) return
@@ -124,7 +158,10 @@ export function AuthProvider({ children }) {
       const accessToken = params.get('access_token')
       const refreshToken = params.get('refresh_token')
       if (accessToken && refreshToken) {
-        await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+        await withAuthTimeout(
+          supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }),
+          { label: 'setSession' },
+        )
       }
     }).then(h => { handle = h })
     return () => { handle?.remove() }
@@ -135,22 +172,28 @@ export function AuthProvider({ children }) {
 
     try {
       if (isNative) {
-        const { data, error } = await supabase.auth.signInWithOAuth({
-          provider: 'google',
-          options: {
-            redirectTo: 'com.danieljacius.capitolkey://auth-callback',
-            skipBrowserRedirect: true,
-          },
-        })
+        const { data, error } = await withAuthTimeout(
+          supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+              redirectTo: 'com.danieljacius.capitolkey://auth-callback',
+              skipBrowserRedirect: true,
+            },
+          }),
+          { label: 'Google sign-in' },
+        )
         if (error) return { error }
         if (data?.url) await Browser.open({ url: data.url })
         return { error: null }
       }
 
-      return await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: window.location.origin },
-      })
+      return await withAuthTimeout(
+        supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: window.location.origin },
+        }),
+        { label: 'Google sign-in' },
+      )
     } catch (err) {
       console.error('[Google OAuth] Failed:', err)
       return { error: { message: err?.message || 'Google sign-in failed. Please try again.' } }
@@ -179,11 +222,14 @@ export function AuthProvider({ children }) {
           return { error: { message: 'No identity token from Apple. Please try again.' } }
         }
 
-        const { data, error } = await supabase.auth.signInWithIdToken({
-          provider: 'apple',
-          token: idToken,
-          nonce: nonce,
-        })
+        const { data, error } = await withAuthTimeout(
+          supabase.auth.signInWithIdToken({
+            provider: 'apple',
+            token: idToken,
+            nonce: nonce,
+          }),
+          { label: 'Apple sign-in' },
+        )
         if (error) {
           console.error('[Apple Sign In] Supabase token exchange failed:', error.message, error)
         }
@@ -199,31 +245,43 @@ export function AuthProvider({ children }) {
 
     // On Android native, use OAuth browser flow
     if (isNative) {
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'apple',
-        options: {
-          redirectTo: 'com.danieljacius.capitolkey://auth-callback',
-          skipBrowserRedirect: true,
-        },
-      })
+      const { data, error } = await withAuthTimeout(
+        supabase.auth.signInWithOAuth({
+          provider: 'apple',
+          options: {
+            redirectTo: 'com.danieljacius.capitolkey://auth-callback',
+            skipBrowserRedirect: true,
+          },
+        }),
+        { label: 'Apple sign-in' },
+      )
       if (error) return { error }
       if (data?.url) await Browser.open({ url: data.url })
       return { error: null }
     }
 
     // Web
-    return supabase.auth.signInWithOAuth({
-      provider: 'apple',
-      options: { redirectTo: window.location.origin },
-    })
+    return withAuthTimeout(
+      supabase.auth.signInWithOAuth({
+        provider: 'apple',
+        options: { redirectTo: window.location.origin },
+      }),
+      { label: 'Apple sign-in' },
+    )
   }
 
   async function signInWithEmail(email, password) {
     if (!supabase) return { error: { message: 'Auth not configured' } }
-    const result = await supabase.auth.signInWithPassword({ email, password })
+    const result = await withAuthTimeout(
+      supabase.auth.signInWithPassword({ email, password }),
+      { label: 'Sign in' },
+    )
     if (result.error?.message === 'Email not confirmed') {
       // Resend confirmation and give user a better message
-      await supabase.auth.resend({ type: 'signup', email })
+      await withAuthTimeout(
+        supabase.auth.resend({ type: 'signup', email }),
+        { label: 'Resend confirmation' },
+      )
       return { error: { message: 'Please check your email for a confirmation link. We just resent it.' } }
     }
     return result
@@ -234,11 +292,14 @@ export function AuthProvider({ children }) {
     const redirectTo = isNative
       ? 'com.danieljacius.capitolkey://auth-callback'
       : window.location.origin
-    const result = await supabase.auth.signUp({
-      email,
-      password,
-      options: { emailRedirectTo: redirectTo },
-    })
+    const result = await withAuthTimeout(
+      supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: redirectTo },
+      }),
+      { label: 'Sign up' },
+    )
     // If identities array is empty, email is already registered
     if (result.data?.user?.identities?.length === 0) {
       return { error: { message: 'An account with this email already exists. Try signing in instead.' } }
@@ -251,7 +312,10 @@ export function AuthProvider({ children }) {
     const redirectTo = isNative
       ? 'com.danieljacius.capitolkey://auth-callback'
       : window.location.origin
-    return supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    return withAuthTimeout(
+      supabase.auth.resetPasswordForEmail(email, { redirectTo }),
+      { label: 'Password reset' },
+    )
   }
 
   async function handleSignOut() {
@@ -303,6 +367,11 @@ export function AuthProvider({ children }) {
     sessionStorage.removeItem('ck_joined_classrooms')
     localStorage.removeItem('ck_offline_queue')
     resetPushState()
+
+    // Belt-and-suspenders: if supabase-js timed out above, onAuthStateChange
+    // may never fire and other tabs won't hear about the sign-out. Post the
+    // event on our own channel so they reload either way.
+    broadcastAuthChange('SIGNED_OUT')
   }
 
   return (

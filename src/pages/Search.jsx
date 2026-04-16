@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
-import { supabase } from '../lib/supabase'
+import { supabase, getSessionSafe } from '../lib/supabase'
 import BillCard from '../components/BillCard.jsx'
 import { makeBillId } from '../lib/billId'
 import styles from './Search.module.css'
@@ -224,7 +224,7 @@ export default function Search() {
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null
     if (user && supabase) {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getSessionSafe()
       token = session?.access_token
     }
     trackInteraction(user?.id, token, { billId, actionType, topicTag })

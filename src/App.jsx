@@ -1,7 +1,7 @@
 import { useEffect, useState, Suspense, lazy } from 'react'
 import { Routes, Route, useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
-import { supabase } from './lib/supabase'
+import { supabase, getSessionSafe } from './lib/supabase'
 import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
 import { flush as flushOfflineQueue } from './lib/offlineQueue'
 import { getApiBase } from './lib/api'
@@ -182,7 +182,7 @@ export default function App() {
   // Initialize push notifications for logged-in native app users
   useEffect(() => {
     if (!user || !supabase) return
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    getSessionSafe().then((session) => {
       if (session?.access_token) {
         initPushNotifications(user.id, session.access_token)
       }
