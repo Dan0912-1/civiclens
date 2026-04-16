@@ -1,6 +1,20 @@
 // api/server.js — CapitolKey Backend
 // All API keys live here, never in the frontend
 
+// Sentry must be imported and initialized before any other modules that we
+// want instrumented (express, etc.). Safe no-op when SENTRY_DSN isn't set,
+// so local dev and misconfigured envs just don't report.
+import * as Sentry from '@sentry/node'
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: 0.1,
+    // Don't capture PII (student profiles, bill text). Errors only.
+    sendDefaultPii: false,
+  })
+}
+
 import express from 'express'
 import helmet from 'helmet'
 import cors from 'cors'
@@ -40,7 +54,14 @@ import { dirname, join } from 'path'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'))
 
-process.on('unhandledRejection', (reason) => { console.error('[unhandledRejection]', reason) })
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
+  Sentry.captureException(reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+  Sentry.captureException(err)
+})
 
 // Extract the first balanced JSON object from a Claude response. Handles
 // ```json fences, leading prose, and — critically — trailing commentary that
@@ -104,20 +125,41 @@ function validatePersonalizeShape(parsed) {
     parsed.topic_tag = 'Other'
   }
 
-  // civic_actions: accept string (split), array of strings, or missing
-  // (default empty). Always emit array of strings, max 5, max 200 chars
-  // each, deduped.
+  // civic_actions: the frontend renders {action, how, time} objects (see
+  // BillCard.jsx and BillDetail.jsx). Accept the canonical object shape,
+  // plus legacy string/array-of-strings shapes from older prompt versions,
+  // and normalize everything to the object shape. Max 5 actions.
   let actions = parsed.civic_actions
   if (typeof actions === 'string') {
     actions = actions.split(/\r?\n|•|\*/).map(s => s.trim()).filter(Boolean)
   }
   if (!Array.isArray(actions)) actions = []
+  const seen = new Set()
   actions = actions
-    .map(a => (typeof a === 'string' ? a.trim() : ''))
+    .map(a => {
+      if (typeof a === 'string') {
+        const s = a.trim()
+        if (!s) return null
+        return { action: s.slice(0, 120), how: '', time: '' }
+      }
+      if (a && typeof a === 'object') {
+        const action = typeof a.action === 'string' ? a.action.trim().slice(0, 120) : ''
+        const how = typeof a.how === 'string' ? a.how.trim().slice(0, 500) : ''
+        const time = typeof a.time === 'string' ? a.time.trim().slice(0, 40) : ''
+        if (!action && !how) return null
+        return { action: action || 'Take action', how, time }
+      }
+      return null
+    })
     .filter(Boolean)
-    .map(a => a.slice(0, 200))
+    .filter(a => {
+      const key = `${a.action}|${a.how}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     .slice(0, 5)
-  parsed.civic_actions = Array.from(new Set(actions))
+  parsed.civic_actions = actions
 
   return parsed
 }
@@ -5935,6 +5977,12 @@ app.get('/api/admin/feedback', requireAdmin, async (req, res) => {
   res.json({ data })
 })
 
+// Sentry's Express error handler must be registered after all routes but
+// before any other error-handling middleware. It reports 5xx errors to
+// Sentry and re-throws so any following error middleware still runs.
+// Safe to register even when SENTRY_DSN is unset — Sentry is inert then.
+Sentry.setupExpressErrorHandler(app)
+
 const PORT = process.env.PORT || 3001
 const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ CapitolKey server running on http://0.0.0.0:${PORT}`)
@@ -5944,6 +5992,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Supabase cache: ${supabase ? '✓ connected' : '✗ disabled (in-memory fallback)'}`)
   console.log(`   Resend email: ${resend ? '✓ configured' : '✗ disabled'}`)
   console.log(`   FCM push: ${fcmAuth ? '✓ configured (V1 API)' : '✗ disabled'}`)
+  console.log(`   Sentry: ${process.env.SENTRY_DSN ? '✓ reporting enabled' : '✗ disabled (set SENTRY_DSN)'}`)
   await ensureBillTextCache()
 })
 

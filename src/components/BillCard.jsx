@@ -284,8 +284,21 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                   {analysis.civic_actions.map((a, i) => (
                     <div key={i} className={styles.actionItem}>
                       <div className={styles.actionTitle}>{a.action}</div>
-                      <p className={styles.actionHow}>{a.how}</p>
-                      <span className={styles.actionTime}>⏱ {a.time}</span>
+                      <p className={styles.actionHow}>{
+                        (a.how || '').split(/(https?:\/\/[^\s,)]+)/g).map((part, j) =>
+                          /^https?:\/\//.test(part)
+                            ? <a
+                                key={j}
+                                href={part}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={e => e.stopPropagation()}
+                                style={{ color: 'var(--amber)', textDecoration: 'underline' }}
+                              >{part}</a>
+                            : part
+                        )
+                      }</p>
+                      {a.time && <span className={styles.actionTime}>⏱ {a.time}</span>}
                     </div>
                   ))}
                 </div>

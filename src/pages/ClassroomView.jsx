@@ -81,7 +81,13 @@ export default function ClassroomView() {
                         className={styles.assignmentTitle}
                         onClick={() => {
                           if (congress && billType && billNum) {
-                            navigate(`/bill/${congress}/${billType}/${billNum}`)
+                            navigate(`/bill/${congress}/${billType}/${billNum}`, {
+                              state: {
+                                assignment: a.id,
+                                classroom: classroom?.id,
+                                assignmentInstructions: a.instructions || '',
+                              },
+                            })
                           }
                         }}
                       >
