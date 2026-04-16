@@ -258,7 +258,11 @@ export default function ClassroomDetail() {
                           const number = bd.number || bd.bill_number
                           if (congress && type && number) {
                             navigate(`/bill/${congress}/${type}/${number}`, {
-                              state: { assignment: a.id, classroom: id }
+                              state: {
+                                assignment: a.id,
+                                classroom: id,
+                                assignmentInstructions: a.instructions || '',
+                              },
                             })
                           }
                         }}

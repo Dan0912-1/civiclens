@@ -52,6 +52,7 @@ export default function BillDetail() {
   const skipPersonalization = location.state?.skipPersonalization || false
   const assignmentId = location.state?.assignment || null
   const assignmentClassroomId = location.state?.classroom || null
+  const assignmentInstructions = location.state?.assignmentInstructions || ''
 
   const [bill, setBill] = useState(passedBill)
   const [analysis, setAnalysis] = useState(passedAnalysis)
@@ -385,13 +386,20 @@ export default function BillDetail() {
 
         {assignmentId && (
           <div className={styles.assignmentBanner}>
-            <span className={styles.assignmentBannerText}>
-              {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
-            </span>
-            {!assignmentCompleted && (
-              <button className={styles.markCompleteBtn} onClick={handleMarkComplete}>
-                Mark as Read
-              </button>
+            <div className={styles.assignmentBannerMain}>
+              <span className={styles.assignmentBannerText}>
+                {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
+              </span>
+              {!assignmentCompleted && user && (
+                <button className={styles.markCompleteBtn} onClick={handleMarkComplete}>
+                  Mark as Read
+                </button>
+              )}
+            </div>
+            {assignmentInstructions && (
+              <p className={styles.assignmentBannerInstructions}>
+                <strong>Your teacher's note:</strong> {assignmentInstructions}
+              </p>
             )}
           </div>
         )}
