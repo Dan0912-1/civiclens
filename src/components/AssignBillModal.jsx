@@ -352,7 +352,7 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
           </div>
         )}
 
-        {error && <p className={styles.error}>{error}</p>}
+        {error && <p className={styles.error} role="alert" aria-live="assertive">{error}</p>}
       </div>
     </div>
   )
