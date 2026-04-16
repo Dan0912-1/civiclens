@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
-import { supabase } from '../lib/supabase'
+import { supabase, getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
@@ -82,7 +82,7 @@ export default function Results() {
       if (user && supabase) {
         // Sync local interactions to server if user just logged in
         if (!prevUserRef.current) {
-          const { data: { session } } = await supabase.auth.getSession()
+          const session = await getSessionSafe()
           if (session?.access_token) {
             await syncLocalInteractions(user.id, session.access_token)
             const summary = await getInteractionSummary(session.access_token)
@@ -281,7 +281,7 @@ export default function Results() {
       }
       const headers = { 'Content-Type': 'application/json' }
       // Pass auth token so backend can score bills using interaction history
-      const session = supabase ? (await supabase.auth.getSession())?.data?.session : null
+      const session = supabase ? await getSessionSafe() : null
       if (session?.access_token) headers['Authorization'] = `Bearer ${session.access_token}`
 
       const resp = await fetch(`${API_BASE}/api/legislation`, {
@@ -340,7 +340,7 @@ export default function Results() {
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null
     if (user && supabase) {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getSessionSafe()
       token = session?.access_token
     }
     trackInteraction(user?.id, token, { billId, actionType, topicTag })

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getBookmarks, removeBookmark, getNotificationPrefs, setNotificationPrefs } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
-import { supabase } from '../lib/supabase'
+import { supabase, getSessionSafe } from '../lib/supabase'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import AuthModal from '../components/AuthModal.jsx'
@@ -64,7 +64,7 @@ export default function Bookmarks() {
     }).catch(() => setLoading(false))
     // Load notification preferences
     if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
+      getSessionSafe().then((session) => {
         if (session?.access_token) {
           getNotificationPrefs(session.access_token).then(prefs => {
             setEmailNotif(prefs.email_notifications ?? false)
@@ -79,7 +79,7 @@ export default function Bookmarks() {
     const next = !emailNotif
     setEmailNotif(next)
     if (supabase) {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getSessionSafe()
       if (session?.access_token) {
         await setNotificationPrefs(session.access_token, { email_notifications: next })
       }
@@ -90,7 +90,7 @@ export default function Bookmarks() {
     const next = !pushNotif
     setPushNotif(next)
     if (supabase) {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getSessionSafe()
       if (session?.access_token) {
         await setNotificationPrefs(session.access_token, { push_notifications: next })
       }
