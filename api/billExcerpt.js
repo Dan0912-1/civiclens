@@ -300,6 +300,58 @@ function looksLikeEffectiveDate(sectionText) {
   return EFFECTIVE_DATE_PATTERNS.some((re) => re.test(snippet))
 }
 
+// Single source of truth for the section-splitting regex. Both the
+// request-time retriever and the sync-time precomputer split the same way
+// so precomputed scores can be indexed by section position.
+const SECTION_SPLIT_REGEX = /\s+(?=(?:SEC\.?|SECTION|Sec\.?|§)\s*\d{1,4}\.?\s+[A-Z])/
+
+/**
+ * Sync-time precompute: score every section of a bill against ALL topic
+ * keyword lists once, store the result in bills.section_topic_scores as
+ * JSONB. At request time getRelevantSections() reads these scores directly
+ * instead of running the regex pass — turns a CPU-bound N×M loop into an
+ * O(sections × studentTopics) JSON lookup + sum.
+ *
+ * Returns null for bills too short or without section structure (same
+ * gate as getRelevantSections so the contract matches).
+ *
+ * Schema (v1):
+ *   {
+ *     v: 1,
+ *     count: <int>,                   -- number of sections
+ *     scores: [
+ *       { idx: 0, wc: 45,  hits: { education: 3 } },
+ *       { idx: 1, wc: 220, hits: { environment: 2, technology: 1 } },
+ *       ...
+ *     ]
+ *   }
+ *
+ * Keys in `hits` only include topics with nonzero matches — keeps the
+ * JSONB payload small for bills that focus on a narrow domain.
+ */
+export function computeSectionTopicScores(text) {
+  if (!text || text.length < 2000) return null
+  const sections = text.split(SECTION_SPLIT_REGEX)
+  if (sections.length < 4) return null
+
+  const scores = sections.map((sec, idx) => {
+    const hits = {}
+    for (const [topic, entries] of Object.entries(INTEREST_SECTION_KEYWORD_REGEX)) {
+      let topicHits = 0
+      for (const { re } of entries) {
+        re.lastIndex = 0
+        // eslint-disable-next-line no-unused-vars
+        for (const _m of sec.matchAll(re)) topicHits++
+      }
+      if (topicHits > 0) hits[topic] = topicHits
+    }
+    const wordCount = sec.split(/\s+/).length || 1
+    return { idx, wc: wordCount, hits }
+  })
+
+  return { v: 1, count: sections.length, scores }
+}
+
 /**
  * Split a long bill into sections and return the ones most relevant to
  * the student's interests, up to maxChars total. Falls back to null if
@@ -307,41 +359,68 @@ function looksLikeEffectiveDate(sectionText) {
  *
  * Always preserves section 1 (preamble / short title) and the last section
  * (effective date, totals). Interior sections are ranked by keyword density.
+ *
+ * Fast path: if `precomputedScores` is provided and its section count
+ * matches our split, use the stored topic hits directly — no regex pass.
+ * Falls back to live scoring when precomputed data is stale or missing.
  */
-export function getRelevantSections(text, interests = [], maxChars = 5000) {
+export function getRelevantSections(text, interests = [], maxChars = 5000, precomputedScores = null) {
   if (!text || text.length < 2000 || !interests.length) return null
 
   // Split on section markers. Congress.gov's HTML-stripped text runs without
   // newlines, so this regex matches either a newline boundary OR whitespace
   // before SEC. / SECTION markers. Keeps the marker with each section so
   // the LLM knows "SEC. 4" is a boundary.
-  const sections = text.split(/\s+(?=(?:SEC\.?|SECTION|Sec\.?|§)\s*\d{1,4}\.?\s+[A-Z])/)
+  const sections = text.split(SECTION_SPLIT_REGEX)
   if (sections.length < 4) return null // Not enough structure
 
-  // Collect compiled regexes for the student's interests. Word-boundary
-  // matching fixes unigram collisions ("coal" ≠ "coalition", "clean" ≠
-  // "cleanse"). See compileKeyword above.
-  const regexes = []
-  for (const topic of interests) {
-    for (const entry of INTEREST_SECTION_KEYWORD_REGEX[topic] || []) regexes.push(entry.re)
-  }
-  if (!regexes.length) return null
+  // Decide scoring strategy: precomputed JSONB lookup if the shape matches,
+  // otherwise fall back to live regex. Stale precomputed scores (section
+  // count drift) would mis-align indices, so we invalidate on mismatch.
+  const precomputedValid =
+    precomputedScores
+    && precomputedScores.v === 1
+    && precomputedScores.count === sections.length
+    && Array.isArray(precomputedScores.scores)
+    && precomputedScores.scores.length === sections.length
 
-  // Score each section by how many keyword hits it contains (density-normalized)
-  const scored = sections.map((sec, idx) => {
-    let hits = 0
-    for (const re of regexes) {
-      re.lastIndex = 0
-      // Count all non-overlapping matches. matchAll is O(n) over the string
-      // once per keyword; cheaper than the old indexOf loop when keywords
-      // are backed by real regex.
-      // eslint-disable-next-line no-unused-vars
-      for (const _m of sec.matchAll(re)) hits++
+  let scored
+  if (precomputedValid) {
+    // Fast path — JSONB lookup. O(sections × studentTopics) summation.
+    scored = sections.map((sec, idx) => {
+      const entry = precomputedScores.scores[idx]
+      let hits = 0
+      if (entry && entry.hits) {
+        for (const topic of interests) {
+          if (entry.hits[topic]) hits += entry.hits[topic]
+        }
+      }
+      const wordCount = entry?.wc || (sec.split(/\s+/).length || 1)
+      const density = hits / wordCount
+      return { idx, sec, hits, density, length: sec.length, wordCount }
+    })
+  } else {
+    // Slow path — live regex scan. Collect compiled regexes for the
+    // student's interests. Word-boundary matching fixes unigram collisions
+    // ("coal" ≠ "coalition", "clean" ≠ "cleanse"). See compileKeyword above.
+    const regexes = []
+    for (const topic of interests) {
+      for (const entry of INTEREST_SECTION_KEYWORD_REGEX[topic] || []) regexes.push(entry.re)
     }
-    const wordCount = sec.split(/\s+/).length || 1
-    const density = hits / wordCount
-    return { idx, sec, hits, density, length: sec.length, wordCount }
-  })
+    if (!regexes.length) return null
+
+    scored = sections.map((sec, idx) => {
+      let hits = 0
+      for (const re of regexes) {
+        re.lastIndex = 0
+        // eslint-disable-next-line no-unused-vars
+        for (const _m of sec.matchAll(re)) hits++
+      }
+      const wordCount = sec.split(/\s+/).length || 1
+      const density = hits / wordCount
+      return { idx, sec, hits, density, length: sec.length, wordCount }
+    })
+  }
 
   // Always include first section (preamble / short title). For the tail,
   // forward-scan the last 5 sections specifically for an effective-date /
@@ -414,7 +493,7 @@ export function getRelevantSections(text, interests = [], maxChars = 5000) {
  *   - Long bills without user interests (batch pre-warm, etc): smart
  *     head+middle+tail truncation
  */
-export function pickBillContent(text, { maxWords = 4000, userInterests = [] } = {}) {
+export function pickBillContent(text, { maxWords = 4000, userInterests = [], precomputedScores = null } = {}) {
   if (!text) return { content: '', strategy: 'empty' }
   const words = text.split(/\s+/)
   if (words.length <= maxWords) return { content: text, strategy: 'full' }
@@ -423,7 +502,7 @@ export function pickBillContent(text, { maxWords = 4000, userInterests = [] } = 
   const maxChars = maxWords * 6
 
   if (userInterests.length) {
-    const sections = getRelevantSections(text, userInterests, maxChars)
+    const sections = getRelevantSections(text, userInterests, maxChars, precomputedScores)
     if (sections) return { content: sections, strategy: 'topic_sections' }
   }
 

@@ -8,7 +8,7 @@
  * bills that changed since last sync.
  */
 
-import { extractStructuredExcerpt } from './billExcerpt.js'
+import { extractStructuredExcerpt, computeSectionTopicScores } from './billExcerpt.js'
 
 // ─── Topic classification ──────────────────────────────────────────────────
 // Maps raw subjects from Congress.gov and Open States to our app interest keys.
@@ -300,6 +300,7 @@ async function syncCongressGov(supabase, congressApiKey, options = {}) {
                 text_word_count: wordCount,
                 text_version: latest.type || 'Unknown',
                 structured_excerpt: fullText ? extractStructuredExcerpt(fullText) : null,
+                section_topic_scores: fullText ? computeSectionTopicScores(fullText) : null,
                 synced_at: new Date().toISOString(),
               })
               .eq('id', bill.id)
@@ -582,6 +583,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
                   text_word_count: wordCount,
                   text_version: latestText.type || 'Unknown',
                   structured_excerpt: extractStructuredExcerpt(cleanText),
+                  section_topic_scores: computeSectionTopicScores(cleanText),
                   synced_at: new Date().toISOString(),
                 })
                 .eq('id', bill.id)
@@ -793,6 +795,7 @@ async function fetchBillText(supabase, bill) {
           text_word_count: wordCount,
           text_version: 'scraped_html',
           structured_excerpt: extractStructuredExcerpt(fullText),
+          section_topic_scores: computeSectionTopicScores(fullText),
           synced_at: new Date().toISOString(),
         })
         .eq('id', bill.id)
@@ -1129,6 +1132,7 @@ async function refreshHotBillTexts(supabase, congressApiKey, options = {}) {
         text_word_count: wordCount,
         text_version: latest.type || 'Unknown',
         structured_excerpt: extractStructuredExcerpt(fullText),
+        section_topic_scores: computeSectionTopicScores(fullText),
         text_refreshed_at: new Date().toISOString(),
         synced_at: new Date().toISOString(),
       }).eq('id', bill.id)
