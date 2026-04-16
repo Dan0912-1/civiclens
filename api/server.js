@@ -4951,12 +4951,18 @@ app.put('/api/classroom/:id', classroomLimiter, async (req, res) => {
       if (!name || name.length > 100) return res.status(400).json({ error: 'Name must be 1-100 chars' })
       updates.name = name
     }
-    if (typeof req.body.archived === 'boolean') updates.archived = req.body.archived
+    if (typeof req.body.archived === 'boolean') {
+      updates.archived = req.body.archived
+      // Stamp archived_at so the nightly retention cron can find and delete
+      // classrooms 30 days after they were archived. Clear it on un-archive
+      // so an un-archived-then-re-archived classroom gets a fresh window.
+      updates.archived_at = req.body.archived ? new Date().toISOString() : null
+    }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nothing to update' })
 
     updates.updated_at = new Date().toISOString()
     const { data, error } = await supabase.from('classrooms')
-      .update(updates).eq('id', req.params.id).select('id, name, archived, updated_at').single()
+      .update(updates).eq('id', req.params.id).select('id, name, archived, archived_at, updated_at').single()
     if (error) throw error
     res.json({ classroom: data })
   } catch (err) {

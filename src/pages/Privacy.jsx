@@ -7,7 +7,7 @@ export default function Privacy() {
 
         <div className={styles.hero}>
           <h1>Privacy Policy</h1>
-          <p>Last updated: April 5, 2026</p>
+          <p>Last updated: April 16, 2026</p>
         </div>
 
         <div className={styles.section}>
@@ -81,10 +81,11 @@ export default function Privacy() {
             requirements.
           </p>
           <p>
-            Teachers who create classrooms on CapitolKey can view aggregate
-            completion statistics (such as how many students completed an
-            assignment) but cannot access individual student profiles or
-            personalized bill explanations.
+            Teachers who create classrooms on CapitolKey can see which of their
+            students have completed each assignment and roughly how long each
+            student spent reading a bill. Teachers cannot see individual student
+            profiles (state, age, interests, career) or the personalized bill
+            explanations shown to each student.
           </p>
           <p>
             Classroom data, including assignments and completion records, is
@@ -118,7 +119,10 @@ export default function Privacy() {
             Account data is stored securely in Supabase (hosted on AWS) with
             strict security policies ensuring users can only access their own
             data. Without an account, your profile is stored locally in your
-            browser's session storage and is never transmitted to our servers.
+            browser's session storage and is not persisted on our servers. Your
+            anonymized profile (state, age range, interests) is transmitted to
+            our backend and AI providers each time we generate a personalized
+            bill explanation, but it is not saved to a user account.
           </p>
           <p>
             We use industry-standard security measures including HTTPS encryption,
@@ -139,7 +143,10 @@ export default function Privacy() {
           <p>
             If you use CapitolKey without an account, your profile data exists only
             in your browser's session storage and is automatically cleared when you
-            close the browser tab.
+            close the browser tab. The anonymized profile sent with each request
+            is not saved to an account and is retained only as part of our AI
+            provider's normal request logs, subject to their own retention
+            policies.
           </p>
         </div>
 
