@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
 import { joinClassroom, peekClassroom, addJoinedClassroom } from '../lib/classroom'
@@ -7,8 +7,12 @@ import styles from './JoinClassroom.module.css'
 
 export default function JoinClassroom() {
   const navigate = useNavigate()
+  const { code: codeParam } = useParams()
   const { user } = useAuth()
-  const [code, setCode] = useState('')
+  const [code, setCode] = useState(() => {
+    const c = (codeParam || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+    return c
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 

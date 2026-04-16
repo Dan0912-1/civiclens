@@ -42,7 +42,7 @@ ios/ android/           # Capacitor native projects
 
 ## Key API Endpoints (api/server.js)
 
-- `POST /api/legislation` — Fetch bills from Congress.gov (interest-weighted, cached 1hr)
+- `POST /api/legislation` — Fetch bills from Congress.gov (interest-weighted, cached 4hr)
 - `GET /api/bill/:congress/:type/:number` — Single bill detail
 - `POST /api/personalize` — Claude AI personalization (cached in Supabase)
 - `POST /api/interactions` — Track user bill interactions

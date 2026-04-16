@@ -5250,12 +5250,17 @@ app.post('/api/classroom/:id/assignments', classroomLimiter, async (req, res) =>
 app.delete('/api/classroom/:id/assignments/:assignmentId', classroomLimiter, async (req, res) => {
   try {
     await requireClassroomTeacher(req, req.params.id)
-    // Read bill_id before deleting so we can decrement the pin count
+    // Read bill_id before deleting so we can decrement the pin count.
+    // Also verifies the assignment exists in this classroom — avoids a silent
+    // 200 on a bogus (classroomId, assignmentId) pair.
     const { data: toDelete } = await supabase.from('classroom_assignments')
       .select('bill_id').eq('id', req.params.assignmentId).eq('classroom_id', req.params.id).maybeSingle()
+    if (!toDelete) {
+      return res.status(404).json({ error: 'Assignment not found' })
+    }
     await supabase.from('classroom_assignments')
       .delete().eq('id', req.params.assignmentId).eq('classroom_id', req.params.id)
-    if (toDelete?.bill_id) {
+    if (toDelete.bill_id) {
       unpinBillForAssignment(toDelete.bill_id).catch(err =>
         console.error('[assignment] unpin error:', err.message)
       )

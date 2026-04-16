@@ -243,6 +243,20 @@ export default function App() {
             if (/^\d+$/.test(congress) && /^[a-z]+$/i.test(type) && /^\d+$/.test(number)) {
               navigate(`/bill/${congress}/${type}/${number}`)
             }
+          } else if (path.startsWith('/classroom/join/')) {
+            // Validate /classroom/join/:code — 6 alphanumeric chars
+            const code = path.split('/')[3]
+            if (/^[A-Z0-9]{6}$/i.test(code)) {
+              navigate(`/classroom/join/${code.toUpperCase()}`)
+            } else {
+              navigate('/classroom/join')
+            }
+          } else if (path.startsWith('/classroom/view/')) {
+            // Anonymous classroom view deep link
+            const code = path.split('/')[3]
+            if (/^[A-Z0-9]{6}$/i.test(code)) {
+              navigate(`/classroom/view/${code.toUpperCase()}`)
+            }
           }
         })
         cleanup = () => listener.then?.(l => l.remove()) || listener.remove?.()
@@ -305,6 +319,7 @@ export default function App() {
           <Route path="/educators"  element={<Educators />} />
           <Route path="/classroom"       element={<TeacherDashboard />} />
           <Route path="/classroom/join"  element={<JoinClassroom />} />
+          <Route path="/classroom/join/:code" element={<JoinClassroom />} />
           <Route path="/classroom/:id"       element={<ClassroomDetail />} />
           <Route path="/classroom/view/:code" element={<ClassroomView />} />
           <Route path="*" element={<NotFound />} />
