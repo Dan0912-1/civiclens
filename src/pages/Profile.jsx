@@ -110,12 +110,36 @@ const SUB_INTERESTS = {
   community:    ['National service', 'Food assistance', 'Libraries', 'Rural development', 'Nonprofits'],
 }
 
+// COPPA session-lock: if a user fails the age gate, block retries for 24 hours.
+// Prevents the "enter 12 → get blocked → change to 14" bypass that creates
+// documented "actual knowledge" of underage usage.
+const COPPA_LOCK_KEY = 'ck_coppa_restricted'
+const COPPA_LOCK_TTL = 24 * 60 * 60 * 1000 // 24 hours
+
+function isCoppaLocked() {
+  try {
+    const raw = localStorage.getItem(COPPA_LOCK_KEY)
+    if (!raw) return false
+    const { until } = JSON.parse(raw)
+    if (Date.now() < until) return true
+    localStorage.removeItem(COPPA_LOCK_KEY)
+    return false
+  } catch {
+    return false
+  }
+}
+
+function setCoppaLock() {
+  localStorage.setItem(COPPA_LOCK_KEY, JSON.stringify({ until: Date.now() + COPPA_LOCK_TTL }))
+}
+
 export default function Profile() {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
   const [step, setStep] = useState(1)
   const returnTo = location.state?.returnTo || null
+  const [coppaLocked, setCoppaLocked] = useState(isCoppaLocked)
 
   const [profile, setProfile] = useState(() => {
     const stored = sessionStorage.getItem('civicProfile')
@@ -169,8 +193,15 @@ export default function Profile() {
   const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
   const isUnder13 = ageValid && ageNum < 13
 
+  // Drop the COPPA lock the moment a user self-reports as under 13.
+  // This prevents the back-button-and-change-age bypass.
+  if (isUnder13 && !coppaLocked) {
+    setCoppaLock()
+    setCoppaLocked(true)
+  }
+
   function canAdvance() {
-    if (step === 1) return profile.state && ageValid && ageNum >= 13
+    if (step === 1) return !coppaLocked && profile.state && ageValid && ageNum >= 13
     if (step === 2) return true
     if (step === 3) return profile.interests.length > 0
     return true
@@ -178,7 +209,9 @@ export default function Profile() {
 
   async function handleNext() {
     if (!canAdvance()) {
-      if (step === 1 && isUnder13) {
+      if (step === 1 && coppaLocked) {
+        setError('Account creation is temporarily unavailable.')
+      } else if (step === 1 && isUnder13) {
         setError('You must be 13 or older to use CapitolKey.')
       } else if (step === 1 && profile.grade && !ageValid) {
         setError('Please enter a valid age.')
@@ -216,8 +249,8 @@ export default function Profile() {
           ))}
         </div>
 
-        {/* Sign-in prompt for anonymous users — hidden if under 13 (COPPA) */}
-        {!user && step === 1 && !isUnder13 && (
+        {/* Sign-in prompt for anonymous users — hidden if under 13 or COPPA-locked */}
+        {!user && step === 1 && !isUnder13 && !coppaLocked && (
           <div className={styles.signInPrompt}>
             <p>Create an account to save your profile and bookmarks across sessions.</p>
             <button className={styles.signInBtn} onClick={() => setShowAuth(true)}>
@@ -255,18 +288,21 @@ export default function Profile() {
                   min={13}
                   max={99}
                   step={1}
-                  value={profile.grade}
+                  value={coppaLocked ? '' : profile.grade}
+                  disabled={coppaLocked}
                   onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
                 />
-                {isUnder13 && (
+                {(isUnder13 || coppaLocked) && (
                   <div className={styles.ageWarning}>
                     <p>
                       CapitolKey is designed for users who are <strong>13 years of age or older</strong>,
                       in compliance with the Children's Online Privacy Protection Act (COPPA).
                     </p>
                     <p>
-                      If you are under 13, you are not able to use CapitolKey at this time.
-                      See our <a href="/terms">Terms of Service</a> for more information.
+                      {coppaLocked
+                        ? 'Account creation is temporarily unavailable. You can still browse legislation without an account.'
+                        : <>If you are under 13, you are not able to use CapitolKey at this time. See our <a href="/terms">Terms of Service</a> for more information.</>
+                      }
                     </p>
                   </div>
                 )}

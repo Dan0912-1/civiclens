@@ -6,6 +6,42 @@
 -- RLS is already enabled on all four tables but no policies were defined,
 -- meaning authenticated users get default-deny (no rows returned).
 -- These policies explicitly grant the correct access patterns.
+--
+-- SECURITY DEFINER functions are used for cross-table lookups on RLS-enabled
+-- tables to avoid self-join recursion and query planner confusion. They run
+-- with the definer's privileges (bypassing RLS for the lookup) and are marked
+-- STABLE so Postgres can cache them within a transaction.
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Helper functions (SECURITY DEFINER — bypass RLS for role lookups)
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Returns classroom IDs where the given user is a teacher.
+-- Used by RLS policies on classroom_members, classroom_assignments, and
+-- assignment_completions to avoid self-joins on RLS-protected tables.
+create or replace function get_teacher_classroom_ids(target_user_id uuid)
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select classroom_id from classroom_members
+  where user_id = target_user_id and role = 'teacher';
+$$;
+
+-- Returns classroom IDs where the given user is any member (student or teacher).
+-- Used by RLS policies on classrooms and classroom_assignments for member checks.
+create or replace function get_member_classroom_ids(target_user_id uuid)
+returns setof uuid
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select classroom_id from classroom_members
+  where user_id = target_user_id;
+$$;
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- classrooms
@@ -14,11 +50,7 @@
 -- Members can read classrooms they belong to
 create policy "Members can view their classrooms"
 on classrooms for select using (
-  exists (
-    select 1 from classroom_members
-    where classroom_members.classroom_id = classrooms.id
-      and classroom_members.user_id = auth.uid()
-  )
+  id in (select get_member_classroom_ids(auth.uid()))
 );
 
 -- Only the owner can create classrooms (owner_id must match auth user)
@@ -49,15 +81,11 @@ on classroom_members for select using (
   user_id = auth.uid()
 );
 
--- Teachers can see all members in their classrooms
+-- Teachers can see all members in their classrooms (via Security Definer to
+-- avoid infinite self-join recursion on this RLS-protected table)
 create policy "Teachers can view classroom members"
 on classroom_members for select using (
-  exists (
-    select 1 from classroom_members as cm
-    where cm.classroom_id = classroom_members.classroom_id
-      and cm.user_id = auth.uid()
-      and cm.role = 'teacher'
-  )
+  classroom_id in (select get_teacher_classroom_ids(auth.uid()))
 );
 
 -- Users can join classrooms (insert their own membership)
@@ -75,12 +103,7 @@ on classroom_members for delete using (
 -- Teachers can remove students from their classrooms
 create policy "Teachers can remove members"
 on classroom_members for delete using (
-  exists (
-    select 1 from classroom_members as cm
-    where cm.classroom_id = classroom_members.classroom_id
-      and cm.user_id = auth.uid()
-      and cm.role = 'teacher'
-  )
+  classroom_id in (select get_teacher_classroom_ids(auth.uid()))
 );
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -90,34 +113,20 @@ on classroom_members for delete using (
 -- Members can view assignments in their classrooms
 create policy "Members can view assignments"
 on classroom_assignments for select using (
-  exists (
-    select 1 from classroom_members
-    where classroom_members.classroom_id = classroom_assignments.classroom_id
-      and classroom_members.user_id = auth.uid()
-  )
+  classroom_id in (select get_member_classroom_ids(auth.uid()))
 );
 
 -- Teachers can create assignments in their classrooms
 create policy "Teachers can create assignments"
 on classroom_assignments for insert with check (
   assigned_by = auth.uid()
-  and exists (
-    select 1 from classroom_members
-    where classroom_members.classroom_id = classroom_assignments.classroom_id
-      and classroom_members.user_id = auth.uid()
-      and classroom_members.role = 'teacher'
-  )
+  and classroom_id in (select get_teacher_classroom_ids(auth.uid()))
 );
 
 -- Teachers can delete assignments in their classrooms
 create policy "Teachers can delete assignments"
 on classroom_assignments for delete using (
-  exists (
-    select 1 from classroom_members
-    where classroom_members.classroom_id = classroom_assignments.classroom_id
-      and classroom_members.user_id = auth.uid()
-      and classroom_members.role = 'teacher'
-  )
+  classroom_id in (select get_teacher_classroom_ids(auth.uid()))
 );
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -130,15 +139,14 @@ on assignment_completions for select using (
   user_id = auth.uid()
 );
 
--- Teachers can view completions in their classrooms (for aggregate stats)
+-- Teachers can view completions in their classrooms (for aggregate stats).
+-- Uses a subquery through classroom_assignments to reach the classroom_id,
+-- then checks teacher role via Security Definer.
 create policy "Teachers can view classroom completions"
 on assignment_completions for select using (
-  exists (
-    select 1 from classroom_assignments ca
-    join classroom_members cm on cm.classroom_id = ca.classroom_id
-    where ca.id = assignment_completions.assignment_id
-      and cm.user_id = auth.uid()
-      and cm.role = 'teacher'
+  assignment_id in (
+    select ca.id from classroom_assignments ca
+    where ca.classroom_id in (select get_teacher_classroom_ids(auth.uid()))
   )
 );
 
