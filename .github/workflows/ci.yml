@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+# Principle of least privilege: default-deny everything, opt in per job
+# if a job ever needs to write. None of these jobs do.
+permissions:
+  contents: read
 
 # Cancel in-progress runs on the same ref when a new commit lands.
 concurrency:
@@ -24,9 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -35,19 +41,10 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: node --check on api/**/*.js
-        run: |
-          set -e
-          fail=0
-          while IFS= read -r f; do
-            if ! node --check "$f"; then
-              echo "::error file=$f::node --check failed"
-              fail=1
-            fi
-          done < <(find api -type f -name '*.js' -not -path 'api/node_modules/*')
-          exit $fail
+        run: npm run check:backend
 
       - name: Cross-file duplicate-declaration scan
-        run: node scripts/ci-duplicate-scan.mjs
+        run: npm run check:dupes
 
   # --------------------------------------------------------------------------
   # Frontend still compiles. vite build is what production uses.
@@ -57,9 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -71,18 +68,19 @@ jobs:
         run: npm run build
 
   # --------------------------------------------------------------------------
-  # Backend actually boots. Catches runtime import failures, top-level
-  # throws, and missing module specifiers that node --check cannot see.
-  # Uses placeholder env only; routes that need real keys degrade.
+  # Backend actually boots AND serves. The smoke script now waits for the
+  # boot banner, then curls /api/health via Node's built-in fetch. That
+  # exercises the Express router + middleware stack, catching middleware
+  # binding or route-mount bugs that don't throw at module eval.
   # --------------------------------------------------------------------------
   backend-boot:
     name: Backend boot smoke
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -91,7 +89,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Boot smoke
-        run: node scripts/ci-boot-smoke.mjs
+        run: npm run smoke:backend
         env:
           SMOKE_PORT: '3099'
           # Routes that need these degrade gracefully; boot must not depend
