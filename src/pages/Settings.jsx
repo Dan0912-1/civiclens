@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { supabase } from '../lib/supabase'
+import { getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import styles from './Settings.module.css'
 
@@ -32,7 +32,9 @@ export default function Settings() {
     setDeleting(true)
     setError('')
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      // getSessionSafe bypasses Supabase's orphaned LocalLock (see
+      // src/lib/supabase.js) so the button can't silently hang.
+      const session = await getSessionSafe()
       if (!session?.access_token) {
         setError('Please sign in again to delete your account.')
         setDeleting(false)
@@ -46,14 +48,19 @@ export default function Settings() {
 
       if (resp.ok) {
         sessionStorage.clear()
-        await signOut()
+        // Don't await signOut: the access token was just revoked
+        // server-side, and supabase.auth.signOut() can hang with a dead
+        // token. Fire-and-forget; handleSignOut has its own timeouts
+        // and will force user=null regardless.
+        signOut().catch((err) => console.error('[delete-account] signOut:', err))
         navigate('/')
       } else {
         const data = await resp.json().catch(() => ({}))
         setError(data.error || 'Failed to delete account. Please try again.')
         setDeleting(false)
       }
-    } catch {
+    } catch (err) {
+      console.error('[delete-account] error:', err)
       setError('Network error. Please check your connection and try again.')
       setDeleting(false)
     }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, getSessionSafe } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
 import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
 import { Capacitor } from '@capacitor/core'
@@ -259,18 +259,44 @@ export function AuthProvider({ children }) {
     // Revoke the FCM/APNs subscription on the backend BEFORE the JWT is
     // invalidated. resetPushState alone just clears the in-memory flag; the
     // server row survives and the old device keeps receiving pushes for the
-    // logged-out user. Pull the access token from the current session so
-    // the DELETE /api/push/register call passes auth.
+    // logged-out user.
+    //
+    // Both getSession() and signOut() can hang on an orphaned Supabase
+    // LocalLock (see getSessionSafe in src/lib/supabase.js). Every await
+    // here is bounded by a timeout, and we always fall through to manually
+    // purging the sb-*-auth-token storage + forcing user=null so the UI
+    // updates even if supabase-js never resolves.
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const session = await getSessionSafe()
       const accessToken = session?.access_token
       if (accessToken) {
-        await teardownPushNotifications(accessToken)
+        await Promise.race([
+          teardownPushNotifications(accessToken),
+          new Promise((r) => setTimeout(r, 2000)),
+        ])
       }
     } catch {
       // non-fatal — sign-out should still proceed
     }
-    await supabase.auth.signOut()
+
+    try {
+      await Promise.race([
+        supabase.auth.signOut({ scope: 'local' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 2000)),
+      ])
+    } catch {
+      // supabase-js hung or errored — wipe the auth tokens by hand so the
+      // next render treats us as signed out.
+      try {
+        const keys = Object.keys(localStorage).filter((k) => k.startsWith('sb-'))
+        keys.forEach((k) => localStorage.removeItem(k))
+      } catch {}
+    }
+
+    // Force user state to null in case onAuthStateChange never fires
+    // (it won't if we fell through the signOut timeout above).
+    setUser(null)
+
     // Clear all app-specific storage to prevent data leakage between users
     sessionStorage.removeItem('civicProfile')
     sessionStorage.removeItem('civicInteractions')
