@@ -60,25 +60,45 @@ export async function getSessionSafe() {
       supabase.auth.getSession(),
       new Promise(r => setTimeout(() => r(null), 2000)),
     ])
-    if (result?.data?.session) return result.data.session
+    const session = result?.data?.session
+    if (session?.access_token) {
+      if (!session.expires_at || session.expires_at > Math.floor(Date.now() / 1000)) {
+        return session
+      }
+      // fall through to refresh path below with the refresh_token we have
+    }
   } catch {}
 
   // Fallback: read token directly from localStorage (bypass lock)
-  // Check expires_at to avoid returning stale/expired tokens
+  let stored = null
   try {
     const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
     if (key) {
       const parsed = JSON.parse(localStorage.getItem(key))
-      const session = parsed?.access_token ? parsed : parsed?.currentSession
-      if (session?.access_token) {
-        // Reject expired tokens (expires_at is Unix seconds)
-        if (session.expires_at && session.expires_at < Math.floor(Date.now() / 1000)) {
-          return null // token expired — force re-auth
-        }
-        return session
-      }
+      stored = parsed?.access_token ? parsed : parsed?.currentSession
     }
   } catch {}
+
+  if (!stored?.access_token) return null
+
+  // Token still valid: return it
+  if (!stored.expires_at || stored.expires_at > Math.floor(Date.now() / 1000)) {
+    return stored
+  }
+
+  // Token expired but we have a refresh_token: try to refresh. This is the
+  // common path when a tab sits idle past the 1hr access-token lifetime —
+  // without this, createClassroom / assign / etc. would bounce to "Please
+  // sign in" even though the user has a live refresh_token.
+  if (stored.refresh_token) {
+    try {
+      const result = await Promise.race([
+        supabase.auth.refreshSession({ refresh_token: stored.refresh_token }),
+        new Promise(r => setTimeout(() => r(null), 5000)),
+      ])
+      if (result?.data?.session?.access_token) return result.data.session
+    } catch {}
+  }
 
   return null
 }
