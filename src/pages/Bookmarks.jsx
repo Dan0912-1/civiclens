@@ -24,13 +24,15 @@ function prettyStage(stage) {
   const map = {
     introduced: 'Introduced',
     in_committee: 'In Committee',
+    floor_vote: 'Floor consideration',
     passed_one: 'Passed one chamber',
     passed_both: 'Passed both chambers',
     enacted: 'Enacted',
     vetoed: 'Vetoed',
     failed: 'Failed',
   }
-  return map[stage] || stage || 'Unknown'
+  const normalized = stage == null ? null : String(stage).toLowerCase()
+  return map[normalized] || stage || 'Unknown'
 }
 
 export default function Bookmarks() {

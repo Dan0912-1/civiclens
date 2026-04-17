@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { getApiBase } from './api'
 import { enqueue } from './offlineQueue'
+import { normalizeStage, stagesEqual } from './billStage'
 
 export async function loadProfile(userId) {
   if (!supabase) return null
@@ -93,10 +94,13 @@ export async function getBookmarks(userId) {
         if (m) current = stageByCongress.get(`${m[3]}-${m[1].toLowerCase()}-${m[2]}`) || null
       }
       bm.current_status_stage = current
+      // Compare via the canonical vocabulary — legacy bookmarks may have
+      // saved a number (1..5) while bills.status_stage is always a string,
+      // so raw !== comparison was firing false-positive staleness banners.
       bm.is_stale = !!(
         bm.saved_status_stage
         && bm.current_status_stage
-        && bm.saved_status_stage !== bm.current_status_stage
+        && !stagesEqual(bm.saved_status_stage, bm.current_status_stage)
       )
     }
     return bookmarks
@@ -112,11 +116,11 @@ export async function addBookmark(userId, billId, billData) {
     // detect drift and render a "status changed since you saved this" banner
     // instead of silently overwriting the student's cached analysis. See
     // supabase/add_bookmark_saved_status_stage.sql for rationale.
-    const savedStatusStage =
+    const savedStatusStage = normalizeStage(
       billData?.bill?.statusStage
-      || billData?.bill?.status_stage
-      || billData?.statusStage
-      || null
+      ?? billData?.bill?.status_stage
+      ?? billData?.statusStage
+    )
     const row = { user_id: userId, bill_id: billId, bill_data: billData, saved_status_stage: savedStatusStage }
     const { error } = await supabase
       .from('bookmarks')
@@ -127,11 +131,11 @@ export async function addBookmark(userId, billId, billData) {
     // Pass the computed savedStatusStage through so the replay path can
     // stamp it too; otherwise offline-created bookmarks would lose the
     // staleness baseline and never be flagged as drifted.
-    const savedStatusStage =
+    const savedStatusStage = normalizeStage(
       billData?.bill?.statusStage
-      || billData?.bill?.status_stage
-      || billData?.statusStage
-      || null
+      ?? billData?.bill?.status_stage
+      ?? billData?.statusStage
+    )
     enqueue('supabase:bookmarks', 'POST', {
       user_id: userId,
       bill_id: billId,
