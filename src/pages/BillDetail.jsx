@@ -261,11 +261,10 @@ export default function BillDetail() {
       if (!stored) { setNoProfile(true); return }
       let profile
       try { profile = JSON.parse(stored) } catch { setNoProfile(true); return }
-      // Auto-seeded profiles (created on Google sign-in) have only name + email
-      // and no interests/state. Treat those as incomplete so we show the
-      // "Complete your profile" prompt instead of firing a meaningless
-      // personalization against a bare profile.
-      if (!profile?.state || !profile?.interests?.length) {
+      // Require the three questionnaire answers before personalizing.
+      // The Google-sign-in seed only has name+email; a half-filled manual
+      // profile might have state but no interests. Either case → prompt.
+      if (!profile?.state || !profile?.grade || !profile?.interests?.length) {
         setNoProfile(true)
         return
       }
@@ -586,6 +585,12 @@ export default function BillDetail() {
           <div className={styles.loadingAnalysis}>
             <div className={styles.spinner} />
             <span>Personalizing this bill for you...</span>
+            <button
+              className={styles.retryBtn}
+              onClick={() => navigate('/profile', { state: { returnTo: location.pathname } })}
+            >
+              Set up my profile
+            </button>
           </div>
         )}
 
