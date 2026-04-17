@@ -257,8 +257,11 @@ export default function ClassroomDetail() {
                           const type = (bd.type || bd.bill_type || '').toLowerCase()
                           const number = bd.number || bd.bill_number
                           if (congress && type && number) {
-                            navigate(`/bill/${congress}/${type}/${number}`, {
+                            const legiscanParam = bd.legiscan_bill_id ? `?legiscan_id=${bd.legiscan_bill_id}` : ''
+                            navigate(`/bill/${congress}/${type}/${number}${legiscanParam}`, {
                               state: {
+                                bill: bd,
+                                analysis: bd.analysis || null,
                                 assignment: a.id,
                                 classroom: id,
                                 assignmentInstructions: a.instructions || '',

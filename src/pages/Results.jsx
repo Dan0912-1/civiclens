@@ -446,8 +446,9 @@ export default function Results() {
                     className={styles.assignmentItem}
                     onClick={() => {
                       if (congress && billType && billNum) {
-                        navigate(`/bill/${congress}/${billType}/${billNum}`, {
-                          state: { assignment: a.id, classroom: a.classroomId }
+                        const legiscanParam = bd.legiscan_bill_id ? `?legiscan_id=${bd.legiscan_bill_id}` : ''
+                        navigate(`/bill/${congress}/${billType}/${billNum}${legiscanParam}`, {
+                          state: { bill: bd, analysis: bd.analysis || null, assignment: a.id, classroom: a.classroomId }
                         })
                       }
                     }}
