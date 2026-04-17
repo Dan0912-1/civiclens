@@ -9,6 +9,98 @@
  */
 
 import { extractStructuredExcerpt, computeSectionTopicScores } from './billExcerpt.js'
+import { loadPDFParse } from './pdfLoader.js'
+
+// Safety cap: a handful of state bills publish 50+ MB PDFs (full code
+// rewrites). Parsing those eats memory and rarely produces useful excerpts.
+const MAX_PDF_BYTES = 15 * 1024 * 1024
+
+// Thrown when Open States returns 429 (daily quota exhausted). Separated
+// from generic errors so backfillStateTexts can break out of its loop
+// immediately instead of burning through the remaining queue — and so the
+// offending bill doesn't get a false "strike" that would shelf it for 14
+// days. See the block comment on backfillStateTexts for context.
+class OpenStatesRateLimitError extends Error {
+  constructor(status) {
+    super(`Open States rate limited (HTTP ${status})`)
+    this.name = 'OpenStatesRateLimitError'
+    this.status = status
+  }
+}
+
+// Legacy-TLS fallback for state legislature sites.
+//
+// Several state legislatures (CT cga.ct.gov, MS billstatus.ls.state.ms.us)
+// serve certificates with incomplete intermediate chains. Node's bundled
+// CA store can't verify them even though curl and browsers (which use the
+// OS CA store) have no problem. We fall back to http.get with
+// rejectUnauthorized: false AFTER the strict-TLS fetch fails on a
+// verification error.
+//
+// This is safe for our use case:
+//   1. Scope: only this helper; the rest of the backend stays strict.
+//   2. Content: publicly-published bill text, not secrets.
+//   3. No credentials, cookies, or auth headers on these requests.
+import { get as httpsGet } from 'node:https'
+import { get as httpGet } from 'node:http'
+
+function fetchInsecure(url, { timeoutMs = 20000, userAgent = 'CapitolKey/1.0 (civic education platform)' } = {}) {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(url)
+    const opts = {
+      headers: {
+        'User-Agent': userAgent,
+        'Accept': '*/*',
+      },
+      rejectUnauthorized: false, // SCOPED: gov-PDF fetch only; see block comment above
+    }
+    const getter = parsed.protocol === 'http:' ? httpGet : httpsGet
+    const req = getter(url, opts, (res) => {
+      // Follow one level of redirect manually (common on ViewDocument-style URLs)
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume()
+        const next = new URL(res.headers.location, url).toString()
+        fetchInsecure(next, { timeoutMs, userAgent }).then(resolve, reject)
+        return
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume()
+        return reject(new Error(`HTTP ${res.statusCode}`))
+      }
+      const chunks = []
+      let total = 0
+      res.on('data', (c) => {
+        total += c.length
+        if (total > MAX_PDF_BYTES) {
+          req.destroy()
+          return reject(new Error('response too large'))
+        }
+        chunks.push(c)
+      })
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        contentType: res.headers['content-type'] || '',
+        body: Buffer.concat(chunks),
+      }))
+      res.on('error', reject)
+    })
+    req.on('error', reject)
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error('timeout'))
+    })
+  })
+}
+
+// Detects TLS verification errors from global fetch (undici wraps them as
+// TypeError with a cause.code of UNABLE_TO_VERIFY_LEAF_SIGNATURE or similar).
+function isCertError(err) {
+  const code = err?.cause?.code || err?.code
+  return code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+         code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+         code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+         code === 'CERT_HAS_EXPIRED' ||
+         code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY'
+}
 
 // ─── Topic classification ──────────────────────────────────────────────────
 // Maps raw subjects from Congress.gov and Open States to our app interest keys.
@@ -394,14 +486,20 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
       let hasMore = true
 
       while (hasMore) {
+        // include=versions is free on the list endpoint and lets us skip bills
+        // that have no text URLs at all — preventing tens of thousands of
+        // metadata-only state-bill rows that the feed can never surface.
+        // URLSearchParams can't express repeated keys via the object form, so
+        // we append twice.
         const params = new URLSearchParams({
           jurisdiction: stateName,
           updated_since: sinceDate,
           per_page: '20',
           page: String(page),
-          include: 'sponsorships',
           apikey: apiKey,
         })
+        params.append('include', 'sponsorships')
+        params.append('include', 'versions')
 
         const resp = await fetch(`${OPENSTATES_BASE}/bills?${params}`)
         totalCalls++
@@ -415,11 +513,24 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
         const data = await resp.json()
         const bills = data.results || []
         const pagination = data.pagination || {}
+        let pageSkipped = 0
 
         for (const bill of bills) {
           // Parse bill identifier (e.g., "HB 1234", "SB 42", "AB 2447")
           const match = bill.identifier?.match(/^([A-Z]+)\s*(\d+)$/i)
           if (!match) continue
+
+          // Skip bills with no text versions at all. These can't ever become
+          // feed-eligible (the ranker requires full_text), so ingesting them
+          // just wastes DB rows and backfill quota. When Open States later
+          // attaches a version, updated_at will bump and we'll re-encounter
+          // the bill on the next sync.
+          const versions = bill.versions || []
+          const hasAnyLink = versions.some(v => (v.links || []).some(l => l.url))
+          if (!hasAnyLink) {
+            pageSkipped++
+            continue
+          }
 
           const billType = match[1].toLowerCase()
           const billNumber = parseInt(match[2], 10)
@@ -467,6 +578,10 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
           } else {
             totalSynced++
           }
+        }
+
+        if (pageSkipped) {
+          console.log(`[sync:openstates] ${stateCode} p${page}: skipped ${pageSkipped} bills with no version links`)
         }
 
         hasMore = page < pagination.max_page
@@ -646,18 +761,27 @@ async function runDailySync(supabase, config) {
       results.openstates = { error: err.message }
     }
 
-    // Phase 3: State backfill (spread over ~12 days)
-    try {
-      results.stateBackfill = await runStateBackfill(supabase, openStatesApiKey)
-    } catch (err) {
-      console.error('[sync] State backfill failed:', err.message)
-      results.stateBackfill = { error: err.message }
-    }
+    // Phase 3 (state metadata historical backfill) was removed on 2026-04-16.
+    // It was a one-time bootstrap helper that re-crawled 30 days of bills for
+    // every state that looked "empty" — but the emptiness check at
+    // runStateBackfill (see below) used `.limit(1)` which only ever captured a
+    // single state's jurisdiction, so it re-ran 50 states daily even when
+    // they already had years of history. Net effect: ~800 Open States calls
+    // per day re-writing bills we already had. With Phase 2's updated_since=
+    // yesterday incremental catching every new bill plus the new
+    // include=versions ingestion filter, the bootstrap path isn't needed in
+    // steady state. The function is still exported for one-off use when
+    // seeding a brand-new jurisdiction.
 
-    // Phase 4: State text via Open States + legislature HTML scrape
+    // Phase 4: State text via Open States → legislature PDF/HTML.
+    // With Phase 3 retired, the full Open States daily budget (minus ~100-300
+    // consumed by Phase 2 metadata sync) is available for text fetching.
+    // We ask for 1000 attempts but the backfill breaks early the moment
+    // Open States returns 429 (see OpenStatesRateLimitError handling) — so
+    // on light-Phase-2 days we capture the extra headroom, and on heavy
+    // days we stop cleanly without scoring false strikes against bills.
     try {
-      // Open States quota is 1,000/day; reserve ~200 for metadata + backfill
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 600 })
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 1000 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
@@ -704,9 +828,19 @@ async function runBackfill(supabase, config) {
   }
 }
 
-// ─── On-demand bill text fetching (Open States → legislature HTML) ────────
+// ─── On-demand bill text fetching (Open States → legislature PDF/HTML) ────
 // For state bills missing full_text. Fetches version links from Open States,
-// then scrapes the legislature HTML page to extract bill text.
+// then pulls the actual text from the linked legislature document.
+//
+// PDF-FIRST strategy: most state legislatures publish PDF as the canonical
+// format. Many (AL, GA, MD, FL, CT, LA, CO, MS) are PDF-only. Others
+// (IL, HI) have both, but the "HTML" link is often a JS-rendered nav page
+// that doesn't contain the bill text. PDFs are the single format that works
+// consistently across states, so we try them first and fall back to HTML.
+//
+// Side effect: updates bills.text_fetch_attempts / text_fetch_last_at so
+// backfillStateTexts can shelf bills that have failed repeatedly instead of
+// retrying dead URLs every day.
 
 async function fetchBillText(supabase, bill) {
   if (!bill || bill.source !== 'openstates' || bill.full_text) return bill.full_text || null
@@ -718,97 +852,225 @@ async function fetchBillText(supabase, bill) {
     return null
   }
 
+  const label = `${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`
+  let lastError = null
+
   try {
     // Step 1: Query Open States for bill versions using the OCD bill ID
     const billId = encodeURIComponent(bill.openstates_id)
     const url = `${OPENSTATES_BASE}/bills/${billId}?include=versions&apikey=${apiKey}`
-    console.log(`[fetchBillText] Fetching versions for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`)
+    console.log(`[fetchBillText] Fetching versions for ${label}`)
 
     const resp = await fetch(url)
+    if (resp.status === 429) {
+      // Quota exhausted — bubble up without a failure strike so the bill
+      // isn't unfairly shelved. The daily loop will catch this and stop.
+      throw new OpenStatesRateLimitError(resp.status)
+    }
     if (!resp.ok) {
+      lastError = `openstates ${resp.status}`
       console.error(`[fetchBillText] Open States API error: ${resp.status}`)
+      await recordTextFetchFailure(supabase, bill.id, lastError)
       return null
     }
 
     const data = await resp.json()
     const versions = data.versions || []
     if (!versions.length) {
+      lastError = 'no versions'
       console.log(`[fetchBillText] No versions available for ${bill.openstates_id}`)
+      await recordTextFetchFailure(supabase, bill.id, lastError)
       return null
     }
 
-    // Step 2: Find the latest version with an HTML link
-    // Versions are usually ordered chronologically; take the last one (most recent)
-    let htmlUrl = null
-    for (let i = versions.length - 1; i >= 0; i--) {
-      const version = versions[i]
-      const links = version.links || []
-      // Prefer text/html over application/pdf
-      const htmlLink = links.find(l =>
-        l.media_type === 'text/html' ||
-        (l.url && !l.url.endsWith('.pdf') && !l.media_type?.includes('pdf'))
-      )
-      if (htmlLink?.url) {
-        htmlUrl = htmlLink.url
-        break
+    // Step 2: Walk versions newest-first. For each, try PDF first (works
+    // consistently across states), then HTML as fallback.
+    let extracted = null
+    let usedFormat = null
+    let usedUrl = null
+
+    outer: for (let i = versions.length - 1; i >= 0; i--) {
+      const links = versions[i].links || []
+      const pdfLink = links.find(l => l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
+      const htmlLink = links.find(l => l.media_type === 'text/html' || (l.url && !/\.pdf(\?|$)/i.test(l.url) && !l.media_type?.includes('pdf')))
+
+      for (const attempt of [
+        pdfLink ? { url: pdfLink.url, format: 'pdf' } : null,
+        htmlLink ? { url: htmlLink.url, format: 'html' } : null,
+      ]) {
+        if (!attempt) continue
+        const text = await fetchAndExtract(attempt.url, attempt.format)
+        if (text && text.length >= 100) {
+          extracted = text
+          usedFormat = attempt.format
+          usedUrl = attempt.url
+          break outer
+        }
       }
     }
 
-    if (!htmlUrl) {
-      console.log(`[fetchBillText] No HTML version found for ${bill.openstates_id} (PDF-only or no links)`)
+    if (!extracted) {
+      lastError = 'no parseable version'
+      console.log(`[fetchBillText] No parseable version for ${label} across ${versions.length} versions`)
+      await recordTextFetchFailure(supabase, bill.id, lastError)
       return null
     }
 
-    // Step 3: Fetch the HTML page from the state legislature site (free, no API cost)
-    console.log(`[fetchBillText] Scraping text from: ${htmlUrl}`)
-    const htmlResp = await fetch(htmlUrl, {
-      headers: {
-        'User-Agent': 'CapitolKey/1.0 (civic education platform)',
-        'Accept': 'text/html',
-      },
-      signal: AbortSignal.timeout(15000),
-    })
+    const wordCount = extracted.split(/\s+/).length
+    console.log(`[fetchBillText] Extracted ${wordCount} words (${usedFormat}) for ${label}`)
 
-    if (!htmlResp.ok) {
-      console.error(`[fetchBillText] Legislature site error: ${htmlResp.status} for ${htmlUrl}`)
-      return null
-    }
-
-    const html = await htmlResp.text()
-
-    // Step 4: Extract text from HTML
-    const fullText = extractTextFromHtml(html)
-    if (!fullText || fullText.length < 100) {
-      console.log(`[fetchBillText] Extracted text too short (${fullText?.length || 0} chars), skipping`)
-      return null
-    }
-
-    const wordCount = fullText.split(/\s+/).length
-    console.log(`[fetchBillText] Extracted ${wordCount} words for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`)
-
-    // Step 5: Save to Supabase
+    // Step 3: Save to Supabase. Split into two calls so that if the
+    // text-fetch-tracking migration (supabase/add_bill_text_fetch_tracking.sql)
+    // hasn't been applied yet, the text still persists — we just skip the
+    // tracking reset. Prevents a migration-ordering deploy from silently
+    // dropping every successfully-fetched bill text.
     if (supabase && bill.id) {
       const { error } = await supabase
         .from('bills')
         .update({
-          full_text: fullText,
+          full_text: extracted,
           text_word_count: wordCount,
-          text_version: 'scraped_html',
-          structured_excerpt: extractStructuredExcerpt(fullText),
-          section_topic_scores: computeSectionTopicScores(fullText),
+          text_version: usedFormat === 'pdf' ? 'scraped_pdf' : 'scraped_html',
+          structured_excerpt: extractStructuredExcerpt(extracted),
+          section_topic_scores: computeSectionTopicScores(extracted),
           synced_at: new Date().toISOString(),
         })
         .eq('id', bill.id)
+      if (error) console.error(`[fetchBillText] Supabase update error:`, error.message)
 
-      if (error) {
-        console.error(`[fetchBillText] Supabase update error:`, error.message)
+      // Tracking reset — best-effort. PGRST204 = column not in schema cache
+      // (migration not applied); swallow that specifically so a pre-migration
+      // deploy still saves bill text.
+      const { error: trackErr } = await supabase
+        .from('bills')
+        .update({
+          text_fetch_attempts: 0,
+          text_fetch_last_at: new Date().toISOString(),
+          text_fetch_last_error: null,
+        })
+        .eq('id', bill.id)
+      if (trackErr && trackErr.code !== 'PGRST204') {
+        console.error('[fetchBillText] Tracking update error:', trackErr.message)
       }
     }
 
-    return fullText
+    return extracted
   } catch (err) {
+    // Let rate-limit errors bubble up so backfillStateTexts can break its
+    // loop without scoring a strike against this bill.
+    if (err instanceof OpenStatesRateLimitError) throw err
     console.error(`[fetchBillText] Error for ${bill.openstates_id}:`, err.message)
+    await recordTextFetchFailure(supabase, bill.id, err.message?.slice(0, 200) || 'unknown')
     return null
+  }
+}
+
+// Fetch a single URL and extract text. Returns null on any failure so the
+// caller can try the next format/version. Falls back to a loose-TLS raw
+// https.get for sites with broken cert chains (CT, MS, etc. — see
+// fetchInsecure block comment).
+async function fetchAndExtract(url, format) {
+  let body = null
+  let contentType = ''
+
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'CapitolKey/1.0 (civic education platform)',
+        'Accept': format === 'pdf' ? 'application/pdf' : 'text/html',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(20000),
+    })
+
+    if (!resp.ok) {
+      console.error(`[fetchBillText] ${format.toUpperCase()} fetch error: ${resp.status} for ${url.slice(0, 100)}`)
+      return null
+    }
+
+    const contentLength = parseInt(resp.headers.get('content-length') || '0', 10)
+    if (contentLength && contentLength > MAX_PDF_BYTES) {
+      console.error(`[fetchBillText] ${format.toUpperCase()} too large (${contentLength} bytes) for ${url.slice(0, 100)}`)
+      return null
+    }
+
+    contentType = resp.headers.get('content-type') || ''
+    body = Buffer.from(await resp.arrayBuffer())
+  } catch (err) {
+    if (!isCertError(err)) {
+      console.error(`[fetchBillText] ${format.toUpperCase()} fetch failed: ${err.message} (${err.cause?.code || 'no-cause'})`)
+      return null
+    }
+    // TLS verification failed — retry with loose verification for this one
+    // fetch. See fetchInsecure block comment for why this is safe.
+    try {
+      console.log(`[fetchBillText] Retrying ${url.slice(0, 80)} with loose TLS (${err.cause?.code})`)
+      const result = await fetchInsecure(url)
+      body = result.body
+      contentType = result.contentType
+    } catch (innerErr) {
+      console.error(`[fetchBillText] ${format.toUpperCase()} loose-TLS fallback failed: ${innerErr.message}`)
+      return null
+    }
+  }
+
+  if (!body || body.byteLength === 0) return null
+  if (body.byteLength > MAX_PDF_BYTES) {
+    console.error(`[fetchBillText] Response too large after download (${body.byteLength} bytes)`)
+    return null
+  }
+
+  try {
+    // Some gov sites return PDF with a generic content-type, or HTML links
+    // that actually serve PDF. Sniff the magic bytes to decide which parser
+    // to use regardless of what the caller expected.
+    const looksLikePdf = body.slice(0, 5).toString('latin1') === '%PDF-'
+    if (format === 'pdf' || looksLikePdf) {
+      const PDFParse = await loadPDFParse()
+      const parser = new PDFParse({ data: new Uint8Array(body) })
+      try {
+        const parsed = await parser.getText()
+        return (parsed.text || '').replace(/\s+/g, ' ').trim()
+      } finally {
+        await parser.destroy().catch(() => {})
+      }
+    }
+
+    const html = body.toString('utf-8')
+    return extractTextFromHtml(html)
+  } catch (err) {
+    console.error(`[fetchBillText] ${format.toUpperCase()} extraction failed: ${err.message}`)
+    return null
+  }
+}
+
+// Increment the failed-attempt counter for a bill so backfillStateTexts can
+// shelf it rather than hammering the same dead URL every day. Best-effort:
+// silently no-ops if the tracking migration hasn't been applied yet.
+async function recordTextFetchFailure(supabase, billId, errorText) {
+  if (!supabase || !billId) return
+  try {
+    const { data, error: readErr } = await supabase
+      .from('bills')
+      .select('text_fetch_attempts')
+      .eq('id', billId)
+      .maybeSingle()
+    // PGRST204 = column not in schema cache (migration pending). Skip silently.
+    if (readErr?.code === 'PGRST204') return
+    const prev = data?.text_fetch_attempts || 0
+    const { error: writeErr } = await supabase
+      .from('bills')
+      .update({
+        text_fetch_attempts: prev + 1,
+        text_fetch_last_at: new Date().toISOString(),
+        text_fetch_last_error: (errorText || 'unknown').slice(0, 200),
+      })
+      .eq('id', billId)
+    if (writeErr && writeErr.code !== 'PGRST204') {
+      console.error('[fetchBillText] Failed to record attempt:', writeErr.message)
+    }
+  } catch (err) {
+    console.error('[fetchBillText] Failed to record attempt:', err.message)
   }
 }
 
@@ -1020,24 +1282,46 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
   const { limit: maxBills = 50 } = options
   if (!supabase || !apiKey) return { synced: 0, calls: 0 }
 
-  // Find state bills without full_text
-  const { data: needText } = await supabase
+  // Cooldown threshold: after 5 consecutive failed attempts, skip the bill
+  // for 14 days before trying again. This stops us from burning Open States
+  // quota on permanently-dead URLs (withdrawn drafts, scanned PDFs with no
+  // extractable text, expired legislature links) while still giving the bill
+  // a second chance if anything changes upstream.
+  const COOLDOWN_STRIKES = 5
+  const cooldownCutoff = new Date(Date.now() - 14 * 86400000).toISOString()
+
+  // Find state bills without full_text that are NOT currently in cooldown.
+  // Two populations are eligible:
+  //   - attempts < COOLDOWN_STRIKES  (fresh or lightly tried)
+  //   - attempts >= COOLDOWN_STRIKES AND last attempt was > 14d ago
+  // Supabase's .or() can express either branch; we fetch extra candidates and
+  // filter client-side to keep the query simple.
+  const { data: candidates } = await supabase
     .from('bills')
-    .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source')
+    .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, text_fetch_attempts, text_fetch_last_at')
     .eq('source', 'openstates')
     .is('full_text', null)
     .not('openstates_id', 'is', null)
+    .order('text_fetch_attempts', { ascending: true })
     .order('updated_at', { ascending: false })
-    .limit(maxBills)
+    .limit(maxBills * 3)
 
-  if (!needText?.length) {
-    console.log('[backfill:text] No state bills need text fetching')
-    return { synced: 0, calls: 0 }
+  const needText = (candidates || []).filter(b => {
+    const attempts = b.text_fetch_attempts || 0
+    if (attempts < COOLDOWN_STRIKES) return true
+    return !b.text_fetch_last_at || b.text_fetch_last_at < cooldownCutoff
+  }).slice(0, maxBills)
+
+  if (!needText.length) {
+    console.log('[backfill:text] No state bills eligible for text fetch (all in cooldown)')
+    return { synced: 0, calls: 0, skippedCooldown: (candidates || []).length }
   }
 
-  console.log(`[backfill:text] Fetching text for ${needText.length} state bills`)
+  const shelved = (candidates || []).length - needText.length
+  console.log(`[backfill:text] Fetching text for ${needText.length} state bills (${shelved} shelved in cooldown)`)
   let synced = 0
   let calls = 0
+  let rateLimited = false
 
   for (const bill of needText) {
     try {
@@ -1047,12 +1331,19 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
       // Rate limit: 1.5s between calls (Open States limit is 40/min)
       await sleep(1500)
     } catch (err) {
+      if (err instanceof OpenStatesRateLimitError) {
+        // Daily quota exhausted — stop now. Remaining bills keep their
+        // attempt counters untouched so tomorrow's run picks them up fresh.
+        console.log(`[backfill:text] Open States daily quota exhausted after ${calls} calls; stopping early with ${synced} fetched`)
+        rateLimited = true
+        break
+      }
       console.error(`[backfill:text] Error for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}:`, err.message)
     }
   }
 
-  console.log(`[backfill:text] Done: ${synced}/${needText.length} texts fetched, ${calls} API calls`)
-  return { synced, calls }
+  console.log(`[backfill:text] Done: ${synced}/${needText.length} texts fetched, ${calls} API calls${rateLimited ? ' (rate-limited)' : ''}`)
+  return { synced, calls, rateLimited }
 }
 
 // ─── Change-hash refresh: catch amendments on hot bills ─────────────────────

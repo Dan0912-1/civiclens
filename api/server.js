@@ -18,23 +18,10 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
-import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
+import { runDailySync, runBackfill, fetchBillText, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
 import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
-// pdf-parse v2 pulls in pdfjs-dist, which references browser-only globals
-// (DOMMatrix, Path2D, ImageData) at module-evaluation time. On Vercel's Node
-// serverless runtime those globals do not exist, so a top-level import crashes
-// the function during cold start — taking down /api/health and every other
-// endpoint even though most have nothing to do with PDFs. Load it lazily the
-// first time a PDF actually needs parsing. Railway's long-lived Node also
-// tolerates this fine.
-let _PDFParsePromise = null
-function loadPDFParse() {
-  if (!_PDFParsePromise) {
-    _PDFParsePromise = import('pdf-parse').then(m => m.PDFParse)
-  }
-  return _PDFParsePromise
-}
+import { loadPDFParse } from './pdfLoader.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
