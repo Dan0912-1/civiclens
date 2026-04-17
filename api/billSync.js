@@ -15,6 +15,20 @@ import { loadPDFParse } from './pdfLoader.js'
 // rewrites). Parsing those eats memory and rarely produces useful excerpts.
 const MAX_PDF_BYTES = 15 * 1024 * 1024
 
+// Browser-like User-Agent for state legislature fetches.
+//
+// Some states (Indiana's iga.in.gov is a confirmed case) serve a React SPA
+// shell to non-browser UAs and the actual PDF to browser UAs — the same
+// URL returns a 691-byte JS loader to `CapitolKey/1.0` and a 4.2 MB PDF to
+// Chrome. This is a common bot-filter pattern on state gov sites, so we
+// send a realistic Chrome UA for every text-fetch request.
+//
+// Scope: only legislature HTML/PDF fetches inside billSync.js. The rest of
+// the backend keeps its honest UA. This is consistent with how browsers
+// access the same public documents — no auth, no personal data, just
+// reading bill text that's intended to be publicly readable.
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
 // Thrown when Open States returns 429 (daily quota exhausted). Separated
 // from generic errors so backfillStateTexts can break out of its loop
 // immediately instead of burning through the remaining queue — and so the
@@ -44,7 +58,7 @@ class OpenStatesRateLimitError extends Error {
 import { get as httpsGet } from 'node:https'
 import { get as httpGet } from 'node:http'
 
-function fetchInsecure(url, { timeoutMs = 20000, userAgent = 'CapitolKey/1.0 (civic education platform)' } = {}) {
+function fetchInsecure(url, { timeoutMs = 20000, userAgent = BROWSER_UA } = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url)
     const opts = {
@@ -976,8 +990,9 @@ async function fetchAndExtract(url, format) {
   try {
     const resp = await fetch(url, {
       headers: {
-        'User-Agent': 'CapitolKey/1.0 (civic education platform)',
-        'Accept': format === 'pdf' ? 'application/pdf' : 'text/html',
+        'User-Agent': BROWSER_UA,
+        'Accept': format === 'pdf' ? 'application/pdf,*/*' : 'text/html,application/xhtml+xml,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
       },
       redirect: 'follow',
       signal: AbortSignal.timeout(20000),
