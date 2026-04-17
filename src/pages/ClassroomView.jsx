@@ -81,8 +81,11 @@ export default function ClassroomView() {
                         className={styles.assignmentTitle}
                         onClick={() => {
                           if (congress && billType && billNum) {
-                            navigate(`/bill/${congress}/${billType}/${billNum}`, {
+                            const legiscanParam = bd.legiscan_bill_id ? `?legiscan_id=${bd.legiscan_bill_id}` : ''
+                            navigate(`/bill/${congress}/${billType}/${billNum}${legiscanParam}`, {
                               state: {
+                                bill: bd,
+                                analysis: bd.analysis || null,
                                 assignment: a.id,
                                 classroom: classroom?.id,
                                 assignmentInstructions: a.instructions || '',
