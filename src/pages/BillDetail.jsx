@@ -259,9 +259,17 @@ export default function BillDetail() {
     async function run() {
       const stored = sessionStorage.getItem('civicProfile')
       if (!stored) { setNoProfile(true); return }
-      setPersonalizationError(false)
       let profile
       try { profile = JSON.parse(stored) } catch { setNoProfile(true); return }
+      // Auto-seeded profiles (created on Google sign-in) have only name + email
+      // and no interests/state. Treat those as incomplete so we show the
+      // "Complete your profile" prompt instead of firing a meaningless
+      // personalization against a bare profile.
+      if (!profile?.state || !profile?.interests?.length) {
+        setNoProfile(true)
+        return
+      }
+      setPersonalizationError(false)
       try {
         const resp = await fetch(`${API_BASE}/api/personalize`, {
           method: 'POST',
