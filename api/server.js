@@ -4532,16 +4532,16 @@ const SCORE_WEIGHTS = {
 }
 const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
 
-// Map bill status stages to momentum scores — further along = more impactful.
-// Keys MUST match the canonical statusStage strings set by
-// deriveStageFromBill / normalizeStatus so the ranker actually boosts bills
-// further along in the process.
+// Map bill status stages to momentum scores. Actionable in-progress bills rank
+// highest (student can still contact their rep). Enacted bills stay in the feed
+// for civic-education value but ranked below in_committee so signed laws don't
+// flood the top slots — matches billRanker.js STAGE_SCORES.
 const STATUS_MOMENTUM = {
-  enacted:      1.0,
-  passed_both:  0.95,
+  passed_both:  1.0,
   passed_one:   0.85,
   floor_vote:   0.80,
   in_committee: 0.50,
+  enacted:      0.40,
   introduced:   0.30,
   vetoed:       0.10, // terminal-dead — minimal momentum
   failed:       0.10,

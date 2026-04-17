@@ -59,14 +59,18 @@ function passesHardFilter(bill) {
 
 // ─── Score components ────────────────────────────────────────────────────────
 
-// Stage: how far through the legislative process (out of 25)
+// Stage: how far through the legislative process (out of 25).
+// Actionable in-progress bills rank highest — students can still influence them
+// by contacting reps. Enacted bills are kept eligible for civic-education value
+// but ranked below passed_one so the feed doesn't flood with already-signed laws
+// (especially right after an appropriations bundle signing).
 const STAGE_SCORES = {
-  enacted: 25,
   passed_both: 22,
   passed_one: 18,
   in_committee: 12,
-  introduced: 6,
+  enacted: 10,
   vetoed: 10,
+  introduced: 6,
 }
 
 function scoreStage(bill) {
