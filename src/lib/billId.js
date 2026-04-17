@@ -39,3 +39,27 @@ export function makeCongressBillId(type, number, congress) {
 export function sameBillId(a, b) {
   return String(a || '').toLowerCase() === String(b || '').toLowerCase()
 }
+
+// Fields the server attaches to /api/legislation results for its own
+// internal use (state-bill full text + CRS summary). They can each be tens
+// of KB; a batch of state bills that includes them blows past the server's
+// 2 MB body limit and 413s. The server already re-fetches text from its DB
+// when the field is absent, so stripping here is safe.
+const SERVER_INTERNAL_BILL_FIELDS = [
+  '_localText',
+  '_localCrsSummary',
+  '_localTextWordCount',
+  '_localTextVersion',
+]
+
+/**
+ * Strip large server-internal fields from a bill before posting it back
+ * to /api/personalize-batch. Use for any client → server round-trip that
+ * sends bills the server already has indexed.
+ */
+export function stripBillForPersonalize(bill) {
+  if (!bill || typeof bill !== 'object') return bill
+  const out = { ...bill }
+  for (const k of SERVER_INTERNAL_BILL_FIELDS) delete out[k]
+  return out
+}

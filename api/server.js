@@ -185,9 +185,11 @@ app.use(cors({
 
 app.use(compression())
 
-// 2MB body cap — large enough for batch personalize (20 bills) but tight
-// enough to bound abuse. Default is 100kb; an explicit value documents intent.
-app.use(express.json({ limit: '2mb' }))
+// 8MB body cap — bumped from 2MB after state-bill batches (which inline
+// _localText per bill from /api/legislation) tripped 413s. Clients now strip
+// _localText before posting to /personalize-batch (see stripBillForPersonalize),
+// but the higher ceiling absorbs any caller that hasn't been updated.
+app.use(express.json({ limit: '8mb' }))
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 // Protects expensive endpoints from abuse (AI personalization, LegiScan proxy)

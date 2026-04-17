@@ -8,7 +8,7 @@ import { supabase, getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
-import { makeBillId } from '../lib/billId'
+import { makeBillId, stripBillForPersonalize } from '../lib/billId'
 import styles from './Results.module.css'
 
 const API_BASE = getApiBase()
@@ -174,7 +174,7 @@ export default function Results() {
         const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills, profile }),
+          body: JSON.stringify({ bills: bills.map(stripBillForPersonalize), profile }),
           signal: AbortSignal.timeout(60000),
         })
         const data = await resp.json().catch(() => ({}))

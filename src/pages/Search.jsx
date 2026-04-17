@@ -6,7 +6,7 @@ import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { supabase, getSessionSafe } from '../lib/supabase'
 import BillCard from '../components/BillCard.jsx'
-import { makeBillId } from '../lib/billId'
+import { makeBillId, stripBillForPersonalize } from '../lib/billId'
 import styles from './Search.module.css'
 
 const API_BASE = getApiBase()
@@ -187,7 +187,7 @@ export default function Search() {
         const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills: [bill], profile })
+          body: JSON.stringify({ bills: [stripBillForPersonalize(bill)], profile })
         })
         if (!resp.ok) return false
         const data = await resp.json()
