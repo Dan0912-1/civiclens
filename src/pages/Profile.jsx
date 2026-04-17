@@ -197,21 +197,23 @@ export default function Profile() {
   const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
   const isUnder13 = ageValid && ageNum < 13
 
-  // If the user is already signed in with a saved profile whose age is 13+,
-  // clear the device-level COPPA lock — they've previously passed the gate,
-  // so there's no reason a stale local flag should keep blocking them.
+  // The COPPA lock is a device-scoped anonymous-bypass deterrent. Once a
+  // user is authenticated, it's no longer doing any real work — the
+  // server-side Supabase trigger (supabase/add_coppa_age_check.sql) and the
+  // POST /api/personalize validator both still reject under-13 profiles,
+  // so clearing the local flag for a signed-in user doesn't widen any
+  // compliance gap. It does rescue users who tripped the lock by mistake.
+  // Also pre-fill the form with any saved profile so returning users don't
+  // have to re-enter their data.
   useEffect(() => {
     if (!user) return
     let cancelled = false
+    clearCoppaLock()
+    setCoppaLocked(false)
     ;(async () => {
       const saved = await loadProfile(user.id)
       if (cancelled || !saved) return
-      const savedAge = Number(saved.grade)
-      if (Number.isInteger(savedAge) && savedAge >= 13) {
-        clearCoppaLock()
-        setCoppaLocked(false)
-        setProfile(prev => ({ ...prev, ...saved }))
-      }
+      setProfile(prev => ({ ...prev, ...saved }))
     })()
     return () => { cancelled = true }
   }, [user])
@@ -325,6 +327,19 @@ export default function Profile() {
                     <p>
                       Account creation is temporarily unavailable. You can still browse legislation without an account.
                     </p>
+                    {!user && (
+                      <p>
+                        Already have an account?{' '}
+                        <button
+                          type="button"
+                          className={styles.signInLink}
+                          onClick={() => setShowAuth(true)}
+                        >
+                          Sign in
+                        </button>{' '}
+                        to continue.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -472,6 +472,20 @@
   background: #15263a;
 }
 
+.signInLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--navy);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.signInLink:hover {
+  color: var(--amber);
+}
+
 .error {
   color: #D97757;
   font-family: var(--font-mono);
