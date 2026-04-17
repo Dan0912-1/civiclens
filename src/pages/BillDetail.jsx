@@ -26,6 +26,17 @@ async function openInAppBrowser(url) {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
+function isProfileIncomplete() {
+  try {
+    const stored = sessionStorage.getItem('civicProfile')
+    if (!stored) return true
+    const profile = JSON.parse(stored)
+    return !profile?.state || !profile?.grade || !profile?.interests?.length
+  } catch {
+    return true
+  }
+}
+
 const TAG_COLORS = {
   Education:     'blue',
   Healthcare:    'green',
@@ -61,7 +72,10 @@ export default function BillDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [personalizationError, setPersonalizationError] = useState(false)
-  const [noProfile, setNoProfile] = useState(false)
+  // Read profile completeness synchronously so first paint shows the right
+  // branch — otherwise students see "Personalizing..." flash before
+  // "Tell us about yourself..." resolves on the next render.
+  const [noProfile, setNoProfile] = useState(() => isProfileIncomplete())
   const [historyOpen, setHistoryOpen] = useState(false)
   const [bookmarked, setBookmarked] = useState(false)
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
@@ -82,7 +96,7 @@ export default function BillDetail() {
     setDetail(null)
     setError('')
     setPersonalizationError(false)
-    setNoProfile(false)
+    setNoProfile(isProfileIncomplete())
     setShareMsg('')
     setBookmarked(false)
     setBookmarkBusy(false)
