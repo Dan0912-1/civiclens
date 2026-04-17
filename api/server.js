@@ -1586,36 +1586,53 @@ function originChamberFromType(type) {
   return ''
 }
 
-// LegiScan progress event IDs → readable milestone names
+// LegiScan progress event IDs → readable milestone names.
+// Event IDs are NOT ordinal — event 6 (Failed) is not "later" than event 4
+// (Passed), so callers must inspect events by meaning, not max().
 const PROGRESS_EVENTS = {
   1: 'Introduced',
   2: 'Engrossed',   // passed originating chamber
   3: 'Enrolled',    // passed both chambers
   4: 'Passed',
   5: 'Vetoed',
-  6: 'Signed',
+  6: 'Failed',
+  7: 'Override',    // veto overridden → became law
+  8: 'Signed',      // "Chaptered" at state level
+  9: 'Referred',    // referred to committee
 }
 
-// Derive a 1-based stage index from LegiScan progress events for the 5-step
-// progress bar: 1=Introduced, 2=Committee, 3=Floor Vote, 4=Passed, 5=Signed.
-// Falls back to parsing latestAction text if no progress array is available.
+const TERMINAL_EVENTS = new Set([5, 6, 7, 8])
+
+// Derive the canonical statusStage string from a LegiScan bill. See
+// src/lib/billStage.js for the stage vocabulary. Terminal events
+// (vetoed/failed/enacted) win over earlier events in the same progress array.
 function deriveStageFromBill(b) {
-  const progress = b.progress || []
-  if (progress.length) {
-    const maxEvent = Math.max(...progress.map(p => p.event || 0))
-    if (maxEvent >= 6) return 5 // Signed
-    if (maxEvent >= 4) return 4 // Passed
-    if (maxEvent >= 3) return 4 // Enrolled = passed both
-    if (maxEvent >= 2) return 3 // Engrossed = floor vote stage
-    return 1 // Introduced
+  const progress = Array.isArray(b.progress) ? b.progress : []
+
+  // Terminal states are authoritative regardless of other events.
+  const terminal = progress.find(p => TERMINAL_EVENTS.has(p.event))
+  if (terminal) {
+    if (terminal.event === 5) return 'vetoed'
+    if (terminal.event === 6) return 'failed'
+    return 'enacted' // 7 Override or 8 Signed/Chaptered
   }
-  // Fallback: parse action text
+
+  const events = new Set(progress.map(p => p.event || 0))
+  if (events.has(3) || events.has(4)) return 'passed_both'
+  if (events.has(2)) return 'passed_one'
+  if (events.has(9)) return 'in_committee'
+  if (events.has(1)) return 'introduced'
+
+  // Fallback: parse action text when progress[] is absent.
   const action = (b.status_desc || b.last_action || '').toLowerCase()
-  if (/signed|became\s+law|enacted|enrolled/.test(action)) return 5
-  if (/passed/.test(action)) return 4
-  if (/floor\s+(vote|consideration|calendar)/.test(action)) return 3
-  if (/reported|markup|committee|subcommittee/.test(action)) return 2
-  return 1
+  if (/signed\s+by\s+(the\s+)?(president|governor)|became\s+(public\s+)?law|\bpublic\s+law\s+no|\benacted\b|chaptered/.test(action)) return 'enacted'
+  if (/\bvetoed\b/.test(action)) return 'vetoed'
+  if (/\b(failed|defeated|withdrawn|tabled|died)\b/.test(action)) return 'failed'
+  if (/passed\s+both|enrolled|presented\s+to\s+(the\s+)?(president|governor)/.test(action)) return 'passed_both'
+  if (/passed\s+(the\s+)?(house|senate)|\bpassed\b|engrossed/.test(action)) return 'passed_one'
+  if (/floor\s+(vote|consideration|calendar)/.test(action)) return 'floor_vote'
+  if (/committee|reported|markup|subcommittee|referred/.test(action)) return 'in_committee'
+  return 'introduced'
 }
 
 // Transform LegiScan history + progress arrays for frontend consumption
@@ -3160,7 +3177,16 @@ async function checkBillUpdates() {
       const data = await cachedGetBill(legiscanId)
       const b = data.bill
       const stage = deriveStageFromBill(b)
-      const stageLabels = { 1: 'Introduced', 2: 'In Committee', 3: 'Floor Vote', 4: 'Passed', 5: 'Signed into Law' }
+      const stageLabels = {
+        introduced:   'Introduced',
+        in_committee: 'In Committee',
+        floor_vote:   'Floor Vote',
+        passed_one:   'Passed one chamber',
+        passed_both:  'Passed both chambers',
+        enacted:      'Signed into Law',
+        vetoed:       'Vetoed',
+        failed:       'Failed',
+      }
       currentStatuses.set(billId, {
         latestAction: b.last_action || b.status_desc || '',
         latestActionDate: b.last_action_date || b.status_date || '',
@@ -4479,16 +4505,19 @@ const SCORE_WEIGHTS = {
 }
 const FRESHNESS_HALFLIFE = parseFloat(process.env.FRESHNESS_HALFLIFE) || 60 // days
 
-// Map bill status stages to momentum scores — further along = more impactful
+// Map bill status stages to momentum scores — further along = more impactful.
+// Keys MUST match the canonical statusStage strings set by
+// deriveStageFromBill / normalizeStatus so the ranker actually boosts bills
+// further along in the process.
 const STATUS_MOMENTUM = {
-  'Signed/Enacted':  1.0,
-  'Passed Both':     0.95,
-  'Passed Chamber':  0.85,
-  'Floor Vote':      0.80,
-  'Reported':        0.70,
-  'In Committee':    0.50,
-  'Markup':          0.50,
-  'Introduced':      0.30,
+  enacted:      1.0,
+  passed_both:  0.95,
+  passed_one:   0.85,
+  floor_vote:   0.80,
+  in_committee: 0.50,
+  introduced:   0.30,
+  vetoed:       0.10, // terminal-dead — minimal momentum
+  failed:       0.10,
 }
 
 // Map subjects to states with heightened geographic relevance

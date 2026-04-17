@@ -3,29 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
+import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillCard.module.css'
 
 function haptic(style = 'Light') {
   import('@capacitor/haptics')
     .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
     .catch(() => {})
-}
-
-// Map either numeric (Congress.gov legacy shape, 1-5) or string stage
-// (synced bills table: "introduced" ... "enacted"/"vetoed") to the 1-5
-// position used by the progress dots. 0 means "no progress to render".
-const STAGE_STRINGS = {
-  introduced:   1,
-  in_committee: 2,
-  passed_one:   3,
-  passed_both:  4,
-  enacted:      5,
-  vetoed:       5, // treat a veto as "terminal/5" for progress purposes
-}
-function normalizeStage(stage) {
-  if (typeof stage === 'number') return stage
-  if (!stage) return 0
-  return STAGE_STRINGS[String(stage).toLowerCase()] || 0
 }
 
 const TAG_COLORS = {
@@ -185,13 +169,12 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         </span>
       </div>
 
-      {/* Mini progress dots. Accepts either a numeric stage (1-5, legacy
-          Congress.gov shape) or the normalized string stage stored in the
-          bills table ("introduced", "in_committee", "passed_one",
-          "passed_both", "enacted", "vetoed"). */}
-      {normalizeStage(bill.statusStage) > 0 && (() => {
-        const n = normalizeStage(bill.statusStage)
-        const labels = ['Introduced','Committee','Floor Vote','Passed','Signed']
+      {/* Mini progress dots. Uses the canonical statusStage string; see
+          src/lib/billStage.js. Terminal states (vetoed/failed) show on dot 5
+          with their own label so we never mislabel a vetoed bill "Signed". */}
+      {stageToDot(bill.statusStage) > 0 && (() => {
+        const n = stageToDot(bill.statusStage)
+        const labels = stageLabels(bill.statusStage)
         return (
           <div className={styles.miniProgress} title={labels[n - 1]}>
             {[1,2,3,4,5].map(s => (

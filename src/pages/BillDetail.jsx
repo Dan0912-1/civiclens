@@ -8,6 +8,7 @@ import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, getMyClassrooms, createAssignment } from '../lib/classroom'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
+import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -434,31 +435,45 @@ export default function BillDetail() {
           )}
         </div>
 
-        {/* Bill progress timeline */}
-        {detail?.statusStage && (
-          <div className={styles.progressSection}>
-            <h3 className={styles.progressHeading}>Bill progress</h3>
-            <div className={styles.progressBar}>
-              {['Introduced', 'Committee', 'Floor Vote', 'Passed', 'Signed'].map((label, i) => {
-                const stage = i + 1
-                const reached = detail.statusStage >= stage
-                const current = detail.statusStage === stage
-                const progressDate = detail.progress?.find(p => {
-                  const eventToStage = { 1: 1, 2: 3, 3: 4, 4: 4, 5: 4, 6: 5 }
-                  return eventToStage[p.event] === stage
-                })?.date
-                return (
-                  <div key={label} className={`${styles.progressStep} ${reached ? styles.progressReached : ''} ${current ? styles.progressCurrent : ''}`}>
-                    <div className={styles.progressDot} />
-                    {i < 4 && <div className={styles.progressLine} />}
-                    <span className={styles.progressLabel}>{label}</span>
-                    {reached && progressDate && (
-                      <span className={styles.progressDate}>{progressDate}</span>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+        {/* Bill progress timeline. LegiScan event IDs → 1..5 dot position.
+            Event IDs are not ordinal (6 is Failed, not "after 5"), so the
+            mapping is explicit. Vetoed/failed/signed share dot 5 with a
+            label that reflects the terminal state. */}
+        {stageToDot(detail?.statusStage) > 0 && (() => {
+          const current = stageToDot(detail.statusStage)
+          const labels = stageLabels(detail.statusStage)
+          const eventToStage = {
+            1: 1, // Introduced
+            9: 2, // Referred to committee
+            2: 3, // Engrossed / passed one chamber
+            3: 4, // Enrolled / passed both
+            4: 4, // Passed
+            5: 5, // Vetoed
+            6: 5, // Failed
+            7: 5, // Override → enacted
+            8: 5, // Signed / chaptered
+          }
+          return (
+            <div className={styles.progressSection}>
+              <h3 className={styles.progressHeading}>Bill progress</h3>
+              <div className={styles.progressBar}>
+                {labels.map((label, i) => {
+                  const stage = i + 1
+                  const reached = current >= stage
+                  const isCurrent = current === stage
+                  const progressDate = detail.progress?.find(p => eventToStage[p.event] === stage)?.date
+                  return (
+                    <div key={label} className={`${styles.progressStep} ${reached ? styles.progressReached : ''} ${isCurrent ? styles.progressCurrent : ''}`}>
+                      <div className={styles.progressDot} />
+                      {i < 4 && <div className={styles.progressLine} />}
+                      <span className={styles.progressLabel}>{label}</span>
+                      {reached && progressDate && (
+                        <span className={styles.progressDate}>{progressDate}</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
 
             {detail.history?.length > 0 && (
               <>
@@ -494,7 +509,8 @@ export default function BillDetail() {
               </>
             )}
           </div>
-        )}
+          )
+        })()}
 
         {/* Personalized analysis */}
         {analysis ? (

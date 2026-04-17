@@ -262,14 +262,18 @@ function classifyTopics(subjects, title, fullText = null) {
 
 // ─── Status normalization ──────────────────────────────────────────────────
 function normalizeStatus(rawStatus, latestAction) {
-  const s = (rawStatus || '').toLowerCase()
-  const a = (latestAction || '').toLowerCase()
+  // Both status descriptor and latest-action text carry stage signal; callers
+  // often pass one empty (e.g. Congress.gov sync passes '' for rawStatus), so
+  // we scan the combined string instead of treating them separately.
+  const combined = `${rawStatus || ''} ${latestAction || ''}`.toLowerCase()
 
-  if (s.includes('enacted') || s.includes('signed') || a.includes('became public law')) return 'enacted'
-  if (s.includes('vetoed') || a.includes('vetoed')) return 'vetoed'
-  if (s.includes('passed') && s.includes('both')) return 'passed_both'
-  if (a.includes('passed house') || a.includes('passed senate') || s.includes('passed')) return 'passed_one'
-  if (a.includes('committee') || s.includes('committee') || a.includes('referred')) return 'in_committee'
+  if (/signed\s+by\s+(the\s+)?(president|governor)|became\s+(public\s+)?law|\bpublic\s+law\s+no|\benacted\b|chaptered/.test(combined)) return 'enacted'
+  if (/\bvetoed\b/.test(combined)) return 'vetoed'
+  if (/\b(failed|defeated|withdrawn|tabled|died)\b/.test(combined)) return 'failed'
+  if (/passed\s+both|enrolled|presented\s+to\s+(the\s+)?(president|governor)/.test(combined)) return 'passed_both'
+  if (/passed\s+(the\s+)?(house|senate)|\bpassed\b|engrossed/.test(combined)) return 'passed_one'
+  if (/floor\s+(vote|consideration|calendar)/.test(combined)) return 'floor_vote'
+  if (/committee|reported|markup|subcommittee|referred/.test(combined)) return 'in_committee'
   return 'introduced'
 }
 
