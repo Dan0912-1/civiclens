@@ -252,9 +252,14 @@ export default function Profile() {
     if (step < 3) {
       setStep(s => s + 1)
     } else {
-      // Save to sessionStorage and navigate
+      // Save to sessionStorage and navigate. The Supabase write is
+      // fire-and-forget: awaiting it can wedge behind a navigator.locks
+      // auth lock (same hang class as sign-in — see commit 59c74b1), which
+      // made the "Show me my legislation" button appear dead. Results.jsx
+      // reads sessionStorage as a fallback, so cross-device sync is nice
+      // to have, not required to proceed.
       sessionStorage.setItem('civicProfile', JSON.stringify(profile))
-      if (user) await saveProfile(user.id, profile)
+      if (user) saveProfile(user.id, profile)
       navigate(returnTo || '/results', returnState ? { state: returnState } : undefined)
     }
   }
