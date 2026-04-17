@@ -25,6 +25,19 @@ function loadPDFParse() {
 // rewrites). Parsing those eats memory and rarely produces useful excerpts.
 const MAX_PDF_BYTES = 15 * 1024 * 1024
 
+// Thrown when Open States returns 429 (daily quota exhausted). Separated
+// from generic errors so backfillStateTexts can break out of its loop
+// immediately instead of burning through the remaining queue — and so the
+// offending bill doesn't get a false "strike" that would shelf it for 14
+// days. See the block comment on backfillStateTexts for context.
+class OpenStatesRateLimitError extends Error {
+  constructor(status) {
+    super(`Open States rate limited (HTTP ${status})`)
+    this.name = 'OpenStatesRateLimitError'
+    this.status = status
+  }
+}
+
 // Legacy-TLS fallback for state legislature sites.
 //
 // Several state legislatures (CT cga.ct.gov, MS billstatus.ls.state.ms.us)
@@ -771,12 +784,14 @@ async function runDailySync(supabase, config) {
     // seeding a brand-new jurisdiction.
 
     // Phase 4: State text via Open States → legislature PDF/HTML.
-    // With Phase 3 retired, the full Open States daily budget (minus ~200
-    // consumed by Phase 2 metadata sync and on-demand /api paths) is
-    // available for text fetching. 800/day clears the ~30K textless backlog
-    // in ~38 days.
+    // With Phase 3 retired, the full Open States daily budget (minus ~100-300
+    // consumed by Phase 2 metadata sync) is available for text fetching.
+    // We ask for 1000 attempts but the backfill breaks early the moment
+    // Open States returns 429 (see OpenStatesRateLimitError handling) — so
+    // on light-Phase-2 days we capture the extra headroom, and on heavy
+    // days we stop cleanly without scoring false strikes against bills.
     try {
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 800 })
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 1000 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
@@ -857,6 +872,11 @@ async function fetchBillText(supabase, bill) {
     console.log(`[fetchBillText] Fetching versions for ${label}`)
 
     const resp = await fetch(url)
+    if (resp.status === 429) {
+      // Quota exhausted — bubble up without a failure strike so the bill
+      // isn't unfairly shelved. The daily loop will catch this and stop.
+      throw new OpenStatesRateLimitError(resp.status)
+    }
     if (!resp.ok) {
       lastError = `openstates ${resp.status}`
       console.error(`[fetchBillText] Open States API error: ${resp.status}`)
@@ -946,6 +966,9 @@ async function fetchBillText(supabase, bill) {
 
     return extracted
   } catch (err) {
+    // Let rate-limit errors bubble up so backfillStateTexts can break its
+    // loop without scoring a strike against this bill.
+    if (err instanceof OpenStatesRateLimitError) throw err
     console.error(`[fetchBillText] Error for ${bill.openstates_id}:`, err.message)
     await recordTextFetchFailure(supabase, bill.id, err.message?.slice(0, 200) || 'unknown')
     return null
@@ -1308,6 +1331,7 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
   console.log(`[backfill:text] Fetching text for ${needText.length} state bills (${shelved} shelved in cooldown)`)
   let synced = 0
   let calls = 0
+  let rateLimited = false
 
   for (const bill of needText) {
     try {
@@ -1317,12 +1341,19 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
       // Rate limit: 1.5s between calls (Open States limit is 40/min)
       await sleep(1500)
     } catch (err) {
+      if (err instanceof OpenStatesRateLimitError) {
+        // Daily quota exhausted — stop now. Remaining bills keep their
+        // attempt counters untouched so tomorrow's run picks them up fresh.
+        console.log(`[backfill:text] Open States daily quota exhausted after ${calls} calls; stopping early with ${synced} fetched`)
+        rateLimited = true
+        break
+      }
       console.error(`[backfill:text] Error for ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}:`, err.message)
     }
   }
 
-  console.log(`[backfill:text] Done: ${synced}/${needText.length} texts fetched, ${calls} API calls`)
-  return { synced, calls }
+  console.log(`[backfill:text] Done: ${synced}/${needText.length} texts fetched, ${calls} API calls${rateLimited ? ' (rate-limited)' : ''}`)
+  return { synced, calls, rateLimited }
 }
 
 // ─── Change-hash refresh: catch amendments on hot bills ─────────────────────
