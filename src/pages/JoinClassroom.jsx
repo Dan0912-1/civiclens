@@ -38,6 +38,9 @@ export default function JoinClassroom() {
         navigate('/classroom')
       } else {
         const data = await peekClassroom(trimmed)
+        // Clear any prior error from a previous failed submission so the
+        // name-step form doesn't render a stale message above it.
+        setError('')
         if (data.classroom.requireName) {
           // Show name prompt before proceeding
           setPendingData(data)
@@ -114,28 +117,35 @@ export default function JoinClassroom() {
         <p>Enter the 6-character code your teacher gave you.</p>
 
         <form className={styles.form} onSubmit={handleSubmit}>
+          <label htmlFor="classroom-join-code" className={styles.visuallyHidden}>
+            Classroom join code
+          </label>
           <input
+            id="classroom-join-code"
             type="text"
             value={code}
             onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
             placeholder="ABC123"
-            aria-label="Classroom join code"
             className={styles.codeInput}
             maxLength={6}
             autoFocus
             autoComplete="off"
             spellCheck={false}
+            inputMode="text"
+            aria-describedby={error ? 'classroom-join-error' : undefined}
+            aria-invalid={error ? 'true' : undefined}
           />
           <button
             type="submit"
             className={styles.btn}
             disabled={loading || code.trim().length !== 6}
+            aria-busy={loading || undefined}
           >
-            {loading ? 'Joining...' : 'Join'}
+            {loading ? 'Joining…' : 'Join'}
           </button>
         </form>
 
-        {error && <p className={styles.error}>{error}</p>}
+        {error && <p id="classroom-join-error" role="alert" className={styles.error}>{error}</p>}
 
         <button className={styles.back} onClick={() => navigate('/classroom')}>
           Back to Classrooms

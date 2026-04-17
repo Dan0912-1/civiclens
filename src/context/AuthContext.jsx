@@ -136,6 +136,25 @@ export function AuthProvider({ children }) {
             email: existing.email || meta.email || localProfile.email || '',
           })
         }
+
+        // Migrate any classrooms the student joined anonymously so signing up
+        // doesn't silently drop their class membership. Each peek-joined room
+        // is re-joined via the authenticated endpoint; already-member responses
+        // (409) are harmless.
+        try {
+          const joinedRaw = sessionStorage.getItem('ck_joined_classrooms')
+          if (joinedRaw && session.access_token) {
+            const joined = JSON.parse(joinedRaw)
+            if (Array.isArray(joined) && joined.length) {
+              const { joinClassroom } = await import('../lib/classroom')
+              for (const entry of joined) {
+                if (!entry?.code) continue
+                try { await joinClassroom(session.access_token, entry.code) } catch {}
+              }
+              sessionStorage.removeItem('ck_joined_classrooms')
+            }
+          }
+        } catch {}
       }
     })
 

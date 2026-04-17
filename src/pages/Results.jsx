@@ -449,7 +449,12 @@ export default function Results() {
                         const legiscanParam = bd.legiscan_bill_id ? `?legiscan_id=${bd.legiscan_bill_id}` : ''
                         const { analysis: _tAnalysis, ...billOnly } = bd
                         navigate(`/bill/${congress}/${billType}/${billNum}${legiscanParam}`, {
-                          state: { bill: billOnly, assignment: a.id, classroom: a.classroomId }
+                          state: {
+                            bill: billOnly,
+                            assignment: a.id,
+                            classroom: a.classroomId,
+                            assignmentInstructions: a.instructions || '',
+                          },
                         })
                       }
                     }}

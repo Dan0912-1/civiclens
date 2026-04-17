@@ -47,12 +47,15 @@ export default function BillDetail() {
   const { showToast } = useToast()
   const trackedRef = useRef(false)
 
-  // Data passed from Results page via router state
+  // Data passed from Results page via router state. For deep links (push
+  // notification, shared URL) location.state is null; fall back to query
+  // params so the "Mark as Read" button + assignment banner still render.
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
   const skipPersonalization = location.state?.skipPersonalization || false
-  const assignmentId = location.state?.assignment || null
-  const assignmentClassroomId = location.state?.classroom || null
+  const searchParams = new URLSearchParams(location.search)
+  const assignmentId = location.state?.assignment || searchParams.get('assignment') || null
+  const assignmentClassroomId = location.state?.classroom || searchParams.get('classroom') || null
   const assignmentInstructions = location.state?.assignmentInstructions || ''
 
   const [bill, setBill] = useState(passedBill)
@@ -67,6 +70,7 @@ export default function BillDetail() {
   const [bookmarkBusy, setBookmarkBusy] = useState(false)
   const [shareMsg, setShareMsg] = useState('')
   const [assignmentCompleted, setAssignmentCompleted] = useState(false)
+  const [markCompleteBusy, setMarkCompleteBusy] = useState(false)
   const assignmentTimerRef = useRef(null)
   const [assignOpen, setAssignOpen] = useState(false)
   const [assignClassrooms, setAssignClassrooms] = useState([])
@@ -182,17 +186,25 @@ export default function BillDetail() {
   }
 
   async function handleMarkComplete() {
-    if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted) return
-    const session = await supabase?.auth.getSession()
-    const token = session?.data?.session?.access_token
-    if (!token) return
-    const elapsed = assignmentTimerRef.current ? Math.round((Date.now() - assignmentTimerRef.current) / 1000) : null
+    if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted || markCompleteBusy) return
+    setMarkCompleteBusy(true)
     try {
+      const session = await getSessionSafe()
+      const token = session?.access_token
+      if (!token) {
+        showToast('Please sign in to mark this complete', 'error')
+        return
+      }
+      const elapsed = assignmentTimerRef.current
+        ? Math.round((Date.now() - assignmentTimerRef.current) / 1000)
+        : null
       await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
       setAssignmentCompleted(true)
       showToast('Marked as read!')
     } catch (err) {
       showToast(err.message || 'Could not mark as read', 'error')
+    } finally {
+      setMarkCompleteBusy(false)
     }
   }
 
@@ -399,8 +411,13 @@ export default function BillDetail() {
                 {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
               </span>
               {!assignmentCompleted && user && (
-                <button className={styles.markCompleteBtn} onClick={handleMarkComplete}>
-                  Mark as Read
+                <button
+                  className={styles.markCompleteBtn}
+                  onClick={handleMarkComplete}
+                  disabled={markCompleteBusy}
+                  aria-busy={markCompleteBusy || undefined}
+                >
+                  {markCompleteBusy ? 'Saving…' : 'Mark as Read'}
                 </button>
               )}
             </div>

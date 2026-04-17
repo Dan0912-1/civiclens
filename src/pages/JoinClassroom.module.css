@@ -121,3 +121,17 @@
   border-color: var(--amber);
   box-shadow: var(--shadow-amber);
 }
+
+/* Screen-reader-only label — visible to assistive tech, hidden visually.
+   Used for the join-code input so the placeholder isn't the only label. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

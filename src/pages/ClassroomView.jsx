@@ -12,18 +12,28 @@ export default function ClassroomView() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
+    let cancelled = false
     async function load() {
       setLoading(true)
+      setError('')
       try {
-        const data = await peekClassroom(code)
+        const data = await peekClassroom(code, controller.signal)
+        if (cancelled) return
         setClassroom(data.classroom)
         setAssignments(data.assignments || [])
       } catch (err) {
-        setError(err.message || 'Failed to load classroom')
+        if (cancelled || err?.name === 'AbortError') return
+        setError(err?.message || 'Failed to load classroom')
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-      setLoading(false)
     }
     load()
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [code])
 
   function handleLeave() {
@@ -34,19 +44,19 @@ export default function ClassroomView() {
   if (loading) {
     return (
       <main className={styles.page}>
-        <div className={styles.loading}>
+        <div className={styles.loading} role="status" aria-live="polite">
           <div className={styles.spinner} />
-          <span>Loading...</span>
+          <span>Loading…</span>
         </div>
       </main>
     )
   }
 
-  if (error) {
+  if (error || !classroom) {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
-          <p className={styles.error}>{error}</p>
+          <p className={styles.error}>{error || 'Classroom not found'}</p>
           <button className={styles.back} onClick={() => navigate('/classroom')}>Back to Classrooms</button>
         </div>
       </main>
@@ -60,13 +70,15 @@ export default function ClassroomView() {
 
         <div className={styles.header}>
           <div>
-            <h1>{classroom?.name}</h1>
+            <h1>{classroom.name}</h1>
           </div>
         </div>
 
         <div className={styles.tabContent}>
           {assignments.length === 0 ? (
-            <p className={styles.emptyState}>No assignments yet. Check back later.</p>
+            <p className={styles.emptyState}>
+              Your teacher hasn&rsquo;t posted any assignments yet. Check back soon.
+            </p>
           ) : (
             <div className={styles.assignmentList}>
               {assignments.map(a => {

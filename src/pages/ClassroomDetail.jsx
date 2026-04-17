@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
+import { useToast } from '../context/ToastContext'
 import {
   getClassroomDetail, getAssignments, removeAssignment,
   getClassroomStats, getCompletions, exportClassroomCsv, regenerateCode,
@@ -14,6 +15,7 @@ export default function ClassroomDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user, loading: authLoading } = useAuth()
+  const { showToast } = useToast()
   const [classroom, setClassroom] = useState(null)
   const [assignments, setAssignments] = useState([])
   const [stats, setStats] = useState(null)
@@ -25,11 +27,20 @@ export default function ClassroomDetail() {
   const [loadError, setLoadError] = useState(null)
   const [completionsData, setCompletionsData] = useState(null)
   const [completionsLoading, setCompletionsLoading] = useState(false)
+  // Tracks the latest in-flight stats request so that navigating away or
+  // reloading the classroom doesn't let an old response stomp the new one
+  // (and doesn't trigger a setState-on-unmounted-component warning).
+  const statsAbortRef = useRef(null)
 
   useEffect(() => {
     if (authLoading) return
     if (!user) { navigate('/'); return }
     loadData()
+    return () => {
+      // Cancel any in-flight stats request when the effect re-runs or the
+      // component unmounts.
+      statsAbortRef.current?.abort()
+    }
   }, [user, authLoading, id])
 
   async function getToken() {
@@ -45,25 +56,52 @@ export default function ClassroomDetail() {
     setLoading(true)
     setLoadError(null)
     const t = await getToken()
-    if (!t) { setLoading(false); setLoadError('Could not authenticate. Please sign in again.'); return }
+    if (!t) { setLoading(false); setLoadError('Could not sign in. Please sign in again.'); return }
 
     try {
-      const [cr, a] = await Promise.all([
+      // Settle both so a single failure doesn't drop the other half's data.
+      const [crResult, aResult] = await Promise.allSettled([
         getClassroomDetail(t, id),
         getAssignments(t, id),
       ])
-      if (!cr) { setLoadError('Classroom not found or you don\u2019t have access.'); setLoading(false); return }
+      const cr = crResult.status === 'fulfilled' ? crResult.value : null
+      if (!cr) {
+        if (crResult.status === 'rejected' && crResult.reason?.isAuthError) {
+          setLoadError('Your session expired. Please sign in again.')
+        } else {
+          setLoadError('Classroom not found or you don\u2019t have access.')
+        }
+        setLoading(false)
+        return
+      }
       setClassroom(cr)
-      setAssignments(a)
+      if (aResult.status === 'fulfilled') {
+        setAssignments(aResult.value)
+      } else {
+        // Assignments failed but classroom loaded — surface a toast but keep
+        // the page usable instead of showing a generic error.
+        setAssignments([])
+        showToast('Could not load assignments. Pull down to retry.', 'error')
+      }
       setLoading(false)
 
-      // Load stats in background for teachers
+      // Load stats in background for teachers. Abortable so navigating to
+      // another classroom mid-flight doesn't write stale stats over fresh.
       if (cr?.role === 'teacher') {
-        const s = await getClassroomStats(t, id)
-        setStats(s)
+        statsAbortRef.current?.abort()
+        const controller = new AbortController()
+        statsAbortRef.current = controller
+        try {
+          const s = await getClassroomStats(t, id, controller.signal)
+          if (!controller.signal.aborted) setStats(s)
+        } catch { /* aborted or failed silently */ }
       }
-    } catch {
-      setLoadError('Could not load classroom. Check your connection and try again.')
+    } catch (err) {
+      if (err?.isAuthError) {
+        setLoadError('Your session expired. Please sign in again.')
+      } else {
+        setLoadError('Could not load classroom. Check your connection and try again.')
+      }
       setLoading(false)
     }
   }
@@ -71,8 +109,16 @@ export default function ClassroomDetail() {
   async function handleRemoveAssignment(assignmentId) {
     const t = await getToken()
     if (!t) return
-    await removeAssignment(t, id, assignmentId)
+    // Optimistic remove — preserve the previous list so we can roll back if
+    // the server rejects the deletion (e.g. auth expired, 5xx).
+    const previous = assignments
     setAssignments(prev => prev.filter(a => a.id !== assignmentId))
+    try {
+      await removeAssignment(t, id, assignmentId)
+    } catch (err) {
+      setAssignments(previous)
+      showToast(err?.message || 'Could not remove assignment', 'error')
+    }
   }
 
   async function handleExport() {
@@ -95,21 +141,34 @@ export default function ClassroomDetail() {
     try {
       const newCode = await regenerateCode(t, id)
       setClassroom(prev => ({ ...prev, join_code: newCode }))
-    } catch {}
+    } catch (err) {
+      showToast(err?.message || 'Could not regenerate code', 'error')
+    }
   }
 
   async function handleArchive() {
     const t = await getToken()
     if (!t) return
-    await updateClassroom(t, id, { archived: !classroom.archived })
+    const wasArchived = classroom.archived
+    // Optimistic toggle with rollback on failure.
     setClassroom(prev => ({ ...prev, archived: !prev.archived }))
+    try {
+      await updateClassroom(t, id, { archived: !wasArchived })
+    } catch (err) {
+      setClassroom(prev => ({ ...prev, archived: wasArchived }))
+      showToast(err?.message || 'Could not update classroom', 'error')
+    }
   }
 
   async function handleLeave() {
     const t = await getToken()
     if (!t) return
-    await leaveClassroom(t, id)
-    navigate('/classroom')
+    try {
+      await leaveClassroom(t, id)
+      navigate('/classroom')
+    } catch (err) {
+      showToast(err?.message || 'Could not leave classroom', 'error')
+    }
   }
 
   async function copyCode() {
@@ -145,9 +204,9 @@ export default function ClassroomDetail() {
   if (loading) {
     return (
       <main className={styles.page}>
-        <div className={styles.loading}>
+        <div className={styles.loading} role="status" aria-live="polite">
           <div className={styles.spinner} />
-          <span>Loading...</span>
+          <span>Loading classroom…</span>
         </div>
       </main>
     )
@@ -182,10 +241,15 @@ export default function ClassroomDetail() {
             <div className={styles.headerMeta}>
               <div className={styles.codeBlock}>
                 <span className={styles.codeLabel}>Join code</span>
-                <span className={styles.code} onClick={copyCode}>
+                <button
+                  type="button"
+                  className={styles.code}
+                  onClick={copyCode}
+                  aria-label={`Join code ${classroom.join_code}. Click to copy.`}
+                >
                   {classroom.join_code}
-                </span>
-                <span className={styles.copyHint}>{codeCopied ? 'Copied' : 'Click to copy'}</span>
+                </button>
+                <span className={styles.copyHint} aria-live="polite">{codeCopied ? 'Copied' : 'Click to copy'}</span>
               </div>
               <span className={styles.studentCount}>
                 {classroom.studentCount} student{classroom.studentCount !== 1 ? 's' : ''}
@@ -365,9 +429,9 @@ export default function ClassroomDetail() {
                                 }
                               >
                                 {completion ? (
-                                  <span className={styles.checkmark}>&#10003;</span>
+                                  <span className={styles.checkmark} aria-label={`Completed ${new Date(completion.completedAt).toLocaleDateString()}`}>&#10003;</span>
                                 ) : (
-                                  <span className={styles.pending}>&mdash;</span>
+                                  <span className={styles.pending} aria-label="Not completed">&mdash;</span>
                                 )}
                               </td>
                             )

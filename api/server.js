@@ -5176,6 +5176,9 @@ app.get('/api/classroom/peek/:code', classroomLimiter, async (req, res) => {
       .select('id, bill_id, bill_data, instructions, due_date, created_at')
       .eq('classroom_id', classroom.id)
       .order('created_at', { ascending: false })
+      // Explicit cap so we never silently hit Supabase's 1000-row default and
+      // return a truncated-but-claims-complete assignment list to students.
+      .limit(500)
 
     res.json({
       classroom: { id: classroom.id, name: classroom.name, requireName: !!classroom.require_name },
@@ -5289,16 +5292,27 @@ app.post('/api/classroom/join', classroomLimiter, async (req, res) => {
     if (code.length !== 6) return res.status(400).json({ error: 'Join code must be 6 characters' })
 
     const { data: classroom } = await supabase.from('classrooms')
-      .select('id, name, archived').eq('join_code', code).single()
+      .select('id, name, archived').eq('join_code', code).maybeSingle()
     if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
     if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer accepting new members' })
 
     const { data: existing } = await supabase.from('classroom_members')
-      .select('id').eq('classroom_id', classroom.id).eq('user_id', user.id).single()
-    if (existing) return res.status(409).json({ error: 'You are already a member of this classroom' })
+      .select('id').eq('classroom_id', classroom.id).eq('user_id', user.id).maybeSingle()
+    if (existing) return res.status(200).json({ classroom: { id: classroom.id, name: classroom.name }, alreadyMember: true })
 
-    await supabase.from('classroom_members')
+    // Capture the insert error so a race between the check above and the
+    // insert below (two concurrent joins from the same user) returns a clean
+    // 200 "already a member" response instead of bubbling up as a 500.
+    const { error: insertErr } = await supabase.from('classroom_members')
       .insert({ classroom_id: classroom.id, user_id: user.id, role: 'student' })
+    if (insertErr) {
+      // 23505 = Postgres unique_violation. Treat as success (membership row
+      // exists) rather than a hard failure — the caller just wanted to join.
+      if (insertErr.code === '23505') {
+        return res.status(200).json({ classroom: { id: classroom.id, name: classroom.name }, alreadyMember: true })
+      }
+      throw insertErr
+    }
 
     res.json({ classroom: { id: classroom.id, name: classroom.name } })
   } catch (err) {
@@ -5435,6 +5449,7 @@ app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => 
       .select('id, bill_id, bill_data, instructions, due_date, created_at')
       .eq('classroom_id', req.params.id)
       .order('created_at', { ascending: false })
+      .limit(500)
 
     // Check which assignments the current user has completed
     const assignmentIds = (assignments || []).map(a => a.id)
@@ -5527,6 +5542,7 @@ app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
       .select('id, bill_id, bill_data, due_date, created_at')
       .eq('classroom_id', req.params.id)
       .order('created_at', { ascending: false })
+      .limit(500)
 
     const assignmentIds = (assignments || []).map(a => a.id)
     let completionMap = {}

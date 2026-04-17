@@ -69,14 +69,20 @@ export async function initPushNotifications(userId, token) {
     // Navigate using React Router to preserve SPA state
     const url = notification.notification?.data?.url
     const target = url || '/bookmarks'
-    // Validate: only allow known internal paths to prevent open redirect
+    // Validate: only allow known internal paths to prevent open redirect.
+    // `/classroom` covers both listing (/classroom) and detail (/classroom/:id)
+    // and assignment-in-bill paths use /bill/… already.
     const SAFE_PREFIXES = ['/bill/', '/bookmarks', '/results', '/search', '/classroom']
-    const isSafe = SAFE_PREFIXES.some(p => target.startsWith(p)) || target === '/'
+    const [pathOnly] = target.split('?')
+    const isSafe = SAFE_PREFIXES.some(p => pathOnly.startsWith(p)) || pathOnly === '/'
     if (!isSafe) return // reject suspicious deep links
+    // Assignment pushes point at /bill/:congress/:type/:number?assignment=…&classroom=…
+    // BillDetail reads those query params as a fallback when location.state
+    // is absent (deep-link from a push, not an in-app navigation).
     if (_navigate) {
       _navigate(target)
     } else {
-      window.location.pathname = target
+      window.location.href = target
     }
   })
 
