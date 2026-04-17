@@ -969,9 +969,20 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
       .limit(10)
 
     // Fetch state bills if applicable
+    //
+    // Primary pool is feed_eligible (ranker-promoted). But the ranker has
+    // uneven state coverage: daily Open States text backfill is still catching
+    // up on a ~30K backlog, and a single cron run can silently miss some state
+    // write batches. Students in under-covered states (TX, FL, GA, etc.) ended
+    // up with an empty State tab because the query required feed_eligible=true.
+    //
+    // Fallback: if the eligible pool returns <3 bills for this state, broaden
+    // to any state bill with full_text + interest overlap, ordered by recency.
+    // Quality is slightly lower (no ranker stage/recency scoring) but the tab
+    // is never empty when the DB has real state material for this user.
     let stateBills = []
     if (userState && userState !== 'US') {
-      const { data } = await supabase
+      const { data: primaryState } = await supabase
         .from('bills')
         .select('*')
         .eq('jurisdiction', userState)
@@ -979,7 +990,23 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
         .overlaps('topics', interests)
         .order('feed_priority_score', { ascending: false })
         .limit(20)
-      stateBills = data || []
+      stateBills = primaryState || []
+
+      if (stateBills.length < 3) {
+        const { data: broadState } = await supabase
+          .from('bills')
+          .select('*')
+          .eq('jurisdiction', userState)
+          .not('full_text', 'is', null)
+          .gte('text_word_count', 150)
+          .overlaps('topics', interests)
+          .order('latest_action_date', { ascending: false })
+          .limit(20)
+        const seen = new Set(stateBills.map(b => b.id))
+        for (const b of broadState || []) {
+          if (!seen.has(b.id)) { stateBills.push(b); seen.add(b.id) }
+        }
+      }
     }
 
     // Transform DB rows into the shape scoring logic expects

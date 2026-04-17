@@ -360,6 +360,7 @@ async function runRanker(supabase, options = {}) {
 
   const BATCH = 500
   let written = 0
+  const failedIds = []
   for (let i = 0; i < selectedIds.length; i += BATCH) {
     const batch = selectedIds.slice(i, i + BATCH)
     // Group by score so we can do one UPDATE per unique score value
@@ -370,16 +371,77 @@ async function runRanker(supabase, options = {}) {
       scoreBuckets.get(s).push(id)
     }
     for (const [score, ids] of scoreBuckets.entries()) {
-      const { error: upErr } = await supabase
-        .from('bills')
-        .update({
-          feed_eligible: true,
-          feed_priority_score: score,
-          feed_ranked_at: newRankedAt,
-        })
-        .in('id', ids)
-      if (upErr) console.error('[ranker] Promote error:', upErr.message)
-      else written += ids.length
+      try {
+        const { error: upErr } = await supabase
+          .from('bills')
+          .update({
+            feed_eligible: true,
+            feed_priority_score: score,
+            feed_ranked_at: newRankedAt,
+          })
+          .in('id', ids)
+        if (upErr) {
+          console.error(`[ranker] Promote error (score=${score}, ${ids.length} ids):`, upErr.message)
+          failedIds.push(...ids)
+        } else {
+          written += ids.length
+        }
+      } catch (err) {
+        // Network/proxy exceptions bubble up as thrown — catch so a transient
+        // mid-run blip doesn't skip every remaining batch. Retry pass below.
+        console.error(`[ranker] Promote exception (score=${score}, ${ids.length} ids):`, err.message)
+        failedIds.push(...ids)
+      }
+    }
+  }
+
+  // One retry pass, smaller chunks. An earlier production run silently wrote
+  // only 2,022 of 3,708 winners — state bills in later batches were lost —
+  // and because errors were only console.logged the cron reported success.
+  // A smaller chunk size also sidesteps any proxy URL-length edge case.
+  if (failedIds.length) {
+    console.error(`[ranker] ${failedIds.length} winners failed first pass, retrying in chunks of 100`)
+    const RETRY = 100
+    for (let i = 0; i < failedIds.length; i += RETRY) {
+      const chunk = failedIds.slice(i, i + RETRY)
+      const buckets = new Map()
+      for (const id of chunk) {
+        const s = scoreById.get(id) || 0
+        if (!buckets.has(s)) buckets.set(s, [])
+        buckets.get(s).push(id)
+      }
+      for (const [score, ids] of buckets.entries()) {
+        try {
+          const { error } = await supabase
+            .from('bills')
+            .update({ feed_eligible: true, feed_priority_score: score, feed_ranked_at: newRankedAt })
+            .in('id', ids)
+          if (!error) written += ids.length
+          else console.error(`[ranker] Retry still failing (score=${score}, ${ids.length} ids):`, error.message)
+        } catch (err) {
+          console.error(`[ranker] Retry exception (score=${score}, ${ids.length} ids):`, err.message)
+        }
+      }
+    }
+  }
+
+  if (written < selectedIds.length) {
+    console.error(`[ranker] WARNING: promoted ${written}/${selectedIds.length} — demote pass skipped to preserve old winners`)
+    // Skip demote when we didn't fully promote the new set. Otherwise we'd
+    // strip feed_eligible from bills that WERE valid winners, just ones whose
+    // re-promotion got lost to a transient error.
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+    return {
+      candidates: candidates.length,
+      scored: scored.length,
+      federal: federalSelected.size,
+      state: stateSelected.size,
+      pinned: pinnedIds.size,
+      total: finalEligible.size,
+      promoted: written,
+      promote_incomplete: true,
+      elapsed_s: parseFloat(elapsed),
+      stateCoverage,
     }
   }
 
