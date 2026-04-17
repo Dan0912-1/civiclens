@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { saveProfile } from '../lib/userProfile'
@@ -193,18 +193,6 @@ export default function Profile() {
   const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
   const isUnder13 = ageValid && ageNum < 13
 
-  // Drop the COPPA lock the moment a user self-reports as under 13.
-  // This prevents the back-button-and-change-age bypass. Runs in an effect
-  // instead of during render so it doesn't trip React 18's "cannot update
-  // state during render" warning, which can also double-invoke setState in
-  // StrictMode.
-  useEffect(() => {
-    if (isUnder13 && !coppaLocked) {
-      setCoppaLock()
-      setCoppaLocked(true)
-    }
-  }, [isUnder13, coppaLocked])
-
   function canAdvance() {
     if (step === 1) return !coppaLocked && profile.state && ageValid && ageNum >= 13
     if (step === 2) return true
@@ -213,11 +201,19 @@ export default function Profile() {
   }
 
   async function handleNext() {
+    // Only apply the COPPA lock when the user attempts to advance past
+    // step 1 with an under-13 age. Running this on every keystroke would
+    // lock out users mid-typing (e.g. typing "2" before "20").
+    if (step === 1 && isUnder13 && !coppaLocked) {
+      setCoppaLock()
+      setCoppaLocked(true)
+      setError('You must be 13 or older to use CapitolKey.')
+      return
+    }
+
     if (!canAdvance()) {
       if (step === 1 && coppaLocked) {
         setError('Account creation is temporarily unavailable.')
-      } else if (step === 1 && isUnder13) {
-        setError('You must be 13 or older to use CapitolKey.')
       } else if (step === 1 && profile.grade && !ageValid) {
         setError('Please enter a valid age.')
       } else {
@@ -254,8 +250,8 @@ export default function Profile() {
           ))}
         </div>
 
-        {/* Sign-in prompt for anonymous users — hidden if under 13 or COPPA-locked */}
-        {!user && step === 1 && !isUnder13 && !coppaLocked && (
+        {/* Sign-in prompt for anonymous users — hidden if COPPA-locked */}
+        {!user && step === 1 && !coppaLocked && (
           <div className={styles.signInPrompt}>
             <p>Create an account to save your profile and bookmarks across sessions.</p>
             <button className={styles.signInBtn} onClick={() => setShowAuth(true)}>
@@ -297,17 +293,14 @@ export default function Profile() {
                   disabled={coppaLocked}
                   onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
                 />
-                {(isUnder13 || coppaLocked) && (
+                {coppaLocked && (
                   <div className={styles.ageWarning}>
                     <p>
                       CapitolKey is designed for users who are <strong>13 years of age or older</strong>,
                       in compliance with the Children's Online Privacy Protection Act (COPPA).
                     </p>
                     <p>
-                      {coppaLocked
-                        ? 'Account creation is temporarily unavailable. You can still browse legislation without an account.'
-                        : <>If you are under 13, you are not able to use CapitolKey at this time. See our <a href="/terms">Terms of Service</a> for more information.</>
-                      }
+                      Account creation is temporarily unavailable. You can still browse legislation without an account.
                     </p>
                   </div>
                 )}
