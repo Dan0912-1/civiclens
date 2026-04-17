@@ -799,7 +799,7 @@ async function runDailySync(supabase, config) {
     // on light-Phase-2 days we capture the extra headroom, and on heavy
     // days we stop cleanly without scoring false strikes against bills.
     try {
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 2500 })
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 3000 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
