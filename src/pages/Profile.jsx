@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { saveProfile } from '../lib/userProfile'
+import { loadProfile, saveProfile } from '../lib/userProfile'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Profile.module.css'
 
@@ -133,6 +133,10 @@ function setCoppaLock() {
   localStorage.setItem(COPPA_LOCK_KEY, JSON.stringify({ until: Date.now() + COPPA_LOCK_TTL }))
 }
 
+function clearCoppaLock() {
+  localStorage.removeItem(COPPA_LOCK_KEY)
+}
+
 export default function Profile() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -192,6 +196,25 @@ export default function Profile() {
   const ageNum = Number(profile.grade)
   const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
   const isUnder13 = ageValid && ageNum < 13
+
+  // If the user is already signed in with a saved profile whose age is 13+,
+  // clear the device-level COPPA lock — they've previously passed the gate,
+  // so there's no reason a stale local flag should keep blocking them.
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    ;(async () => {
+      const saved = await loadProfile(user.id)
+      if (cancelled || !saved) return
+      const savedAge = Number(saved.grade)
+      if (Number.isInteger(savedAge) && savedAge >= 13) {
+        clearCoppaLock()
+        setCoppaLocked(false)
+        setProfile(prev => ({ ...prev, ...saved }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [user])
 
   function canAdvance() {
     if (step === 1) return !coppaLocked && profile.state && ageValid && ageNum >= 13
