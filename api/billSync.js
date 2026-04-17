@@ -1326,19 +1326,27 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
   // Two populations are eligible:
   //   - attempts < COOLDOWN_STRIKES  (fresh or lightly tried)
   //   - attempts >= COOLDOWN_STRIKES AND last attempt was > 14d ago
-  // Supabase's .or() can express either branch; we fetch extra candidates and
-  // filter client-side to keep the query simple.
-  const { data: candidates } = await supabase
-    .from('bills')
-    .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, text_fetch_attempts, text_fetch_last_at')
-    .eq('source', 'openstates')
-    .is('full_text', null)
-    .not('openstates_id', 'is', null)
-    .order('text_fetch_attempts', { ascending: true })
-    .order('updated_at', { ascending: false })
-    .limit(maxBills * 3)
+  // Supabase silently caps .limit() at ~1000 rows per query, so paginate with
+  // .range() and stop once we have enough post-filter candidates. At maxBills
+  // = 3000 this is typically 3–4 round trips.
+  const PAGE_SIZE = 1000
+  const candidates = []
+  for (let from = 0; candidates.length < maxBills * 3; from += PAGE_SIZE) {
+    const { data: page } = await supabase
+      .from('bills')
+      .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, text_fetch_attempts, text_fetch_last_at')
+      .eq('source', 'openstates')
+      .is('full_text', null)
+      .not('openstates_id', 'is', null)
+      .order('text_fetch_attempts', { ascending: true })
+      .order('updated_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1)
+    if (!page?.length) break
+    candidates.push(...page)
+    if (page.length < PAGE_SIZE) break
+  }
 
-  const needText = (candidates || []).filter(b => {
+  const needText = candidates.filter(b => {
     const attempts = b.text_fetch_attempts || 0
     if (attempts < COOLDOWN_STRIKES) return true
     return !b.text_fetch_last_at || b.text_fetch_last_at < cooldownCutoff
@@ -1346,10 +1354,10 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
 
   if (!needText.length) {
     console.log('[backfill:text] No state bills eligible for text fetch (all in cooldown)')
-    return { synced: 0, calls: 0, skippedCooldown: (candidates || []).length }
+    return { synced: 0, calls: 0, skippedCooldown: candidates.length }
   }
 
-  const shelved = (candidates || []).length - needText.length
+  const shelved = candidates.length - needText.length
   console.log(`[backfill:text] Fetching text for ${needText.length} state bills (${shelved} shelved in cooldown)`)
   let synced = 0
   let calls = 0
