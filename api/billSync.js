@@ -9,17 +9,7 @@
  */
 
 import { extractStructuredExcerpt, computeSectionTopicScores } from './billExcerpt.js'
-
-// Lazy-load pdf-parse. See api/server.js for the same pattern and rationale —
-// pdfjs-dist references browser-only globals at module-eval time, so a
-// top-level import crashes cold-start on some runtimes.
-let _PDFParsePromise = null
-function loadPDFParse() {
-  if (!_PDFParsePromise) {
-    _PDFParsePromise = import('pdf-parse').then(m => m.PDFParse)
-  }
-  return _PDFParsePromise
-}
+import { loadPDFParse } from './pdfLoader.js'
 
 // Safety cap: a handful of state bills publish 50+ MB PDFs (full code
 // rewrites). Parsing those eats memory and rarely produces useful excerpts.
