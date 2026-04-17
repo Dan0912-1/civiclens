@@ -264,10 +264,20 @@ export default function BillDetail() {
   useEffect(() => {
     if (!bill || analysis || skipPersonalization) return
     let cancelled = false
-    // Capture the in-flight bill identity; abort if the route changes.
-    const requestBillId = makeBillId(bill)
+    // Abort if the loaded bill doesn't match the current route — can happen
+    // mid-navigation before the route-param effect has reset bill state.
+    // Compare on the Congress (type/number/congress) axis, not makeBillId,
+    // because LegiScan-backed bills return `ls-<id>` from makeBillId while
+    // the route only carries Congress params — they'd never match and the
+    // fetch would silently never fire. This used to strand classroom
+    // students on an endless "Personalizing this bill for you..." spinner.
+    const billCongressId = makeCongressBillId(
+      bill.type ?? bill.bill_type,
+      bill.number ?? bill.bill_number,
+      bill.congress,
+    )
     const currentRouteId = makeCongressBillId(type, number, congress)
-    if (!sameBillId(requestBillId, currentRouteId)) return
+    if (!sameBillId(billCongressId, currentRouteId)) return
 
     async function run() {
       const stored = sessionStorage.getItem('civicProfile')

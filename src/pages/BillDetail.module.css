@@ -186,7 +186,11 @@
   margin-top: var(--space-xs);
   text-align: center;
   line-height: 1.2;
-  word-break: break-word;
+  /* Only wrap at word boundaries — word-break: break-word would split
+     INTRODUCED into "INTRODUC ED" mid-character on narrow flex slots. */
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: none;
   padding: 0 2px;
   max-width: 100%;
 }
@@ -204,8 +208,10 @@
 }
 
 @media (max-width: 480px) {
-  .progressLabel { font-size: 0.6rem; letter-spacing: 0.04em; }
-  .progressDate { font-size: 0.55rem; }
+  /* Shrink labels enough that INTRODUCED + COMMITTEE fit their flex slots
+     on narrow phones without wrapping. */
+  .progressLabel { font-size: 0.55rem; letter-spacing: 0.01em; }
+  .progressDate { font-size: 0.52rem; }
   .progressDot { width: 10px; height: 10px; }
   .progressLine { top: 4px; }
 }
