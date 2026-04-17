@@ -592,7 +592,17 @@ export default function BillDetail() {
             <span>Tell us about yourself so we can personalize this bill for you.</span>
             <button
               className={styles.retryBtn}
-              onClick={() => navigate('/profile', { state: { returnTo: location.pathname } })}
+              onClick={() => navigate('/profile', {
+                state: {
+                  returnTo: location.pathname,
+                  returnState: {
+                    bill: bill || passedBill,
+                    assignment: assignmentId,
+                    classroom: assignmentClassroomId,
+                    assignmentInstructions,
+                  },
+                },
+              })}
             >
               Complete your profile
             </button>
@@ -601,12 +611,6 @@ export default function BillDetail() {
           <div className={styles.loadingAnalysis}>
             <div className={styles.spinner} />
             <span>Personalizing this bill for you...</span>
-            <button
-              className={styles.retryBtn}
-              onClick={() => navigate('/profile', { state: { returnTo: location.pathname } })}
-            >
-              Set up my profile
-            </button>
           </div>
         )}
 

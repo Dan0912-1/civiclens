@@ -143,6 +143,8 @@ export default function Profile() {
   const { user } = useAuth()
   const [step, setStep] = useState(1)
   const returnTo = location.state?.returnTo || null
+  const returnState = location.state?.returnState || null
+  const isAssignmentReturn = !!returnState?.assignment
   const [coppaLocked, setCoppaLocked] = useState(isCoppaLocked)
 
   const [profile, setProfile] = useState(() => {
@@ -253,7 +255,7 @@ export default function Profile() {
       // Save to sessionStorage and navigate
       sessionStorage.setItem('civicProfile', JSON.stringify(profile))
       if (user) await saveProfile(user.id, profile)
-      navigate(returnTo || '/results')
+      navigate(returnTo || '/results', returnState ? { state: returnState } : undefined)
     }
   }
 
@@ -481,7 +483,7 @@ export default function Profile() {
               className={`${styles.nextBtn} ${!canAdvance() ? styles.nextBtnDisabled : ''}`}
               onClick={handleNext}
             >
-              {step === 3 ? 'Show me my legislation →' : 'Next →'}
+              {step === 3 ? (isAssignmentReturn ? 'Continue to your assignment →' : 'Show me my legislation →') : 'Next →'}
             </button>
           </div>
 
