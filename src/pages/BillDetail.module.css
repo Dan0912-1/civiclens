@@ -186,7 +186,10 @@
   color: var(--text-muted);
   margin-top: var(--space-xs);
   text-align: center;
-  white-space: nowrap;
+  line-height: 1.2;
+  word-break: break-word;
+  padding: 0 2px;
+  max-width: 100%;
 }
 
 .progressReached .progressLabel { color: var(--navy); }
