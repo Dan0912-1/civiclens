@@ -18,7 +18,7 @@ import cron from 'node-cron'
 import { Resend } from 'resend'
 import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
-import { runDailySync, runBackfill, fetchBillText, runStateBackfill, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
+import { runDailySync, runBackfill, fetchBillText, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
 import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 // pdf-parse v2 pulls in pdfjs-dist, which references browser-only globals

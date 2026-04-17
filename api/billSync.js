@@ -758,18 +758,25 @@ async function runDailySync(supabase, config) {
       results.openstates = { error: err.message }
     }
 
-    // Phase 3: State backfill (spread over ~12 days)
-    try {
-      results.stateBackfill = await runStateBackfill(supabase, openStatesApiKey)
-    } catch (err) {
-      console.error('[sync] State backfill failed:', err.message)
-      results.stateBackfill = { error: err.message }
-    }
+    // Phase 3 (state metadata historical backfill) was removed on 2026-04-16.
+    // It was a one-time bootstrap helper that re-crawled 30 days of bills for
+    // every state that looked "empty" — but the emptiness check at
+    // runStateBackfill (see below) used `.limit(1)` which only ever captured a
+    // single state's jurisdiction, so it re-ran 50 states daily even when
+    // they already had years of history. Net effect: ~800 Open States calls
+    // per day re-writing bills we already had. With Phase 2's updated_since=
+    // yesterday incremental catching every new bill plus the new
+    // include=versions ingestion filter, the bootstrap path isn't needed in
+    // steady state. The function is still exported for one-off use when
+    // seeding a brand-new jurisdiction.
 
-    // Phase 4: State text via Open States + legislature HTML scrape
+    // Phase 4: State text via Open States → legislature PDF/HTML.
+    // With Phase 3 retired, the full Open States daily budget (minus ~200
+    // consumed by Phase 2 metadata sync and on-demand /api paths) is
+    // available for text fetching. 800/day clears the ~30K textless backlog
+    // in ~38 days.
     try {
-      // Open States quota is 1,000/day; reserve ~200 for metadata + backfill
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 600 })
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 800 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
