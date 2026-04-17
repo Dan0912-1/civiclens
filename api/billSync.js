@@ -799,7 +799,7 @@ async function runDailySync(supabase, config) {
     // on light-Phase-2 days we capture the extra headroom, and on heavy
     // days we stop cleanly without scoring false strikes against bills.
     try {
-      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 1000 })
+      results.stateTexts = await backfillStateTexts(supabase, openStatesApiKey, { limit: 2500 })
     } catch (err) {
       console.error('[sync] State text backfill failed:', err.message)
       results.stateTexts = { error: err.message }
@@ -874,12 +874,19 @@ async function fetchBillText(supabase, bill) {
   let lastError = null
 
   try {
-    // Step 1: Query Open States for bill versions using the OCD bill ID
-    const billId = encodeURIComponent(bill.openstates_id)
-    const url = `${OPENSTATES_BASE}/bills/${billId}?include=versions&apikey=${apiKey}`
+    // Step 1: Query Open States GraphQL for bill versions (3000/day quota, 2 req/sec).
+    // GraphQL returns camelCase field names (mediaType) and consistently correct
+    // document URLs — unlike the REST API which hit quota at ~500/day and returned
+    // stale/broken HTML links for IA, TN, PA and other states.
+    const gqlQuery = `query { bill(id: "${bill.openstates_id}") { versions { note links { url mediaType } } } }`
     console.log(`[fetchBillText] Fetching versions for ${label}`)
 
-    const resp = await fetch(url)
+    const resp = await fetch('https://openstates.org/graphql', {
+      method: 'POST',
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: gqlQuery }),
+      signal: AbortSignal.timeout(20000),
+    })
     if (resp.status === 429) {
       // Quota exhausted — bubble up without a failure strike so the bill
       // isn't unfairly shelved. The daily loop will catch this and stop.
@@ -892,8 +899,14 @@ async function fetchBillText(supabase, bill) {
       return null
     }
 
-    const data = await resp.json()
-    const versions = data.versions || []
+    const json = await resp.json()
+    if (json.errors?.length) {
+      lastError = `graphql: ${json.errors[0]?.message || 'unknown'}`
+      console.error(`[fetchBillText] GraphQL error for ${label}:`, json.errors[0]?.message)
+      await recordTextFetchFailure(supabase, bill.id, lastError)
+      return null
+    }
+    const versions = json.data?.bill?.versions || []
     if (!versions.length) {
       lastError = 'no versions'
       console.log(`[fetchBillText] No versions available for ${bill.openstates_id}`)
@@ -909,8 +922,8 @@ async function fetchBillText(supabase, bill) {
 
     outer: for (let i = versions.length - 1; i >= 0; i--) {
       const links = versions[i].links || []
-      const pdfLink = links.find(l => l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
-      const htmlLink = links.find(l => l.media_type === 'text/html' || (l.url && !/\.pdf(\?|$)/i.test(l.url) && !l.media_type?.includes('pdf')))
+      const pdfLink = links.find(l => l.mediaType === 'application/pdf' || l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
+      const htmlLink = links.find(l => l.mediaType === 'text/html' || l.media_type === 'text/html' || (l.url && !/\.pdf(\?|$)/i.test(l.url) && !l.mediaType?.includes('pdf') && !l.media_type?.includes('pdf')))
 
       for (const attempt of [
         pdfLink ? { url: pdfLink.url, format: 'pdf' } : null,
@@ -1347,8 +1360,8 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
       const text = await fetchBillText(supabase, bill)
       calls++ // Each fetchBillText uses 1 Open States API call
       if (text) synced++
-      // Rate limit: 1.5s between calls (Open States limit is 40/min)
-      await sleep(1500)
+      // Rate limit: 500ms between calls (GraphQL limit is 2 req/sec)
+      await sleep(500)
     } catch (err) {
       if (err instanceof OpenStatesRateLimitError) {
         // Daily quota exhausted — stop now. Remaining bills keep their
