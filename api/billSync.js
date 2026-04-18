@@ -860,6 +860,60 @@ async function runBackfill(supabase, config) {
 // backfillStateTexts can shelf bills that have failed repeatedly instead of
 // retrying dead URLs every day.
 
+// Query Open States GraphQL for a bill's versions. Returns:
+//   { versions: [...] }    — normal response (may be empty array)
+//   { rateLimited: true }  — 429 (daily GraphQL quota of 3000 hit)
+//   { error: '...' }       — other HTTP / GraphQL error
+// Never throws. Caller decides whether to fall back.
+async function fetchVersionsGraphQL(openstatesId, apiKey) {
+  const query = `query { bill(id: "${openstatesId}") { versions { note links { url mediaType } } } }`
+  const resp = await fetch('https://openstates.org/graphql', {
+    method: 'POST',
+    headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(20000),
+  })
+  if (resp.status === 429) return { rateLimited: true }
+  if (!resp.ok) return { error: `graphql ${resp.status}` }
+  const json = await resp.json()
+  if (json.errors?.length) return { error: `graphql: ${(json.errors[0]?.message || 'unknown').slice(0, 100)}` }
+  return { versions: json.data?.bill?.versions || [] }
+}
+
+// Query Open States REST /bills/{id}?include=versions. Same return shape as
+// fetchVersionsGraphQL. REST has a separate (smaller, ~500/day) daily quota,
+// but returns correct media_type + full links arrays for every state — so
+// we use it as the source of truth when GraphQL comes back degraded.
+async function fetchVersionsREST(openstatesId, apiKey) {
+  const url = `${OPENSTATES_BASE}/bills/${encodeURIComponent(openstatesId)}?include=versions&apikey=${apiKey}`
+  const resp = await fetch(url, { signal: AbortSignal.timeout(20000) })
+  if (resp.status === 429) return { rateLimited: true }
+  if (!resp.ok) return { error: `rest ${resp.status}` }
+  const json = await resp.json()
+  return { versions: json.versions || [] }
+}
+
+// Walk a versions[] array newest-first (OS returns them newest at index 0),
+// try PDF link then HTML for each version, return first extracted text that
+// clears the 100-char minimum. Returns { text, format, url } or null.
+async function walkVersionsAndExtract(versions, label) {
+  for (let i = versions.length - 1; i >= 0; i--) {
+    const links = versions[i].links || []
+    const pdfLink = links.find(l => l.mediaType === 'application/pdf' || l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
+    const htmlLink = links.find(l => l.mediaType === 'text/html' || l.media_type === 'text/html' || (l.url && !/\.pdf(\?|$)/i.test(l.url) && !l.mediaType?.includes('pdf') && !l.media_type?.includes('pdf')))
+
+    for (const attempt of [
+      pdfLink ? { url: pdfLink.url, format: 'pdf' } : null,
+      htmlLink ? { url: htmlLink.url, format: 'html' } : null,
+    ]) {
+      if (!attempt) continue
+      const text = await fetchAndExtract(attempt.url, attempt.format)
+      if (text && text.length >= 100) return { text, format: attempt.format, url: attempt.url }
+    }
+  }
+  return null
+}
+
 async function fetchBillText(supabase, bill) {
   if (!bill || bill.source !== 'openstates' || bill.full_text) return bill.full_text || null
   if (!bill.openstates_id) return null
@@ -873,105 +927,82 @@ async function fetchBillText(supabase, bill) {
   const label = `${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`
   let lastError = null
 
+  // Hybrid strategy (see OS-GraphQL-vs-REST note): try GraphQL first for its
+  // larger 3000/day quota. For the ~10 states where GraphQL returns degraded
+  // link data (IL, NH, TN, NE, PA, IN, RI, WI, IA, MA — state-scraper bills
+  // come back with missing PDF entries or null mediaType), GraphQL yields
+  // nothing extractable and we fall through to REST for that bill. REST has
+  // a smaller ~500/day quota but returns correct links for every state.
+  //
+  // Both quotas are per-day. If GraphQL is 429 we silently use REST. If REST
+  // is also 429 we throw OpenStatesRateLimitError so backfillStateTexts
+  // breaks its loop cleanly — at that point both daily budgets are spent
+  // and further calls would just be wasted 429s.
   try {
-    // Step 1: Query Open States REST /bills/{id}?include=versions for version links.
-    //
-    // History: we tried GraphQL (commit f65d562) on the premise that it had a
-    // 3000/day quota and returned better PDF URLs. In practice GraphQL returned
-    // degraded link data for a large cohort of states (IL, NH, TN, NE, PA, IN,
-    // RI, WI, IA, MA — ~10 states with active bill-scrapers) — either missing
-    // PDF links entirely or returning them without mediaType, which broke
-    // pdfLink detection. Net effect: the 2026-04-18 nightly cron burned its
-    // full 3000-call GraphQL budget and dropped to 61% success (1163 failures
-    // concentrated in those 10 states), down from 100% the prior day. Direct
-    // probing confirmed REST returns correct media_type + PDF URLs for every
-    // one of those states. Reverting to REST here; if REST quota becomes the
-    // bottleneck we'll reduce the daily target in backfillStateTexts rather
-    // than play whack-a-mole with GraphQL's per-state gaps.
-    const billIdEnc = encodeURIComponent(bill.openstates_id)
-    const restUrl = `${OPENSTATES_BASE}/bills/${billIdEnc}?include=versions&apikey=${apiKey}`
     console.log(`[fetchBillText] Fetching versions for ${label}`)
 
-    const resp = await fetch(restUrl, { signal: AbortSignal.timeout(20000) })
-    if (resp.status === 429) {
-      // Quota exhausted — bubble up without a failure strike so the bill
-      // isn't unfairly shelved. The daily loop will catch this and stop.
-      throw new OpenStatesRateLimitError(resp.status)
-    }
-    if (!resp.ok) {
-      lastError = `openstates ${resp.status}`
-      console.error(`[fetchBillText] Open States API error: ${resp.status}`)
-      await recordTextFetchFailure(supabase, bill.id, lastError)
-      return null
+    let result = null
+    let usedSource = null
+
+    // Attempt 1: GraphQL
+    const gql = await fetchVersionsGraphQL(bill.openstates_id, apiKey)
+    if (gql.versions?.length) {
+      result = await walkVersionsAndExtract(gql.versions, label)
+      if (result) usedSource = 'graphql'
     }
 
-    const json = await resp.json()
-    const versions = json.versions || []
-    if (!versions.length) {
-      lastError = 'no versions'
-      console.log(`[fetchBillText] No versions available for ${bill.openstates_id}`)
-      await recordTextFetchFailure(supabase, bill.id, lastError)
-      return null
-    }
+    // Attempt 2: REST fallback, when GraphQL produced nothing usable
+    if (!result) {
+      const reason = gql.rateLimited ? '429' : (gql.error || `${gql.versions?.length || 0} versions produced no text`)
+      console.log(`[fetchBillText] GraphQL insufficient for ${label} (${reason}), trying REST`)
+      const rest = await fetchVersionsREST(bill.openstates_id, apiKey)
+      if (rest.rateLimited) {
+        // Both GraphQL and REST rate-limited = both daily quotas spent.
+        // Bubble up to stop the backfill loop; today's bill keeps its
+        // attempt counter untouched so tomorrow's run picks it up fresh.
+        if (gql.rateLimited) throw new OpenStatesRateLimitError(429)
+        // REST quota alone hit; record a soft failure and move on.
+        lastError = 'rest 429'
+        await recordTextFetchFailure(supabase, bill.id, lastError)
+        return null
+      }
+      if (rest.versions?.length) {
+        result = await walkVersionsAndExtract(rest.versions, label)
+        if (result) usedSource = 'rest'
+      }
 
-    // Step 2: Walk versions newest-first. For each, try PDF first (works
-    // consistently across states), then HTML as fallback.
-    let extracted = null
-    let usedFormat = null
-    let usedUrl = null
-
-    outer: for (let i = versions.length - 1; i >= 0; i--) {
-      const links = versions[i].links || []
-      const pdfLink = links.find(l => l.mediaType === 'application/pdf' || l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
-      const htmlLink = links.find(l => l.mediaType === 'text/html' || l.media_type === 'text/html' || (l.url && !/\.pdf(\?|$)/i.test(l.url) && !l.mediaType?.includes('pdf') && !l.media_type?.includes('pdf')))
-
-      for (const attempt of [
-        pdfLink ? { url: pdfLink.url, format: 'pdf' } : null,
-        htmlLink ? { url: htmlLink.url, format: 'html' } : null,
-      ]) {
-        if (!attempt) continue
-        const text = await fetchAndExtract(attempt.url, attempt.format)
-        if (text && text.length >= 100) {
-          extracted = text
-          usedFormat = attempt.format
-          usedUrl = attempt.url
-          break outer
-        }
+      // Both endpoints returned empty or no-parseable-links
+      if (!result) {
+        const hadAny = (gql.versions?.length || 0) + (rest.versions?.length || 0)
+        lastError = hadAny ? 'no parseable version' : 'no versions'
+        console.log(`[fetchBillText] ${lastError} for ${label}`)
+        await recordTextFetchFailure(supabase, bill.id, lastError)
+        return null
       }
     }
 
-    if (!extracted) {
-      lastError = 'no parseable version'
-      console.log(`[fetchBillText] No parseable version for ${label} across ${versions.length} versions`)
-      await recordTextFetchFailure(supabase, bill.id, lastError)
-      return null
-    }
+    const wordCount = result.text.split(/\s+/).length
+    console.log(`[fetchBillText] Extracted ${wordCount} words (${result.format}, via ${usedSource}) for ${label}`)
 
-    const wordCount = extracted.split(/\s+/).length
-    console.log(`[fetchBillText] Extracted ${wordCount} words (${usedFormat}) for ${label}`)
-
-    // Step 3: Save to Supabase. Split into two calls so that if the
-    // text-fetch-tracking migration (supabase/add_bill_text_fetch_tracking.sql)
-    // hasn't been applied yet, the text still persists — we just skip the
-    // tracking reset. Prevents a migration-ordering deploy from silently
-    // dropping every successfully-fetched bill text.
+    // Save to Supabase. Split into two calls so that if the text-fetch-tracking
+    // migration (supabase/add_bill_text_fetch_tracking.sql) hasn't been applied
+    // yet, the text still persists — we just skip the tracking reset. Prevents
+    // a migration-ordering deploy from silently dropping every successfully-
+    // fetched bill text.
     if (supabase && bill.id) {
       const { error } = await supabase
         .from('bills')
         .update({
-          full_text: extracted,
+          full_text: result.text,
           text_word_count: wordCount,
-          text_version: usedFormat === 'pdf' ? 'scraped_pdf' : 'scraped_html',
-          structured_excerpt: extractStructuredExcerpt(extracted),
-          section_topic_scores: computeSectionTopicScores(extracted),
+          text_version: result.format === 'pdf' ? 'scraped_pdf' : 'scraped_html',
+          structured_excerpt: extractStructuredExcerpt(result.text),
+          section_topic_scores: computeSectionTopicScores(result.text),
           synced_at: new Date().toISOString(),
         })
         .eq('id', bill.id)
       if (error) console.error(`[fetchBillText] Supabase update error:`, error.message)
 
-      // Tracking reset — best-effort. PGRST204 = column not in schema cache
-      // (migration not applied); swallow that specifically so a pre-migration
-      // deploy still saves bill text.
       const { error: trackErr } = await supabase
         .from('bills')
         .update({
@@ -985,7 +1016,7 @@ async function fetchBillText(supabase, bill) {
       }
     }
 
-    return extracted
+    return result.text
   } catch (err) {
     // Let rate-limit errors bubble up so backfillStateTexts can break its
     // loop without scoring a strike against this bill.
