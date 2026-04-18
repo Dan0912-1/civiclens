@@ -98,6 +98,39 @@ export async function getSessionSafe() {
       ])
       if (result?.data?.session?.access_token) return result.data.session
     } catch {}
+
+    // If supabase-js's refreshSession hung or failed (typically because the
+    // LocalLock is wedged — the same cause that timed out getSession above),
+    // hit the token endpoint directly. Bypasses supabase-js entirely so a
+    // stuck lock can't block account deletion / any other auth-gated write.
+    try {
+      const resp = await Promise.race([
+        fetch(`${url}/auth/v1/token?grant_type=refresh_token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: anonKey,
+            Authorization: `Bearer ${anonKey}`,
+          },
+          body: JSON.stringify({ refresh_token: stored.refresh_token }),
+        }),
+        new Promise((r) => setTimeout(() => r(null), 5000)),
+      ])
+      if (resp?.ok) {
+        const data = await resp.json().catch(() => null)
+        if (data?.access_token) {
+          return {
+            access_token: data.access_token,
+            refresh_token: data.refresh_token || stored.refresh_token,
+            expires_at:
+              data.expires_at ||
+              Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+            token_type: data.token_type || 'bearer',
+            user: data.user || stored.user,
+          }
+        }
+      }
+    } catch {}
   }
 
   return null
