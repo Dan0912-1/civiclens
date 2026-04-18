@@ -1412,6 +1412,204 @@ const URL_SYNTHESIZERS = {
     const num = String(b.bill_number).padStart(4, '0')
     return [`https://www.revisor.mn.gov/bin/bldbill.php?bill=${chamber}${num}.0.html&session=ls${leg}`]
   },
+
+  // Oklahoma: oklegislature.gov/cf_pdf/{yyyy}-{yy+1}%20INT/{TYPE}/{TYPE}{num}%20INT.PDF
+  // Session "2026 Regular Session" → 2025-26 (4-digit first year, 2-digit second).
+  // OK biennium starts odd years; 2026 reg session maps to 2025-26 biennium.
+  OK: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})/)
+    if (!m) return []
+    const yr = parseInt(m[1], 10)
+    const yr1 = yr % 2 === 1 ? yr : yr - 1
+    const yy2 = String((yr1 + 1) % 100).padStart(2, '0')
+    return [`https://www.oklegislature.gov/cf_pdf/${yr1}-${yy2}%20INT/${type}/${type}${b.bill_number}%20INT.PDF`]
+  },
+
+  // Arizona: azleg.gov/legtext/{NN}leg/{S}R/bills/{TYPE}{num}P.pdf
+  // Session format "57th-2nd-regular" → 57leg/2R. Trailing P = passed/printed.
+  AZ: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d+)(?:st|nd|rd|th)?-(\d+)(?:st|nd|rd|th)?-/i)
+    if (!m) return []
+    const leg = m[1]
+    const ss = m[2]
+    return [`https://www.azleg.gov/legtext/${leg}leg/${ss}R/bills/${type}${b.bill_number}P.pdf`]
+  },
+
+  // Nevada: leg.state.nv.us/Session/{NNrd/th}{year}/Bills/{TYPE}/{TYPE}{num}.pdf
+  // Session "2025 Regular Session" → 83rd2025. 83rd = (2025-1861)/2 + 1.
+  NV: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})/)
+    if (!m) return []
+    const yr = parseInt(m[1], 10)
+    const n = Math.floor((yr - 1861) / 2) + 1
+    const suffix = n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'
+    const chamber = type === 'AB' || type === 'AR' || type === 'ACR' || type === 'AJR' ? 'AB' : 'SB'
+    // Chamber folder uses same prefix as type; e.g. AB goes in /AB/, AR in /AR/, etc.
+    return [`https://www.leg.state.nv.us/Session/${n}${suffix}${yr}/Bills/${type}/${type}${b.bill_number}.pdf`]
+  },
+
+  // Kansas: kslegislature.org/li/b{yy1}_{yy2}/measures/documents/{type|lower}{num}_00_0000.pdf
+  // Session "2025-2026 Regular Session" → b2025_26. Type lowercase.
+  KS: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
+    if (!m) return []
+    const yy2 = String(parseInt(m[2] || String(parseInt(m[1], 10) + 1), 10)).slice(-2)
+    return [`https://www.kslegislature.org/li/b${m[1]}_${yy2}/measures/documents/${type}${b.bill_number}_00_0000.pdf`]
+  },
+
+  // Alabama: alison.legislature.state.al.us/files/pdf/SearchableInstruments/{session}/{TYPE}{num}-int.pdf
+  // Session stored as "2026rs" (year + session code). Case: SB1 → SB1-int.pdf (lowercase "int").
+  AL: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    return [`https://alison.legislature.state.al.us/files/pdf/SearchableInstruments/${b.session.toUpperCase()}/${type}${b.bill_number}-int.pdf`]
+  },
+
+  // Mississippi: billstatus.ls.state.ms.us/documents/{year}/pdf/{TYPE}/{chunk}/{TYPE}{num:04}IN.pdf
+  // Chunk format: "0001-0099" for bills 1-99, then "0100-0199", "0200-0299", etc.
+  // Note the irregular first chunk (99-wide, not 100-wide).
+  MS: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const n = b.bill_number
+    let chunk
+    if (n < 100) chunk = '0001-0099'
+    else {
+      const start = Math.floor(n / 100) * 100
+      chunk = `${String(start).padStart(4, '0')}-${String(start + 99).padStart(4, '0')}`
+    }
+    const num = String(n).padStart(4, '0')
+    return [`https://billstatus.ls.state.ms.us/documents/${yr}/pdf/${type}/${chunk}/${type}${num}IN.pdf`]
+  },
+
+  // South Carolina: scstatehouse.gov/sess{GA}_{yr1}-{yr2}/bills/{num}.htm
+  // Session 2025-2026 → GA=126. (yr - 1775)/2 + 1 = 126 for 2025.
+  // HTML output, extractTextFromHtml handles it. Bill types S/H are not
+  // referenced in the URL — just the number.
+  SC: (b) => {
+    if (!b.bill_type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
+    if (!m) return []
+    const yr1 = parseInt(m[1], 10)
+    const yr2 = m[2] || String(yr1 + 1)
+    const ga = Math.floor((yr1 - 1775) / 2) + 1
+    return [`https://www.scstatehouse.gov/sess${ga}_${yr1}-${yr2}/bills/${b.bill_number}.htm`]
+  },
+
+  // Michigan: legislature.mi.gov/documents/{yr1}-{yr2}/billintroduced/{Chamber}/pdf/{yr1}-{TypeCode}-{num:04}.pdf
+  // TypeCode: SIB = Senate Introduced Bill, HIB = House Introduced Bill.
+  // MI House numbers start at HB4001 (not 1); bill_number stored as-is from
+  // LegiScan so num 4001 → 2025-HIB-4001.pdf.
+  MI: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    if (type !== 'HB' && type !== 'SB') return []
+    const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
+    if (!m) return []
+    const yr1 = m[1]
+    const yr2 = m[2] || String(parseInt(yr1, 10) + 1)
+    const chamber = type === 'SB' ? 'Senate' : 'House'
+    const code = type === 'SB' ? 'SIB' : 'HIB'
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://www.legislature.mi.gov/documents/${yr1}-${yr2}/billintroduced/${chamber}/pdf/${yr1}-${code}-${num}.pdf`]
+  },
+
+  // West Virginia: wvlegislature.gov/Bill_Text_HTML/{year}_Sessions/RS/bills/{TYPE}{num}%20INTR.htm
+  // HTML. Session "2026 Regular Session" → 2026_Sessions/RS.
+  WV: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://www.wvlegislature.gov/Bill_Text_HTML/${yr}_Sessions/RS/bills/${type}${b.bill_number}%20INTR.htm`]
+  },
+
+// Louisiana: legis.la.gov/legis/BillInfo.aspx?s={yy}{RS|ES}&b={TYPE}{num}
+  // HTML landing page; extractTextFromHtml pulls the bill text content.
+  // Session "2026 Regular Session" → 26RS. "2026 Extraordinary Session" → 26ES.
+  LA: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const s = String(b.session)
+    const yr = s.match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const code = /extraordinary|special/i.test(s) ? 'ES' : 'RS'
+    return [`https://www.legis.la.gov/legis/BillInfo.aspx?s=${yr.slice(-2)}${code}&b=${type}${b.bill_number}`]
+  },
+
+  // Utah: le.utah.gov/~{year}/bills/static/{TYPE}{num:04}.html
+  // HTML, not PDF. Year = first year of session ("2026" for 2026 Regular).
+  UT: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://le.utah.gov/~${yr}/bills/static/${type}${num}.html`]
+  },
+
+  // Vermont: legislature.vermont.gov/Documents/{endYear}/Docs/BILLS/{TYPE}-{num:04}/{TYPE}-{num:04}%20As%20Introduced.pdf
+  // Session "2025-2026 Regular Session" → use END year (2026), not start.
+  VT: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
+    if (!m) return []
+    const yr = m[2] || m[1]
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://legislature.vermont.gov/Documents/${yr}/Docs/BILLS/${type}-${num}/${type}-${num}%20As%20Introduced.pdf`]
+  },
+
+  // New Mexico: nmlegis.gov/Sessions/{yy}%20Regular/bills/{house|senate}/{TYPE}{num:04}.pdf
+  // 4-digit padding. Chamber folder lowercase.
+  NM: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const yy = yr.slice(-2)
+    const chamber = type.startsWith('S') ? 'senate' : 'house'
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://www.nmlegis.gov/Sessions/${yy}%20Regular/bills/${chamber}/${type}${num}.pdf`]
+  },
+
+  // Maine: legislature.maine.gov/bills/getPDF.asp?paper={TYPE}{num:04}&item=1&snum={leg}
+  // PDF endpoint. 132nd Legislature = 2025-2026. Only HP (House Paper) and
+  // SP (Senate Paper) can be synthesized directly — LD (Legislative Document)
+  // is an index number mapped to an HP/SP paper, so LD rows fall through.
+  // leg = (firstYear - 1761) / 2 (empirical: 2025→132, 2023→131, 2021→130).
+  ME: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    if (type !== 'HP' && type !== 'SP') return []
+    const m = String(b.session).match(/^(\d{4})/)
+    if (!m) return []
+    const leg = Math.floor((parseInt(m[1], 10) - 1761) / 2)
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://legislature.maine.gov/bills/getPDF.asp?paper=${type}${num}&item=1&snum=${leg}`]
+  },
+
+  // Colorado: leg.colorado.gov/bills/{type|lower}{yy}-{num:3+}
+  // HTML landing; extractTextFromHtml pulls bill text. Senate pads to 3
+  // digits (sb25-001); House already starts at 1001 so 4-digit is natural.
+  CO: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session) return []
+    const yy = String(b.session).match(/^(\d{4})/)?.[1]?.slice(-2)
+    if (!yy) return []
+    const num = String(b.bill_number).padStart(3, '0')
+    return [`https://leg.colorado.gov/bills/${type}${yy}-${num}`]
+  },
 }
 
 async function fetchBillText(supabase, bill) {
