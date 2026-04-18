@@ -620,6 +620,184 @@ async function syncOpenStates(supabase, apiKey, options = {}) {
   return { synced: totalSynced, calls: totalCalls }
 }
 
+// ─── LegiScan bulk catalog sync ─────────────────────────────────────────────
+// Ingests the full bill catalog for a session via one getMasterList call per
+// state. Our Open States sync uses updated_since=yesterday and misses bills
+// that haven't had recent activity — leaving MA at 284/8,424 (3%) coverage
+// until this was added. LegiScan returns the entire session's bill list in
+// one call (~1MB JSON for MA, ~30 fields per bill inc. bill_id, number,
+// title, status, latest_action, change_hash). No auth beyond the API key,
+// and the free tier's 30k queries/month covers all 50 states daily at a
+// negligible 1,500/month.
+//
+// Dedup strategy: match existing rows by (jurisdiction, bill_type, bill_number)
+// ignoring session — most states have one active session at a time, and this
+// avoids the cross-source session-format mismatch (Open States stores "194th"
+// where LegiScan has "194th General Court"). Existing row's enrichment
+// (full_text, openstates_id, topics, subjects, sponsors) is preserved —
+// updates only touch the LegiScan-sourced fields.
+
+// Some states store session in a format our synthesizers expect (MA:"194th",
+// TN:"114"). LegiScan's session_name is richer ("194th General Court"); we
+// normalize to match existing rows + keep synthesizers working.
+const LEGISCAN_SESSION_NORMALIZERS = {
+  MA: (info) => info.session_name?.match(/^(\d+(?:st|nd|rd|th))/)?.[1] || info.session_name,
+  IL: (info) => info.session_name?.match(/^(\d+(?:st|nd|rd|th))/)?.[1] || info.session_name,
+  TN: (info) => String(info.session_name?.match(/^(\d+)/)?.[1] || info.year_start),
+  NE: (info) => String(info.session_name?.match(/^(\d+)/)?.[1] || info.year_start),
+  IA: (info) => `${info.year_start}-${info.year_end}`,
+  NY: (info) => `${info.year_start}-${info.year_end}`,
+  WI: (info) => String(info.year_start),
+  CT: (info) => String(info.year_end || info.year_start),
+  RI: (info) => String(info.year_end || info.year_start),
+}
+
+function normalizeLegiScanSession(sessionInfo, state) {
+  const fn = LEGISCAN_SESSION_NORMALIZERS[state]
+  if (fn) return fn(sessionInfo)
+  return sessionInfo.session_title || sessionInfo.session_name || String(sessionInfo.session_id)
+}
+
+function parseLegiScanBillNumber(number) {
+  const m = String(number || '').trim().match(/^([A-Z]+)\s*(\d+)$/)
+  if (!m) return { type: null, number: null }
+  return { type: m[1].toLowerCase(), number: parseInt(m[2], 10) }
+}
+
+async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
+  const { states = [] } = options
+  if (!apiKey) {
+    console.warn('[legiscan-catalog] No LEGISCAN_API_KEY configured')
+    return { totalNew: 0, totalUpdated: 0 }
+  }
+
+  let totalNew = 0
+  let totalUpdated = 0
+
+  for (const state of states) {
+    try {
+      console.log(`[legiscan-catalog] ${state}: fetching getMasterList`)
+      const url = `https://api.legiscan.com/?key=${apiKey}&op=getMasterList&state=${state}`
+      const resp = await fetch(url, { signal: AbortSignal.timeout(30000) })
+      if (!resp.ok) {
+        console.error(`[legiscan-catalog] ${state}: HTTP ${resp.status}`)
+        continue
+      }
+      const json = await resp.json()
+      if (json.status !== 'OK' || !json.masterlist) {
+        console.error(`[legiscan-catalog] ${state}: ${JSON.stringify(json).slice(0,200)}`)
+        continue
+      }
+
+      const sessionInfo = json.masterlist.session
+      const session = normalizeLegiScanSession(sessionInfo, state)
+      const lsBills = Object.entries(json.masterlist)
+        .filter(([k]) => k !== 'session')
+        .map(([, b]) => b)
+        .filter(b => b && b.bill_id)
+
+      // Read existing rows to dedupe. Match by (bill_type, bill_number)
+      // ignoring session so we catch openstates-sourced rows with a
+      // different session string format. Supabase caps single SELECTs at
+      // 1000 rows silently — paginate with range() so we see every row,
+      // otherwise re-runs against states with >1000 bills double-insert.
+      const existing = []
+      const PAGE = 1000
+      for (let from = 0; ; from += PAGE) {
+        const { data: page = [], error } = await supabase
+          .from('bills')
+          .select('id, bill_type, bill_number, session, legiscan_bill_id, change_hash, source')
+          .eq('jurisdiction', state)
+          .range(from, from + PAGE - 1)
+        if (error) { console.error(`[legiscan-catalog] ${state} existing-rows err:`, error.message); break }
+        existing.push(...page)
+        if (page.length < PAGE) break
+      }
+      const existingMap = new Map(existing.map(b => [`${b.bill_type}-${b.bill_number}`, b]))
+
+      const toInsert = []
+      const toUpdate = []
+      const nowIso = new Date().toISOString()
+
+      for (const ls of lsBills) {
+        const { type, number } = parseLegiScanBillNumber(ls.number)
+        if (!type || !number) continue
+        const key = `${type}-${number}`
+        const prev = existingMap.get(key)
+
+        if (!prev) {
+          toInsert.push({
+            legiscan_bill_id: ls.bill_id,
+            jurisdiction: state,
+            session,
+            bill_type: type,
+            bill_number: number,
+            title: ls.title || '',
+            description: ls.description || null,
+            status: ls.status != null ? String(ls.status) : null,
+            latest_action: ls.last_action || null,
+            latest_action_date: ls.last_action_date || null,
+            url: ls.url || null,
+            change_hash: ls.change_hash || null,
+            source: 'legiscan',
+            synced_at: nowIso,
+            updated_at: nowIso,
+          })
+        } else if (prev.change_hash !== ls.change_hash || !prev.legiscan_bill_id) {
+          // Existing row — refresh LegiScan-sourced fields only.
+          // Don't touch full_text, openstates_id, topics, subjects, sponsors.
+          // Postgres' ON CONFLICT DO UPDATE still type-checks the proposed
+          // INSERT row, so NOT NULL columns (jurisdiction, bill_type,
+          // bill_number) must be present even for a pure update.
+          toUpdate.push({
+            id: prev.id,
+            jurisdiction: state,
+            bill_type: prev.bill_type,
+            bill_number: prev.bill_number,
+            // Preserve the existing source tag so Open States-sourced rows
+            // keep source='openstates' and retain hybrid-fallback access to
+            // their openstates_id. LegiScan ID is additive, not a replacement.
+            source: prev.source || 'legiscan',
+            legiscan_bill_id: ls.bill_id,
+            title: ls.title || '',
+            status: ls.status != null ? String(ls.status) : null,
+            latest_action: ls.last_action || null,
+            latest_action_date: ls.last_action_date || null,
+            url: ls.url || null,
+            change_hash: ls.change_hash || null,
+            updated_at: nowIso,
+          })
+        }
+      }
+
+      // Batch inserts
+      for (let i = 0; i < toInsert.length; i += 500) {
+        const chunk = toInsert.slice(i, i + 500)
+        const { error } = await supabase.from('bills').insert(chunk)
+        if (error) console.error(`[legiscan-catalog] ${state} insert err:`, error.message)
+      }
+
+      // Batch updates — upsert by id preserves untouched columns.
+      for (let i = 0; i < toUpdate.length; i += 500) {
+        const chunk = toUpdate.slice(i, i + 500)
+        const { error } = await supabase.from('bills').upsert(chunk, { onConflict: 'id' })
+        if (error) console.error(`[legiscan-catalog] ${state} update err:`, error.message)
+      }
+
+      console.log(`[legiscan-catalog] ${state}: +${toInsert.length} new, ${toUpdate.length} refreshed (session=${session}, ${lsBills.length} LS total)`)
+      totalNew += toInsert.length
+      totalUpdated += toUpdate.length
+
+      // Polite pacing: 1 LegiScan call per state per second
+      await new Promise(r => setTimeout(r, 1000))
+    } catch (err) {
+      console.error(`[legiscan-catalog] ${state} fatal:`, err.message)
+    }
+  }
+
+  return { totalNew, totalUpdated }
+}
+
 // ─── LegiScan text gap-fill ────────────────────────────────────────────────
 // Only used for bills missing full_text after Congress.gov and Open States.
 // Pace: 8/min to stay well under limits.
@@ -1026,12 +1204,19 @@ const URL_SYNTHESIZERS = {
 }
 
 async function fetchBillText(supabase, bill) {
-  if (!bill || bill.source !== 'openstates' || bill.full_text) return bill.full_text || null
-  if (!bill.openstates_id) return null
+  if (!bill || bill.full_text) return bill.full_text || null
+
+  // Gate: we need either a synthesizer for this jurisdiction (works off bill
+  // metadata alone) OR an openstates_id (for the GraphQL/REST hybrid fallback).
+  // LegiScan-sourced bills have neither source='openstates' nor openstates_id;
+  // for those we rely entirely on the URL synthesizer.
+  const synthesizer = URL_SYNTHESIZERS[bill.jurisdiction]
+  const canHybrid = bill.source === 'openstates' && bill.openstates_id
+  if (!synthesizer && !canHybrid) return null
 
   const apiKey = process.env.OPENSTATES_API_KEY
-  if (!apiKey) {
-    console.warn('[fetchBillText] No OPENSTATES_API_KEY configured')
+  if (!apiKey && !synthesizer) {
+    console.warn('[fetchBillText] No OPENSTATES_API_KEY configured and no synthesizer for', bill.jurisdiction)
     return null
   }
 
@@ -1043,7 +1228,6 @@ async function fetchBillText(supabase, bill) {
   // the PDF URL from bill metadata and skip OS entirely. Falls through to
   // the OS hybrid below if synthesis misses (amended bill, non-R00-only
   // version, or a pattern variant we don't handle).
-  const synthesizer = URL_SYNTHESIZERS[bill.jurisdiction]
   if (synthesizer) {
     const synthUrls = synthesizer(bill)
     for (const url of synthUrls) {
@@ -1075,6 +1259,16 @@ async function fetchBillText(supabase, bill) {
     if (synthUrls.length) {
       console.log(`[fetchBillText] Synth missed for ${label} (${synthUrls.length} candidates), falling back to Open States`)
     }
+  }
+
+  // LegiScan-sourced bills have no openstates_id, so the hybrid path below
+  // can't run. If synthesis didn't hit, give up cleanly rather than issuing
+  // a malformed GraphQL query.
+  if (!canHybrid) {
+    if (supabase && bill.id) {
+      await recordTextFetchFailure(supabase, bill.id, 'synth-miss no-os-id')
+    }
+    return null
   }
 
   // Hybrid strategy (see OS-GraphQL-vs-REST note): try GraphQL first for its
@@ -1681,6 +1875,7 @@ export {
   syncCongressGov,
   syncOpenStates,
   syncLegiScanTexts,
+  syncLegiScanCatalog,
   fetchBillText,
   runStateBackfill,
   backfillStateTexts,
