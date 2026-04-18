@@ -1848,11 +1848,14 @@ async function fetchAndExtract(url, format) {
   }
 
   try {
-    // Some gov sites return PDF with a generic content-type, or HTML links
-    // that actually serve PDF. Sniff the magic bytes to decide which parser
-    // to use regardless of what the caller expected.
+    // Sniff magic bytes to decide which parser to use. Content-type and the
+    // caller's `format` hint both lie frequently — gov sites serve PDFs with
+    // text/plain content-type, or HTML via .pdf extensions. Magic bytes are
+    // the only signal we can trust. Synthesizers for states like UT/SC/WV/
+    // LA/CO/ME return HTML URLs; forcing PDF-parse on them fails the whole
+    // synth path with "Invalid PDF structure".
     const looksLikePdf = body.slice(0, 5).toString('latin1') === '%PDF-'
-    if (format === 'pdf' || looksLikePdf) {
+    if (looksLikePdf) {
       const PDFParse = await loadPDFParse()
       const parser = new PDFParse({ data: new Uint8Array(body) })
       try {
