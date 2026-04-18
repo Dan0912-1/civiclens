@@ -659,9 +659,18 @@ function normalizeLegiScanSession(sessionInfo, state) {
 }
 
 function parseLegiScanBillNumber(number) {
-  const m = String(number || '').trim().match(/^([A-Z]+)\s*(\d+)$/)
-  if (!m) return { type: null, number: null }
-  return { type: m[1].toLowerCase(), number: parseInt(m[2], 10) }
+  const s = String(number || '').trim()
+  // Standard: "HB1", "AB 74", "ACR200" — common 46-state format.
+  const m = s.match(/^([A-Z]+)\s*(\d+)$/)
+  if (m) return { type: m[1].toLowerCase(), number: parseInt(m[2], 10) }
+  // DC: "B26-0001" — type + 2-digit council + hyphen + 4-digit number.
+  // Drop the council prefix; our session column carries that info already.
+  const dc = s.match(/^([A-Z]+)\d{2}-(\d+)$/)
+  if (dc) return { type: dc[1].toLowerCase(), number: parseInt(dc[2], 10) }
+  // Amendment/variant suffix ("LB13A", "AB74A"): letter-suffixed duplicates
+  // of base bills. Silently skip — the base bill is already in the catalog
+  // and ingesting duplicates would trigger UNIQUE(bill_type, bill_number).
+  return { type: null, number: null }
 }
 
 // LegiScan occasionally emits "0000-00-00" for unset dates (seen in TX
