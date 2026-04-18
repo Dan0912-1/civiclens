@@ -914,6 +914,30 @@ async function walkVersionsAndExtract(versions, label) {
   return null
 }
 
+// Per-state URL synthesizers: construct legislature PDF URLs directly from
+// the bill metadata we already store, skipping Open States entirely. Saves
+// OS quota for states where the pattern is deterministic and stable.
+// Each synthesizer returns an array of candidate URLs tried in order; the
+// first one that yields a real PDF wins.
+const URL_SYNTHESIZERS = {
+  // Connecticut: www.cga.ct.gov/{year}/TOB/{chamber}/pdf/{year}{TYPE}-{5-digit}-R00-{SUFFIX}.pdf
+  // R00 is the first-introduced version. Amended bills republish under R01/R02,
+  // but every bill has an R00 available once introduced. If R00 404s we fall
+  // through to the OS hybrid which will find whatever later version exists.
+  //
+  // The filename suffix is always SB or HB, determined by chamber — even for
+  // resolutions (SR → suffix SB, HR → suffix HB). Took a dry-run miss to notice.
+  CT: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type) return []
+    const isSenate = type.startsWith('S')
+    const chamber = isSenate ? 'S' : 'H'
+    const suffix = isSenate ? 'SB' : 'HB'
+    const num = String(b.bill_number).padStart(5, '0')
+    return [`https://www.cga.ct.gov/${b.session}/TOB/${chamber}/pdf/${b.session}${type}-${num}-R00-${suffix}.pdf`]
+  },
+}
+
 async function fetchBillText(supabase, bill) {
   if (!bill || bill.source !== 'openstates' || bill.full_text) return bill.full_text || null
   if (!bill.openstates_id) return null
@@ -926,6 +950,45 @@ async function fetchBillText(supabase, bill) {
 
   const label = `${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`
   let lastError = null
+
+  // Attempt 0: Direct URL synthesis (zero Open States quota burn).
+  // For states with deterministic, stable URL patterns we can construct
+  // the PDF URL from bill metadata and skip OS entirely. Falls through to
+  // the OS hybrid below if synthesis misses (amended bill, non-R00-only
+  // version, or a pattern variant we don't handle).
+  const synthesizer = URL_SYNTHESIZERS[bill.jurisdiction]
+  if (synthesizer) {
+    const synthUrls = synthesizer(bill)
+    for (const url of synthUrls) {
+      const text = await fetchAndExtract(url, 'pdf')
+      if (text && text.length >= 100) {
+        const wordCount = text.split(/\s+/).length
+        console.log(`[fetchBillText] Extracted ${wordCount} words (pdf, via synth) for ${label}`)
+        if (supabase && bill.id) {
+          await supabase.from('bills').update({
+            full_text: text,
+            text_word_count: wordCount,
+            text_version: 'scraped_pdf',
+            structured_excerpt: extractStructuredExcerpt(text),
+            section_topic_scores: computeSectionTopicScores(text),
+            synced_at: new Date().toISOString(),
+          }).eq('id', bill.id)
+          const { error: trackErr } = await supabase.from('bills').update({
+            text_fetch_attempts: 0,
+            text_fetch_last_at: new Date().toISOString(),
+            text_fetch_last_error: null,
+          }).eq('id', bill.id)
+          if (trackErr && trackErr.code !== 'PGRST204') {
+            console.error('[fetchBillText] Tracking update error:', trackErr.message)
+          }
+        }
+        return text
+      }
+    }
+    if (synthUrls.length) {
+      console.log(`[fetchBillText] Synth missed for ${label} (${synthUrls.length} candidates), falling back to Open States`)
+    }
+  }
 
   // Hybrid strategy (see OS-GraphQL-vs-REST note): try GraphQL first for its
   // larger 3000/day quota. For the ~10 states where GraphQL returns degraded
