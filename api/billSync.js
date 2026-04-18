@@ -664,6 +664,13 @@ function parseLegiScanBillNumber(number) {
   return { type: m[1].toLowerCase(), number: parseInt(m[2], 10) }
 }
 
+// LegiScan occasionally emits "0000-00-00" for unset dates (seen in TX
+// masterlist). Postgres rejects that as out-of-range; treat it as null.
+function sanitizeLegiScanDate(d) {
+  if (!d || d === '0000-00-00') return null
+  return d
+}
+
 async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
   const { states = [] } = options
   if (!apiKey) {
@@ -713,7 +720,25 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
         existing.push(...page)
         if (page.length < PAGE) break
       }
-      const existingMap = new Map(existing.map(b => [`${b.bill_type}-${b.bill_number}`, b]))
+      // Two-tier map: session-scoped (authoritative) + session-agnostic (fallback
+      // for cross-source string-format mismatches like "194th" vs "194th General
+      // Court"). If multiple rows share the same natural key across sessions,
+      // prefer the session-matched one; otherwise take the first to avoid
+      // duplicate-key inserts. This is the fix for the dedup gap where an
+      // Open States row with a different session string would get re-inserted
+      // by LegiScan and trigger the UNIQUE(jurisdiction,session,bill_type,
+      // bill_number) violation.
+      const existingBySession = new Map()
+      const existingAnySession = new Map()
+      for (const b of existing) {
+        const nat = `${b.bill_type}-${b.bill_number}`
+        existingBySession.set(`${b.session}::${nat}`, b)
+        if (!existingAnySession.has(nat)) existingAnySession.set(nat, b)
+      }
+      const lookupExisting = (type, number) => {
+        const nat = `${type}-${number}`
+        return existingBySession.get(`${session}::${nat}`) || existingAnySession.get(nat) || null
+      }
 
       const toInsert = []
       const toUpdate = []
@@ -722,8 +747,7 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
       for (const ls of lsBills) {
         const { type, number } = parseLegiScanBillNumber(ls.number)
         if (!type || !number) continue
-        const key = `${type}-${number}`
-        const prev = existingMap.get(key)
+        const prev = lookupExisting(type, number)
 
         if (!prev) {
           toInsert.push({
@@ -736,7 +760,7 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
             description: ls.description || null,
             status: ls.status != null ? String(ls.status) : null,
             latest_action: ls.last_action || null,
-            latest_action_date: ls.last_action_date || null,
+            latest_action_date: sanitizeLegiScanDate(ls.last_action_date),
             url: ls.url || null,
             change_hash: ls.change_hash || null,
             source: 'legiscan',
@@ -762,7 +786,7 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
             title: ls.title || '',
             status: ls.status != null ? String(ls.status) : null,
             latest_action: ls.last_action || null,
-            latest_action_date: ls.last_action_date || null,
+            latest_action_date: sanitizeLegiScanDate(ls.last_action_date),
             url: ls.url || null,
             change_hash: ls.change_hash || null,
             updated_at: nowIso,
@@ -1200,6 +1224,177 @@ const URL_SYNTHESIZERS = {
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
     return [`https://legislation.nysenate.gov/pdf/bills/${yr}/${type}${b.bill_number}`]
+  },
+
+  // Texas: capitol.texas.gov/tlodocs/{session-code}/billtext/pdf/{TYPE}{num:05}I.pdf
+  // Session codes: "89R" = 89th Legislature Regular, "891" = 89th 1st Called.
+  // OS stores sessions as legislature+code ("892" = 89th 2nd Called); LegiScan
+  // stores year-based ("2025 Regular Session"). Handle both.
+  TX: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const s = String(b.session)
+    let code
+    const osMatch = s.match(/^(\d{2})(R|\d)$/i) // "89R", "892"
+    if (osMatch) code = `${osMatch[1]}${osMatch[2].toUpperCase()}`
+    else {
+      const yrMatch = s.match(/^(\d{4})/)
+      if (!yrMatch) return []
+      code = `${Math.floor((parseInt(yrMatch[1], 10) - 1847) / 2)}R`
+    }
+    const num = String(b.bill_number).padStart(5, '0')
+    return [`https://capitol.texas.gov/tlodocs/${code}/billtext/pdf/${type}${num}I.pdf`]
+  },
+
+  // Florida: www.flsenate.gov/Session/Bill/{year}/{num}/BillText/Filed/PDF
+  // Year-only session. Bill number unpadded. Works for SB/HB/SR/HR etc.
+  FL: (b) => {
+    if (!b.bill_type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://www.flsenate.gov/Session/Bill/${yr}/${b.bill_number}/BillText/Filed/PDF`]
+  },
+
+  // Idaho: legislature.idaho.gov/wp-content/uploads/sessioninfo/{year}/legislation/{TYPE}{num:04}.pdf
+  // Bill numbers are 3-4 digits; pad to 4. Types h/s (LegiScan) work for
+  // chamber-agnostic URLs. Joint resolutions (hjr/sjr) 404 — fall through.
+  ID: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://legislature.idaho.gov/wp-content/uploads/sessioninfo/${yr}/legislation/${type}${num}.pdf`]
+  },
+
+  // Maryland: mgaleg.maryland.gov/{year}RS/bills/{type|lower}/{type|lower}{num:04}F.pdf
+  // F-suffix = First Reading (introduced). Works for HB, SB, HJ, SJ.
+  MD: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://mgaleg.maryland.gov/${yr}RS/bills/${type}/${type}${num}F.pdf`]
+  },
+
+  // North Carolina: www.ncleg.gov/Sessions/{yr}/Bills/{ChamberLong}/PDF/{TYPE}{num}v{ver}.pdf
+  // Session "2025-2026 Regular Session" → first year. S/H only (NC's LegiScan
+  // types), v0 = first filed version.
+  NC: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const chamber = type.startsWith('S') ? 'Senate' : 'House'
+    return [`https://www.ncleg.gov/Sessions/${yr}/Bills/${chamber}/PDF/${type}${b.bill_number}v0.pdf`]
+  },
+
+  // Washington: lawfilesext.leg.wa.gov/biennium/{yr1}-{yr2_2}/Pdf/Bills/{House|Senate} Bills/{num}.pdf
+  // Biennium format e.g. "2025-26" (two-digit second year).
+  WA: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
+    if (!m) return []
+    const yr1 = m[1]
+    const yr2 = String(parseInt(m[2] || String(parseInt(yr1, 10) + 1), 10)).slice(-2)
+    const chamber = type.startsWith('S') ? 'Senate' : 'House'
+    return [`https://lawfilesext.leg.wa.gov/biennium/${yr1}-${yr2}/Pdf/Bills/${chamber}%20Bills/${b.bill_number}.pdf`]
+  },
+
+  // Wyoming: wyoleg.gov/{year}/Introduced/{TYPE}{num:04}.pdf
+  WY: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://www.wyoleg.gov/${yr}/Introduced/${type}${num}.pdf`]
+  },
+
+  // Oregon: olis.oregonlegislature.gov/liz/{yyyy}R1/Downloads/MeasureDocument/{TYPE}{num}/Introduced
+  // Session slug = "{year}R1" for Regular. No .pdf extension but served as PDF.
+  OR: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://olis.oregonlegislature.gov/liz/${yr}R1/Downloads/MeasureDocument/${type}${b.bill_number}/Introduced`]
+  },
+
+  // Alaska: akleg.gov/PDF/{leg}/Bills/{TYPE}{num:04}A.PDF
+  // A = initial version. Session stored as leg-number directly ("34").
+  AK: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const leg = String(b.session).match(/(\d+)/)?.[1]
+    if (!leg) return []
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://www.akleg.gov/PDF/${leg}/Bills/${type}${num}A.PDF`]
+  },
+
+  // Kentucky: apps.legislature.ky.gov/recorddocuments/bill/{yy}{RS|SS}/{type|lower}{num}/orig_bill.pdf
+  // Session "2026RS" → "26RS".
+  KY: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})(RS|SS|\d*SS)/i)
+    if (!m) return []
+    const code = `${m[1].slice(-2)}${m[2].toUpperCase()}`
+    return [`https://apps.legislature.ky.gov/recorddocuments/bill/${code}/${type}${b.bill_number}/orig_bill.pdf`]
+  },
+
+  // Arkansas: www.arkleg.state.ar.us/Bills/FTPDocument?path=/Bills/{session}/Public/{TYPE}{num}.pdf
+  // Session "2026F" is used directly in the path.
+  AR: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    return [`https://www.arkleg.state.ar.us/Bills/FTPDocument?path=%2FBills%2F${b.session}%2FPublic%2F${type}${b.bill_number}.pdf`]
+  },
+
+  // Hawaii: data.capitol.hawaii.gov/sessions/session{year}/bills/{TYPE}{num}_.PDF
+  // Note: www.capitol.hawaii.gov 403s the same path — PDFs live on the data
+  // subdomain. Trailing underscore + .PDF (uppercase) is literal.
+  HI: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://data.capitol.hawaii.gov/sessions/session${yr}/bills/${type}${b.bill_number}_.PDF`]
+  },
+
+  // New Jersey: pub.njleg.gov/bills/{year}/{FOLDER}/{num}_I1.PDF
+  // FOLDER is chamber letter + bucket. Bills 1-999 live in "{A|S}0500";
+  // bills 1000+ live in "{A|S}{floor(num/1000)*1000}" padded to 4 digits.
+  // Only A and S chambers have this layout; resolutions (AR/SR/ACR/SCR) use
+  // separate folder names we haven't mapped yet — those fall through.
+  // Session "2026-2027 Regular Session" → year=2026 (first year).
+  NJ: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    if (type !== 'A' && type !== 'S') return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const n = b.bill_number
+    const bucket = n < 1000 ? '0500' : String(Math.floor(n / 1000) * 1000).padStart(4, '0')
+    return [`https://pub.njleg.gov/bills/${yr}/${type}${bucket}/${n}_I1.PDF`]
+  },
+
+  // Minnesota: revisor.mn.gov/bin/bldbill.php?bill={CHAMBER}{num:04}.0.html&session=ls{leg}
+  // MN is HTML not PDF — extractFromHTML handles it. Legislature number:
+  // 94th = 2025-2026, leg = (firstYear - 1837) / 2.
+  // Bill types: HF/SF (file) use chamber letter; resolutions (HR/SR) also work.
+  MN: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    if (!type.startsWith('H') && !type.startsWith('S')) return []
+    const m = String(b.session).match(/^(\d{4})/)
+    if (!m) return []
+    const leg = Math.floor((parseInt(m[1], 10) - 1837) / 2)
+    const chamber = type[0] // H or S
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://www.revisor.mn.gov/bin/bldbill.php?bill=${chamber}${num}.0.html&session=ls${leg}`]
   },
 }
 
@@ -1884,4 +2079,5 @@ export {
   classifyTopics,
   normalizeStatus,
   STATE_NAMES,
+  URL_SYNTHESIZERS,
 }
