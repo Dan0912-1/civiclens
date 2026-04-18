@@ -1619,6 +1619,82 @@ const URL_SYNTHESIZERS = {
     const num = String(b.bill_number).padStart(3, '0')
     return [`https://leg.colorado.gov/bills/${type}${yy}-${num}`]
   },
+
+  // California: leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id={sess}0{TYPE}{num}
+  // Returns HTML inline; auto-redirects to the latest version. Session
+  // stored as "20252026" (regular) or "20252026 Special Session 1" — take
+  // the 8-digit prefix. PDF endpoint requires an un-derivable amendment
+  // version token, so HTML is the stable choice.
+  CA: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session || !b.bill_number) return []
+    const s = String(b.session).match(/^(\d{8})/)?.[1]
+    if (!s) return []
+    return [`https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${s}0${type}${b.bill_number}`]
+  },
+
+  // Missouri: two sub-hosts by chamber.
+  //   House → documents.house.mo.gov/billtracking/bills{yy}1/sumpdf/{TYPE}{num}I.pdf
+  //           (summary PDF — not full bill text, but covers title/sponsor/synopsis;
+  //            the full-text URL requires an LR number we don't store)
+  //   Senate → www.senate.mo.gov/{yy}info/pdf-bill/intro/{TYPE}{num}.pdf
+  //           (full introduced bill text)
+  // Session "2026" → yy="26". Resolutions (HCR/SCR/HJR/SJR) follow the same
+  // host split as bills.
+  MO: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session || !b.bill_number) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const yy = yr.slice(-2)
+    if (type.startsWith('H')) {
+      return [`https://documents.house.mo.gov/billtracking/bills${yy}1/sumpdf/${type}${b.bill_number}I.pdf`]
+    }
+    if (type.startsWith('S')) {
+      return [`https://www.senate.mo.gov/${yy}info/pdf-bill/intro/${type}${b.bill_number}.pdf`]
+    }
+    return []
+  },
+
+  // Ohio: search-prod.lis.state.oh.us/api/v2/general_assembly_{ga}/legislation/{type|lower}{num}/00_IN/pdf/
+  // "00_IN" = Introduced version (exists for every bill). Session varies by
+  // source — "136" (OpenStates, GA number) or "2025-2026 Regular Session"
+  // (LegiScan, year range). GA 136 = 2025-2026 biennium, +1 per biennium.
+  OH: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session || !b.bill_number) return []
+    const s = String(b.session)
+    let ga
+    const yearMatch = s.match(/^(\d{4})/)
+    if (yearMatch && parseInt(yearMatch[1], 10) > 1900) {
+      ga = 136 + Math.floor((parseInt(yearMatch[1], 10) - 2025) / 2)
+    } else {
+      ga = parseInt(s.match(/^(\d+)/)?.[1], 10)
+    }
+    if (!ga || ga < 100) return []
+    const num = String(b.bill_number).replace(/^[A-Za-z]+/, '')
+    return [`https://search-prod.lis.state.oh.us/api/v2/general_assembly_${ga}/legislation/${type}${num}/00_IN/pdf/`]
+  },
+
+  // Indiana: iga.in.gov/pdf-documents/{ga}/{year}/{house|senate}/bills/{TYPE}{num}/{TYPE}{num}.01.INTR.pdf
+  // GA 124 = 2025-2026 biennium, +1 per biennium. House bills are unpadded;
+  // Senate bills are 4-digit zero-padded. Resolutions follow the same chamber
+  // routing via type prefix.
+  IN: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session || !b.bill_number) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const year = parseInt(yr, 10)
+    const ga = 122 + Math.floor((year - 2021) / 2)
+    if (ga < 100) return []
+    const chamber = type.startsWith('H') ? 'house' : type.startsWith('S') ? 'senate' : null
+    if (!chamber) return []
+    const num = chamber === 'senate'
+      ? String(b.bill_number).padStart(4, '0')
+      : String(b.bill_number)
+    return [`https://iga.in.gov/pdf-documents/${ga}/${year}/${chamber}/bills/${type}${num}/${type}${num}.01.INTR.pdf`]
+  },
 }
 
 async function fetchBillText(supabase, bill) {
