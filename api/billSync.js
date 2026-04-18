@@ -936,6 +936,37 @@ const URL_SYNTHESIZERS = {
     const num = String(b.bill_number).padStart(5, '0')
     return [`https://www.cga.ct.gov/${b.session}/TOB/${chamber}/pdf/${b.session}${type}-${num}-R00-${suffix}.pdf`]
   },
+
+  // Tennessee: capitol.tn.gov/Bills/{session}/Bill/{TYPE}{number}.pdf
+  // Session stored as the GA number (e.g. "114"), which matches the URL slug
+  // directly. Clean one-URL pattern; no padding, no version suffix.
+  TN: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    return [`https://capitol.tn.gov/Bills/${b.session}/Bill/${type}${b.bill_number}.pdf`]
+  },
+
+  // Massachusetts: malegislature.gov/Bills/{GA-number}/{TYPE}{number}.pdf
+  // Our DB stores session as "194th" (with ordinal suffix), URL wants "194".
+  // Strip the suffix before interpolating.
+  MA: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const ga = String(b.session).replace(/(?:st|nd|rd|th)$/i, '')
+    return [`https://malegislature.gov/Bills/${ga}/${type}${b.bill_number}.pdf`]
+  },
+
+  // Iowa: www.legis.iowa.gov/docs/publications/LGI/{GA-number}/{TYPE}{number}.pdf
+  // Our DB stores session as year-pair ("2025-2026"); URL wants the General
+  // Assembly number (91 for 2025-2026). GA = floor((firstYear - 1843) / 2).
+  IA: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const m = String(b.session).match(/^(\d{4})/)
+    if (!m) return []
+    const ga = Math.floor((parseInt(m[1], 10) - 1843) / 2)
+    return [`https://www.legis.iowa.gov/docs/publications/LGI/${ga}/${type}${b.bill_number}.pdf`]
+  },
 }
 
 async function fetchBillText(supabase, bill) {
