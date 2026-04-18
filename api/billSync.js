@@ -967,6 +967,62 @@ const URL_SYNTHESIZERS = {
     const ga = Math.floor((parseInt(m[1], 10) - 1843) / 2)
     return [`https://www.legis.iowa.gov/docs/publications/LGI/${ga}/${type}${b.bill_number}.pdf`]
   },
+
+  // Illinois: ilga.gov/documents/legislation/{GA}/{TYPE}/PDF/{GA}00{TYPE}{4-digit}.pdf
+  // Session stored as "104th"; strip ordinal suffix. Bill number zero-padded
+  // to 4 digits. HJR (joint resolutions) live under a different path — synth
+  // will 404 for those and cleanly fall through to OS.
+  IL: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const ga = String(b.session).replace(/(?:st|nd|rd|th)$/i, '')
+    const num = String(b.bill_number).padStart(4, '0')
+    return [`https://ilga.gov/documents/legislation/${ga}/${type}/PDF/${ga}00${type}${num}.pdf`]
+  },
+
+  // Nebraska: nebraskalegislature.gov/FloorDocs/{GA}/PDF/{Intro|Final}/{TYPE}{num}.pdf
+  // Every bill has an Intro version; Final exists only for passed bills.
+  // Try Intro first (universal), Final as a freshness upgrade.
+  NE: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const base = `https://nebraskalegislature.gov/FloorDocs/${b.session}/PDF`
+    return [`${base}/Intro/${type}${b.bill_number}.pdf`, `${base}/Final/${type}${b.bill_number}.pdf`]
+  },
+
+  // Rhode Island: webserver.rilegislature.gov/BillText/BillText{YY}/{Chamber}Text{YY}/{Letter}{num}.pdf
+  // Session stored as 4-digit year ("2026"); URL uses 2-digit suffix ("26").
+  // Filename uses just the chamber letter + number (S2757.pdf, not SB2757.pdf).
+  // Plain http, not https — existing fetchAndExtract handles both.
+  RI: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yy = String(b.session).slice(-2)
+    const chamber = type.startsWith('S') ? 'Senate' : 'House'
+    const letter = type.startsWith('S') ? 'S' : 'H'
+    return [`http://webserver.rilegislature.gov/BillText/BillText${yy}/${chamber}Text${yy}/${letter}${b.bill_number}.pdf`]
+  },
+
+  // Wisconsin: docs.legis.wisconsin.gov/document/proposaltext/{year}/REG/{TYPE}{number}.pdf
+  // Session stored as "2025" or "2025-2026"; take the first year.
+  WI: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://docs.legis.wisconsin.gov/document/proposaltext/${yr}/REG/${type}${b.bill_number}.pdf`]
+  },
+
+  // New York: legislation.nysenate.gov/pdf/bills/{year}/{TYPE}{number}
+  // Note: no .pdf extension — the URL serves PDF with application/pdf content-type
+  // directly. Session stored as "2025-2026"; use the first year.
+  NY: (b) => {
+    const type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    return [`https://legislation.nysenate.gov/pdf/bills/${yr}/${type}${b.bill_number}`]
+  },
 }
 
 async function fetchBillText(supabase, bill) {
