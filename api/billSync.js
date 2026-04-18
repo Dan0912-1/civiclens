@@ -675,11 +675,12 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
   const { states = [] } = options
   if (!apiKey) {
     console.warn('[legiscan-catalog] No LEGISCAN_API_KEY configured')
-    return { totalNew: 0, totalUpdated: 0 }
+    return { totalNew: 0, totalUpdated: 0, totalTextInvalidated: 0 }
   }
 
   let totalNew = 0
   let totalUpdated = 0
+  let totalTextInvalidated = 0
 
   for (const state of states) {
     try {
@@ -769,11 +770,19 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
           })
         } else if (prev.change_hash !== ls.change_hash || !prev.legiscan_bill_id) {
           // Existing row — refresh LegiScan-sourced fields only.
-          // Don't touch full_text, openstates_id, topics, subjects, sponsors.
+          // Don't touch openstates_id, topics, subjects, sponsors.
           // Postgres' ON CONFLICT DO UPDATE still type-checks the proposed
           // INSERT row, so NOT NULL columns (jurisdiction, bill_type,
           // bill_number) must be present even for a pure update.
-          toUpdate.push({
+          //
+          // Refetch policy: when change_hash differs AND we previously had
+          // full_text, null it out so the next text-fetch pass re-pulls the
+          // latest version (amendments, substitutes, enrollment). Hash match
+          // means text is unchanged — preserve the cached full_text. First
+          // attach (no prior change_hash) also preserves text since the null
+          // isn't a real version-change signal.
+          const textChanged = prev.change_hash && ls.change_hash && prev.change_hash !== ls.change_hash
+          const update = {
             id: prev.id,
             jurisdiction: state,
             bill_type: prev.bill_type,
@@ -790,7 +799,12 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
             url: ls.url || null,
             change_hash: ls.change_hash || null,
             updated_at: nowIso,
-          })
+          }
+          if (textChanged) {
+            update.full_text = null
+            update.synced_at = null // let nightly text pass pick it up
+          }
+          toUpdate.push(update)
         }
       }
 
@@ -808,9 +822,11 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
         if (error) console.error(`[legiscan-catalog] ${state} update err:`, error.message)
       }
 
-      console.log(`[legiscan-catalog] ${state}: +${toInsert.length} new, ${toUpdate.length} refreshed (session=${session}, ${lsBills.length} LS total)`)
+      const textInvalidated = toUpdate.filter(u => u.full_text === null).length
+      console.log(`[legiscan-catalog] ${state}: +${toInsert.length} new, ${toUpdate.length} refreshed, ${textInvalidated} text-invalidated (session=${session}, ${lsBills.length} LS total)`)
       totalNew += toInsert.length
       totalUpdated += toUpdate.length
+      totalTextInvalidated += textInvalidated
 
       // Polite pacing: 1 LegiScan call per state per second
       await new Promise(r => setTimeout(r, 1000))
@@ -819,7 +835,7 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
     }
   }
 
-  return { totalNew, totalUpdated }
+  return { totalNew, totalUpdated, totalTextInvalidated }
 }
 
 // ─── LegiScan text gap-fill ────────────────────────────────────────────────
