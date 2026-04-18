@@ -399,7 +399,23 @@ export default function Results() {
 
   const hasMore = allFilteredBills.length > visibleCount
 
-  if (!profile) return null
+  // Profile is still resolving (Supabase loadProfile for signed-in users can
+  // take a few seconds on slow networks). Render a skeleton instead of null
+  // so the user doesn't see a blank screen between mount and the first
+  // setProfile (or the navigate('/profile') redirect).
+  if (!profile) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.container}>
+          <div className={styles.loadingGrid}>
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className={styles.skeleton} style={{ animationDelay: `${i * 0.1}s` }} />
+            ))}
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className={styles.page}>

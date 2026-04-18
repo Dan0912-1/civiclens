@@ -61,6 +61,14 @@ export default function Home() {
     }
   }
 
+  // Skip the brief blank flash from /results bouncing anonymous users back
+  // to /profile. If we already have a stored profile, head straight to the
+  // feed; otherwise route to the questionnaire ourselves.
+  function handleExploreBills() {
+    const hasProfile = !!sessionStorage.getItem('civicProfile')
+    navigate(hasProfile ? '/results' : '/profile')
+  }
+
   const bill = DEMO_BILLS[billIndex]
 
   // Typing effect for bill title
@@ -120,7 +128,7 @@ export default function Home() {
             </button>
             <button
               className={styles.ctaSecondary}
-              onClick={() => navigate('/results')}
+              onClick={handleExploreBills}
             >
               Explore Bills
             </button>
