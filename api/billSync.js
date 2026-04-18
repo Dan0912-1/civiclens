@@ -874,19 +874,25 @@ async function fetchBillText(supabase, bill) {
   let lastError = null
 
   try {
-    // Step 1: Query Open States GraphQL for bill versions (3000/day quota, 2 req/sec).
-    // GraphQL returns camelCase field names (mediaType) and consistently correct
-    // document URLs — unlike the REST API which hit quota at ~500/day and returned
-    // stale/broken HTML links for IA, TN, PA and other states.
-    const gqlQuery = `query { bill(id: "${bill.openstates_id}") { versions { note links { url mediaType } } } }`
+    // Step 1: Query Open States REST /bills/{id}?include=versions for version links.
+    //
+    // History: we tried GraphQL (commit f65d562) on the premise that it had a
+    // 3000/day quota and returned better PDF URLs. In practice GraphQL returned
+    // degraded link data for a large cohort of states (IL, NH, TN, NE, PA, IN,
+    // RI, WI, IA, MA — ~10 states with active bill-scrapers) — either missing
+    // PDF links entirely or returning them without mediaType, which broke
+    // pdfLink detection. Net effect: the 2026-04-18 nightly cron burned its
+    // full 3000-call GraphQL budget and dropped to 61% success (1163 failures
+    // concentrated in those 10 states), down from 100% the prior day. Direct
+    // probing confirmed REST returns correct media_type + PDF URLs for every
+    // one of those states. Reverting to REST here; if REST quota becomes the
+    // bottleneck we'll reduce the daily target in backfillStateTexts rather
+    // than play whack-a-mole with GraphQL's per-state gaps.
+    const billIdEnc = encodeURIComponent(bill.openstates_id)
+    const restUrl = `${OPENSTATES_BASE}/bills/${billIdEnc}?include=versions&apikey=${apiKey}`
     console.log(`[fetchBillText] Fetching versions for ${label}`)
 
-    const resp = await fetch('https://openstates.org/graphql', {
-      method: 'POST',
-      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: gqlQuery }),
-      signal: AbortSignal.timeout(20000),
-    })
+    const resp = await fetch(restUrl, { signal: AbortSignal.timeout(20000) })
     if (resp.status === 429) {
       // Quota exhausted — bubble up without a failure strike so the bill
       // isn't unfairly shelved. The daily loop will catch this and stop.
@@ -900,13 +906,7 @@ async function fetchBillText(supabase, bill) {
     }
 
     const json = await resp.json()
-    if (json.errors?.length) {
-      lastError = `graphql: ${json.errors[0]?.message || 'unknown'}`
-      console.error(`[fetchBillText] GraphQL error for ${label}:`, json.errors[0]?.message)
-      await recordTextFetchFailure(supabase, bill.id, lastError)
-      return null
-    }
-    const versions = json.data?.bill?.versions || []
+    const versions = json.versions || []
     if (!versions.length) {
       lastError = 'no versions'
       console.log(`[fetchBillText] No versions available for ${bill.openstates_id}`)
@@ -1001,6 +1001,17 @@ async function fetchBillText(supabase, bill) {
 // https.get for sites with broken cert chains (CT, MS, etc. — see
 // fetchInsecure block comment).
 async function fetchAndExtract(url, format) {
+  // Some legislature hosts serve an obfuscated-JS anti-bot challenge to
+  // non-browser clients on the canonical URL, but the older "mirror" host
+  // for the same legislature serves the real file directly. Rewrite before
+  // the fetch so the magic-byte sniff below sees actual PDF bytes.
+  //   NH: gc.nh.gov/bill_Status/pdf.aspx?id=X  →  2.6 KB eval(function(p,a,c)) shim
+  //       www.gencourt.state.nh.us/bill_status/pdf.aspx?id=X  →  real PDF
+  url = url.replace(
+    /^https?:\/\/gc\.nh\.gov\/bill_Status\//i,
+    'https://www.gencourt.state.nh.us/bill_status/',
+  )
+
   let body = null
   let contentType = ''
 
