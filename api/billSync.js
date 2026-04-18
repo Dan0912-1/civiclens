@@ -1365,10 +1365,10 @@ const URL_SYNTHESIZERS = {
   },
 
   // New Jersey: pub.njleg.gov/bills/{year}/{FOLDER}/{num}_I1.PDF
-  // FOLDER is chamber letter + bucket. Bills 1-999 live in "{A|S}0500";
-  // bills 1000+ live in "{A|S}{floor(num/1000)*1000}" padded to 4 digits.
-  // Only A and S chambers have this layout; resolutions (AR/SR/ACR/SCR) use
-  // separate folder names we haven't mapped yet — those fall through.
+  // FOLDER = chamber letter + bucket padded to 4 digits. Bucket is the UPPER
+  // bound of a 500-bill range: ceil(num/500)*500. So bill 499 → S0500,
+  // 501 → S1000, 1985 → S2000, 2500 → S2500. Only A/S chambers have this
+  // layout; resolutions (AR/SR/ACR/SCR) use other paths and fall through.
   // Session "2026-2027 Regular Session" → year=2026 (first year).
   NJ: (b) => {
     const type = (b.bill_type || '').toUpperCase()
@@ -1377,7 +1377,7 @@ const URL_SYNTHESIZERS = {
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
     const n = b.bill_number
-    const bucket = n < 1000 ? '0500' : String(Math.floor(n / 1000) * 1000).padStart(4, '0')
+    const bucket = String(Math.ceil(n / 500) * 500).padStart(4, '0')
     return [`https://pub.njleg.gov/bills/${yr}/${type}${bucket}/${n}_I1.PDF`]
   },
 
