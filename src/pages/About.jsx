@@ -50,8 +50,8 @@ export default function About() {
           <div className={styles.techGrid}>
             {[
               {
-                name: 'LegiScan API',
-                desc: 'Covers all 50 states and Congress. Real federal and state bills, real status, updated daily.',
+                name: 'Our own scraping pipeline',
+                desc: 'We pull bill text directly from every state legislature and Congress, normalize it, and store it in our Supabase database. Covers all 50 states, updated daily.',
                 badge: 'Data source'
               },
               {
@@ -102,11 +102,12 @@ export default function About() {
             <details className={styles.faq}>
               <summary>How do you decide which bills to show me?</summary>
               <p>
-                We pull real bills from LegiScan for Congress and your state,
-                then rank them using the policy areas you selected in your
-                profile together with your past interactions (views, bookmarks,
-                opens). The feed adapts over time so you see more of what's
-                relevant to you and less of what isn't.
+                Our scrapers pull real bills from Congress and your state
+                legislature every day, then we rank them using the policy
+                areas you selected in your profile together with your past
+                interactions (views, bookmarks, opens). The feed adapts over
+                time so you see more of what's relevant to you and less of
+                what isn't.
               </p>
             </details>
 
@@ -164,9 +165,10 @@ export default function About() {
             <details className={styles.faq}>
               <summary>How often is bill data updated?</summary>
               <p>
-                Federal and state bill data refreshes every few hours from
-                LegiScan. Status changes (introduced, in committee, passed,
-                signed into law) typically appear the same day they happen.
+                Our pipeline refreshes federal and state bill data every day,
+                pulling directly from each legislature's official site. Status
+                changes (introduced, in committee, passed, signed into law)
+                typically appear the same day they happen.
               </p>
             </details>
 
