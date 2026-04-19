@@ -1495,23 +1495,42 @@ const URL_SYNTHESIZERS = {
     return [`https://alison.legislature.state.al.us/files/pdf/SearchableInstruments/${b.session.toUpperCase()}/${type}${b.bill_number}-int.pdf`]
   },
 
-  // Mississippi: billstatus.ls.state.ms.us/documents/{year}/pdf/{TYPE}/{chunk}/{TYPE}{num:04}IN.pdf
-  // Chunk format: "0001-0099" for bills 1-99, then "0100-0199", "0200-0299", etc.
-  // Note the irregular first chunk (99-wide, not 100-wide).
+  // Mississippi: billstatus.ls.state.ms.us/documents/{year}/pdf/{TYPE}/[chunk/]{TYPE}{num:04}{SUFFIX}.pdf
+  //   HB/SB: chunked into /0001-0099/ then /0101-0199/, /0201-0299/, ...
+  //   Chunks are 99-wide starting at x001 (not x000): e.g., n=2096 → 2001-2099.
+  //   Resolutions (HR/SR/HC/SC/HCR/SCR): no chunk folder, flat under /pdf/{TYPE}/
+  //   Suffixes: IN = Introduced (not-yet-passed), PS = Passed, SG = Signed.
+  // Try all three suffixes so enacted bills (IN PDF often removed) still resolve.
   MS: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session) return []
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
     const n = b.bill_number
-    let chunk
-    if (n < 100) chunk = '0001-0099'
-    else {
-      const start = Math.floor(n / 100) * 100
-      chunk = `${String(start).padStart(4, '0')}-${String(start + 99).padStart(4, '0')}`
-    }
     const num = String(n).padStart(4, '0')
-    return [`https://billstatus.ls.state.ms.us/documents/${yr}/pdf/${type}/${chunk}/${type}${num}IN.pdf`]
+    const base = `https://billstatus.ls.state.ms.us/documents/${yr}/pdf/${type}`
+    const isRegularBill = type === 'HB' || type === 'SB'
+    // Build the path prefix (chunked or flat)
+    const prefixes = []
+    if (isRegularBill) {
+      if (n < 100) {
+        prefixes.push(`${base}/0001-0099`)
+      } else {
+        const start = Math.floor(n / 100) * 100 + 1
+        const end = start + 98
+        prefixes.push(`${base}/${String(start).padStart(4, '0')}-${String(end).padStart(4, '0')}`)
+      }
+    } else {
+      prefixes.push(base)
+    }
+    // Try IN → PS → SG suffixes in order (most bills will hit IN; enacted fall through)
+    const urls = []
+    for (const prefix of prefixes) {
+      for (const suffix of ['IN', 'PS', 'SG']) {
+        urls.push(`${prefix}/${type}${num}${suffix}.pdf`)
+      }
+    }
+    return urls
   },
 
   // South Carolina: scstatehouse.gov/sess{GA}_{yr1}-{yr2}/bills/{num}.htm
@@ -1580,7 +1599,10 @@ const URL_SYNTHESIZERS = {
     return [`https://le.utah.gov/~${yr}/bills/static/${type}${num}.html`]
   },
 
-  // Vermont: legislature.vermont.gov/Documents/{endYear}/Docs/BILLS/{TYPE}-{num:04}/{TYPE}-{num:04}%20As%20Introduced.pdf
+  // Vermont: two folder schemes by bill type.
+  //   HB/SB: /Docs/BILLS/{TYPE}-{num:04}/{TYPE}-{num:04}%20As%20Introduced.pdf
+  //   Resolutions (HR/SR/HCR/SCR/HJR/SJR/JRH/JRS): /Docs/RESOLUTN/{TYPE}{num:04}/{TYPE}{num:04}%20As%20Introduced.pdf
+  //   (note: no hyphen between TYPE and num for resolutions)
   // Session "2025-2026 Regular Session" → use END year (2026), not start.
   VT: (b) => {
     const type = (b.bill_type || '').toUpperCase()
@@ -1589,11 +1611,18 @@ const URL_SYNTHESIZERS = {
     if (!m) return []
     const yr = m[2] || m[1]
     const num = String(b.bill_number).padStart(4, '0')
-    return [`https://legislature.vermont.gov/Documents/${yr}/Docs/BILLS/${type}-${num}/${type}-${num}%20As%20Introduced.pdf`]
+    const base = `https://legislature.vermont.gov/Documents/${yr}/Docs`
+    if (type === 'HB' || type === 'SB') {
+      return [`${base}/BILLS/${type}-${num}/${type}-${num}%20As%20Introduced.pdf`]
+    }
+    return [`${base}/RESOLUTN/${type}${num}/${type}${num}%20As%20Introduced.pdf`]
   },
 
-  // New Mexico: nmlegis.gov/Sessions/{yy}%20Regular/bills/{house|senate}/{TYPE}{num:04}.pdf
-  // 4-digit padding. Chamber folder lowercase.
+  // New Mexico: three folder schemes by type, with different padding:
+  //   HB/SB: /Sessions/{yy}%20Regular/bills/{chamber}/{TYPE}{num:04}.pdf (4-digit)
+  //   Resolutions (HR/SR/HJR/SJR/HCR/SCR): /resolutions/{chamber}/{TYPE}{num:02}.pdf (2-digit)
+  //   Memorials (HM/SM/HJM/SJM/HCM/SCM): /memorials/{chamber}/{TYPE}{num:03}.pdf (3-digit)
+  // Chamber is 'senate' if type starts with S, else 'house'.
   NM: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session) return []
@@ -1601,8 +1630,22 @@ const URL_SYNTHESIZERS = {
     if (!yr) return []
     const yy = yr.slice(-2)
     const chamber = type.startsWith('S') ? 'senate' : 'house'
-    const num = String(b.bill_number).padStart(4, '0')
-    return [`https://www.nmlegis.gov/Sessions/${yy}%20Regular/bills/${chamber}/${type}${num}.pdf`]
+    const base = `https://www.nmlegis.gov/Sessions/${yy}%20Regular`
+    if (type === 'HB' || type === 'SB') {
+      const num4 = String(b.bill_number).padStart(4, '0')
+      return [`${base}/bills/${chamber}/${type}${num4}.pdf`]
+    }
+    if (type.endsWith('M')) {
+      const num3 = String(b.bill_number).padStart(3, '0')
+      return [`${base}/memorials/${chamber}/${type}${num3}.pdf`]
+    }
+    // Resolutions: padding varies by series, so emit 2-digit and 3-digit candidates
+    const num2 = String(b.bill_number).padStart(2, '0')
+    const num3 = String(b.bill_number).padStart(3, '0')
+    return [
+      `${base}/resolutions/${chamber}/${type}${num2}.pdf`,
+      `${base}/resolutions/${chamber}/${type}${num3}.pdf`,
+    ]
   },
 
   // Maine: legislature.maine.gov/bills/getPDF.asp?paper={TYPE}{num:04}&item=1&snum={leg}
