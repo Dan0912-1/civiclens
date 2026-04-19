@@ -1755,69 +1755,6 @@ async function fetchBillText(supabase, bill) {
     }
   }
 
-  // LegiScan API fallback: for bills without openstates_id that the synth
-  // can't handle (e.g. ME LD types where the LD→HP/SP mapping is arbitrary,
-  // or any state we haven't synthesized). LegiScan's getBill + getBillText
-  // returns base64-encoded bill text directly — 2 API calls per bill.
-  // Free tier is ~30k calls/month so this is the last-resort tier, not
-  // every-bill default. Paces at 1.5s between calls to stay well under
-  // LegiScan's published 1 call/sec rate.
-  if (!canHybrid && bill.legiscan_bill_id && process.env.LEGISCAN_API_KEY) {
-    try {
-      const apiKey = process.env.LEGISCAN_API_KEY
-      const billUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${bill.legiscan_bill_id}`
-      const billResp = await fetch(billUrl, { signal: AbortSignal.timeout(15000) })
-      if (billResp.ok) {
-        const billData = await billResp.json()
-        const latestText = billData.bill?.texts?.[billData.bill.texts.length - 1]
-        if (latestText?.doc_id) {
-          await new Promise(r => setTimeout(r, 1500))
-          const textUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBillText&id=${latestText.doc_id}`
-          const textResp = await fetch(textUrl, { signal: AbortSignal.timeout(15000) })
-          if (textResp.ok) {
-            const textData = await textResp.json()
-            const doc = textData.text?.doc
-            if (doc) {
-              const decoded = Buffer.from(doc, 'base64').toString('utf-8')
-              const isPdf = decoded.slice(0, 5) === '%PDF-'
-              let cleanText
-              if (isPdf) {
-                const PDFParse = await loadPDFParse()
-                const parser = new PDFParse({ data: new Uint8Array(Buffer.from(doc, 'base64')) })
-                try {
-                  const parsed = await parser.getText()
-                  cleanText = (parsed.text || '').replace(/\s+/g, ' ').trim()
-                } finally { await parser.destroy().catch(() => {}) }
-              } else {
-                cleanText = decoded.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-              }
-              if (cleanText && cleanText.length >= 100) {
-                const wordCount = cleanText.split(/\s+/).length
-                console.log(`[fetchBillText] Extracted ${wordCount} words (via legiscan-api) for ${label}`)
-                if (supabase && bill.id) {
-                  await supabase.from('bills').update({
-                    full_text: cleanText,
-                    text_word_count: wordCount,
-                    text_version: latestText.type || 'legiscan',
-                    structured_excerpt: extractStructuredExcerpt(cleanText),
-                    section_topic_scores: computeSectionTopicScores(cleanText),
-                    synced_at: new Date().toISOString(),
-                    text_fetch_attempts: 0,
-                    text_fetch_last_at: new Date().toISOString(),
-                    text_fetch_last_error: null,
-                  }).eq('id', bill.id)
-                }
-                return cleanText
-              }
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error(`[fetchBillText] legiscan-api fallback failed for ${label}: ${err.message}`)
-    }
-  }
-
   // LegiScan-sourced bills have no openstates_id, so the hybrid path below
   // can't run. If synthesis didn't hit, give up cleanly rather than issuing
   // a malformed GraphQL query.
