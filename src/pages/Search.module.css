@@ -173,6 +173,15 @@
   cursor: pointer;
 }
 
+.stateNote {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.45;
+  font-style: italic;
+  max-width: 560px;
+}
+
 .filterBtn {
   padding: 10px 14px;
   min-height: 44px;

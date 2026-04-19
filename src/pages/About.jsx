@@ -75,6 +75,22 @@ export default function About() {
         </div>
 
         <div className={styles.section}>
+          <h2>Frequently asked</h2>
+          <details className={styles.faq}>
+            <summary>Why can't I select New Hampshire?</summary>
+            <p>
+              The New Hampshire state legislature's website uses bot-protection
+              that blocks automated access to bill text. Most other states
+              publish bills as static PDFs or through an API, but NH serves
+              bills through an ASP.NET form flow layered with an anti-scraping
+              script, so our normal pipeline can't pull them reliably. We're
+              exploring a browser-based workaround and will re-enable NH once
+              we can serve accurate, up-to-date bill text.
+            </p>
+          </details>
+        </div>
+
+        <div className={styles.section}>
           <h2>Built by a student</h2>
           <p>
             CapitolKey was built by a high school student who serves on his town's
