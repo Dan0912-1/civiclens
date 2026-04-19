@@ -304,21 +304,26 @@ export default function Search() {
             </button>
           </div>
           {activeTab === 'state' && (
-            <select
-              className={styles.stateSelect}
-              value={selectedState}
-              onChange={e => {
-                const code = e.target.value
-                setSelectedState(code)
-                setChamberFilter('All')
-                if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
-              }}
-            >
-              <option value="">Select a state</option>
-              {US_STATES.map(s => (
-                <option key={s.code} value={s.code}>{s.name}</option>
-              ))}
-            </select>
+            <>
+              <select
+                className={styles.stateSelect}
+                value={selectedState}
+                onChange={e => {
+                  const code = e.target.value
+                  setSelectedState(code)
+                  setChamberFilter('All')
+                  if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
+                }}
+              >
+                <option value="">Select a state</option>
+                {US_STATES.map(s => (
+                  <option key={s.code} value={s.code}>{s.name}</option>
+                ))}
+              </select>
+              <p className={styles.stateNote}>
+                New Hampshire isn't currently supported. The NH legislature's website uses bot-protection that blocks automated access to bill text. We're working on a solution.
+              </p>
+            </>
           )}
           <div className={styles.filterBar}>
             {['All', 'House', 'Senate'].map(chamber => (
