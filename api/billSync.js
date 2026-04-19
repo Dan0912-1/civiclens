@@ -1716,10 +1716,15 @@ const URL_SYNTHESIZERS = {
     if (ga < 100) return []
     const chamber = type.startsWith('H') ? 'house' : type.startsWith('S') ? 'senate' : null
     if (!chamber) return []
-    const num = chamber === 'senate'
+    // HB/SB live under /bills/, everything else (HR/SR/HCR/SCR/HJR/SJR) under
+    // /resolutions/. Senate bills are 4-digit padded; house bills aren't;
+    // resolutions are 4-digit padded on both sides.
+    const isResolution = !['HB', 'SB'].includes(type)
+    const folder = isResolution ? 'resolutions' : 'bills'
+    const num = (isResolution || chamber === 'senate')
       ? String(b.bill_number).padStart(4, '0')
       : String(b.bill_number)
-    return [`https://iga.in.gov/pdf-documents/${ga}/${year}/${chamber}/bills/${type}${num}/${type}${num}.01.INTR.pdf`]
+    return [`https://iga.in.gov/pdf-documents/${ga}/${year}/${chamber}/${folder}/${type}${num}/${type}${num}.01.INTR.pdf`]
   },
 }
 
