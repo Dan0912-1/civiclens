@@ -1359,15 +1359,28 @@ const URL_SYNTHESIZERS = {
     return [`https://www.akleg.gov/PDF/${leg}/Bills/${type}${num}A.PDF`]
   },
 
-  // Kentucky: apps.legislature.ky.gov/recorddocuments/bill/{yy}{RS|SS}/{type|lower}{num}/orig_bill.pdf
-  // Session "2026RS" → "26RS".
+  // Kentucky: apps.legislature.ky.gov/record/{yy}{rs|ss}/{type|lower}{num}.html
+  // HTML format; extractTextFromHtml handles it. Handles both session shapes:
+  // OS "2026RS" → "26rs" and LegiScan "2026 Regular Session" → "26rs".
   KY: (b) => {
     const type = (b.bill_type || '').toLowerCase()
     if (!type || !b.session) return []
-    const m = String(b.session).match(/^(\d{4})(RS|SS|\d*SS)/i)
-    if (!m) return []
-    const code = `${m[1].slice(-2)}${m[2].toUpperCase()}`
-    return [`https://apps.legislature.ky.gov/recorddocuments/bill/${code}/${type}${b.bill_number}/orig_bill.pdf`]
+    const s = String(b.session)
+    const yr = s.match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    // OS compact format "2026RS" / "2026SS" / "20261SS" → take trailing letters.
+    // LegiScan long format "2026 Regular Session" / "2026 Special Session" →
+    // RS for Regular, SS for Special/Extraordinary.
+    let suffix
+    const compact = s.match(/^\d{4}(\d*)(RS|SS)$/i)
+    if (compact) {
+      suffix = `${compact[1]}${compact[2].toLowerCase()}`
+    } else if (/special|extraordinary/i.test(s)) {
+      suffix = 'ss'
+    } else {
+      suffix = 'rs'
+    }
+    return [`https://apps.legislature.ky.gov/record/${yr.slice(-2)}${suffix}/${type}${b.bill_number}.html`]
   },
 
   // Arkansas: www.arkleg.state.ar.us/Bills/FTPDocument?path=/Bills/{session}/Public/{TYPE}{num}.pdf
