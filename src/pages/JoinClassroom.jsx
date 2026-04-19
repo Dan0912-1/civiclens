@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
-import { joinClassroom, peekClassroom, addJoinedClassroom } from '../lib/classroom'
+import { joinClassroom, peekClassroom, addJoinedClassroom, joinClassroomAnon } from '../lib/classroom'
 import styles from './JoinClassroom.module.css'
 
 export default function JoinClassroom() {
@@ -46,6 +46,11 @@ export default function JoinClassroom() {
           setPendingData(data)
           setNameStep(true)
         } else {
+          // Server-side join creates a classroom_members row keyed on the
+          // student's anonymous_id so the teacher's analytics count this
+          // join. Network failure here shouldn't block the student from
+          // viewing the class, so log and continue to the local join.
+          try { await joinClassroomAnon(trimmed) } catch (e) { console.warn('[classroom] anon join failed:', e.message) }
           addJoinedClassroom(trimmed, data.classroom.name, data.classroom.id)
           navigate(`/classroom/view/${trimmed}`)
         }
@@ -56,12 +61,14 @@ export default function JoinClassroom() {
     setLoading(false)
   }
 
-  function handleNameSubmit(e) {
+  async function handleNameSubmit(e) {
     e.preventDefault()
     if (!firstName.trim()) { setError('First name is required'); return }
     const studentName = `${firstName.trim()} ${lastName.trim()}`.trim()
-    addJoinedClassroom(code.trim().toUpperCase(), pendingData.classroom.name, pendingData.classroom.id, studentName)
-    navigate(`/classroom/view/${code.trim().toUpperCase()}`)
+    const trimmed = code.trim().toUpperCase()
+    try { await joinClassroomAnon(trimmed, studentName) } catch (err) { console.warn('[classroom] anon join failed:', err.message) }
+    addJoinedClassroom(trimmed, pendingData.classroom.name, pendingData.classroom.id, studentName)
+    navigate(`/classroom/view/${trimmed}`)
   }
 
   if (nameStep && pendingData) {

@@ -249,3 +249,84 @@ export function removeJoinedClassroom(code) {
   const joined = getJoinedClassrooms().filter(c => c.code !== code)
   sessionStorage.setItem(JOINED_KEY, JSON.stringify(joined))
 }
+
+// Stable per-browser id for no-account students. Persisted in localStorage
+// (not sessionStorage) so a student's second visit to the classroom reuses
+// the same id and doesn't double-count in the teacher's analytics.
+const ANON_ID_KEY = 'ck_anon_student_id'
+
+function generateUuid() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // Fallback for older Safari (iOS 14, still seen on a few school iPads).
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    const v = c === 'x' ? r : (r & 0x3 | 0x8)
+    return v.toString(16)
+  })
+}
+
+export function getOrCreateAnonymousId() {
+  try {
+    let id = localStorage.getItem(ANON_ID_KEY)
+    if (!id) {
+      id = generateUuid()
+      localStorage.setItem(ANON_ID_KEY, id)
+    }
+    return id
+  } catch {
+    // localStorage may be unavailable (private mode on older Safari). Fall
+    // back to an ephemeral id so the request still succeeds — the student
+    // just won't be deduped across page reloads in that session.
+    return generateUuid()
+  }
+}
+
+// Anonymous join — persists the student on the server so the teacher's
+// analytics dashboard counts them. Pairs with addJoinedClassroom() which
+// still tracks the join locally for "Your classrooms" display.
+export async function joinClassroomAnon(code, displayName) {
+  const url = `${API}/api/classroom/join-anon`
+  const body = JSON.stringify({
+    code,
+    anonymousId: getOrCreateAnonymousId(),
+    displayName: displayName || undefined,
+  })
+  const resp = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.error || 'Failed to join classroom')
+  }
+  const data = await resp.json()
+  return data.classroom
+}
+
+export async function markCompleteAnon(classroomId, assignmentId, timeSpentSec) {
+  const url = `${API}/api/classroom/${classroomId}/assignments/${assignmentId}/complete-anon`
+  const body = JSON.stringify({
+    anonymousId: getOrCreateAnonymousId(),
+    timeSpentSec,
+  })
+  try {
+    const resp = await apiFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.error || 'Could not mark as read')
+    }
+  } catch (err) {
+    if (err.name === 'AbortError' || err.name === 'TypeError') {
+      enqueue(url, 'POST', body)
+      throw new Error('You appear offline. Your completion will retry when you reconnect.')
+    }
+    throw err
+  }
+}

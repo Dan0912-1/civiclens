@@ -5353,6 +5353,69 @@ app.post('/api/classroom/join', classroomLimiter, async (req, res) => {
   }
 })
 
+// UUID v4-ish shape check. Accepts any 8-4-4-4-12 hex UUID (client libraries
+// emit both randomUUID and legacy v4). Keeps arbitrary strings out of the
+// anonymous_id column.
+const ANON_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Join classroom without an account. The client generates a stable UUID in
+// localStorage and sends it as anonymousId so the teacher's analytics page
+// can count and track this student without them signing up.
+app.post('/api/classroom/join-anon', classroomLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const code = (req.body.code || '').trim().toUpperCase()
+    const anonymousId = typeof req.body.anonymousId === 'string' ? req.body.anonymousId.trim() : ''
+    let displayName = typeof req.body.displayName === 'string' ? req.body.displayName.trim() : ''
+
+    if (code.length !== 6) return res.status(400).json({ error: 'Join code must be 6 characters' })
+    if (!ANON_ID_RE.test(anonymousId)) return res.status(400).json({ error: 'anonymousId must be a UUID' })
+    if (displayName.length > 80) displayName = displayName.slice(0, 80)
+
+    const { data: classroom } = await supabase.from('classrooms')
+      .select('id, name, archived').eq('join_code', code).maybeSingle()
+    if (!classroom) return res.status(404).json({ error: 'Invalid join code' })
+    if (classroom.archived) return res.status(400).json({ error: 'This classroom is no longer accepting new members' })
+
+    // If this anonymous_id already joined, update the display name (user may
+    // have re-entered it) but preserve the original joined_at so the
+    // teacher's "Students" list keeps a stable sort order.
+    const { data: existing } = await supabase.from('classroom_members')
+      .select('id, display_name')
+      .eq('classroom_id', classroom.id)
+      .eq('anonymous_id', anonymousId)
+      .maybeSingle()
+    if (existing) {
+      if (displayName && displayName !== existing.display_name) {
+        await supabase.from('classroom_members')
+          .update({ display_name: displayName }).eq('id', existing.id)
+      }
+      return res.json({ classroom: { id: classroom.id, name: classroom.name }, alreadyMember: true })
+    }
+
+    const row = {
+      classroom_id: classroom.id,
+      anonymous_id: anonymousId,
+      role: 'student',
+    }
+    if (displayName) row.display_name = displayName
+
+    const { error: insertErr } = await supabase.from('classroom_members').insert(row)
+    if (insertErr) {
+      // 23505 = unique_violation from a race with a concurrent join from the
+      // same anon id. Treat as success so the UI doesn't show a spurious error.
+      if (insertErr.code === '23505') {
+        return res.json({ classroom: { id: classroom.id, name: classroom.name }, alreadyMember: true })
+      }
+      throw insertErr
+    }
+    res.json({ classroom: { id: classroom.id, name: classroom.name } })
+  } catch (err) {
+    console.error('[classroom] join-anon error:', err.message)
+    res.status(500).json({ error: 'Failed to join classroom' })
+  }
+})
+
 // Leave classroom (student)
 app.delete('/api/classroom/:id/leave', classroomLimiter, async (req, res) => {
   try {
@@ -5557,16 +5620,76 @@ app.post('/api/classroom/:id/assignments/:assignmentId/complete', classroomLimit
   }
 })
 
+// Mark assignment complete as an anonymous (no-account) student. Mirrors the
+// authenticated /complete endpoint but keys on anonymousId from localStorage.
+app.post('/api/classroom/:id/assignments/:assignmentId/complete-anon', classroomLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const anonymousId = typeof req.body.anonymousId === 'string' ? req.body.anonymousId.trim() : ''
+    if (!ANON_ID_RE.test(anonymousId)) return res.status(400).json({ error: 'anonymousId must be a UUID' })
+
+    // Require membership in this specific classroom so an anon id from any
+    // other class can't complete this assignment.
+    const { data: member } = await supabase.from('classroom_members')
+      .select('id')
+      .eq('classroom_id', req.params.id)
+      .eq('anonymous_id', anonymousId)
+      .eq('role', 'student')
+      .maybeSingle()
+    if (!member) return res.status(403).json({ error: 'Not a member of this classroom' })
+
+    const { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id').eq('id', req.params.assignmentId).eq('classroom_id', req.params.id).maybeSingle()
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' })
+
+    let timeSpent = null
+    if (typeof req.body.timeSpentSec === 'number') {
+      timeSpent = Math.min(3600, Math.round(req.body.timeSpentSec / 30) * 30)
+    }
+
+    // Avoid upsert on a partial unique index — some PostgREST versions pick
+    // the wrong candidate. Explicit select + insert/update is boring but
+    // reliable.
+    const { data: existing } = await supabase.from('assignment_completions')
+      .select('id')
+      .eq('assignment_id', req.params.assignmentId)
+      .eq('anonymous_id', anonymousId)
+      .maybeSingle()
+    if (existing) {
+      await supabase.from('assignment_completions')
+        .update({ time_spent_sec: timeSpent, completed_at: new Date().toISOString() })
+        .eq('id', existing.id)
+    } else {
+      const { error: insertErr } = await supabase.from('assignment_completions')
+        .insert({
+          assignment_id: req.params.assignmentId,
+          anonymous_id: anonymousId,
+          time_spent_sec: timeSpent,
+        })
+      if (insertErr && insertErr.code !== '23505') throw insertErr
+    }
+
+    res.json({ completed: true })
+  } catch (err) {
+    console.error('[classroom] complete-anon error:', err.message)
+    res.status(500).json({ error: 'Failed to mark assignment complete' })
+  }
+})
+
 // Aggregate stats (teacher only — PRIVACY: no per-student data ever returned)
 app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
   try {
     await requireClassroomTeacher(req, req.params.id)
 
-    // Total students
+    // Total students — includes both authenticated (user_id) and anonymous
+    // (anonymous_id) members. Only authenticated ids are usable for the
+    // topic-engagement join on bill_interactions (anonymous students never
+    // create server-side interaction rows), so we keep studentUserIds
+    // separate from the overall count.
     const { data: students } = await supabase.from('classroom_members')
-      .select('user_id').eq('classroom_id', req.params.id).eq('role', 'student')
+      .select('user_id, anonymous_id').eq('classroom_id', req.params.id).eq('role', 'student')
     const totalStudents = (students || []).length
-    const studentIds = (students || []).map(s => s.user_id)
+    const studentUserIds = (students || []).filter(s => s.user_id).map(s => s.user_id)
 
     // Assignments with aggregate completion counts
     const { data: assignments } = await supabase.from('classroom_assignments')
@@ -5582,7 +5705,7 @@ app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
 
     if (assignmentIds.length > 0) {
       const { data: completions } = await supabase.from('assignment_completions')
-        .select('assignment_id, user_id, time_spent_sec, completed_at')
+        .select('assignment_id, user_id, anonymous_id, time_spent_sec, completed_at')
         .in('assignment_id', assignmentIds)
 
       const weekAgo = Date.now() - 7 * 86400000
@@ -5592,15 +5715,20 @@ app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
           if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
           timeMap[c.assignment_id].push(c.time_spent_sec)
         }
-        if (new Date(c.completed_at).getTime() > weekAgo) activeThisWeek.add(c.user_id)
+        if (new Date(c.completed_at).getTime() > weekAgo) {
+          // Namespace the anon key so an anonymous_id that coincidentally
+          // matches a uuid-shaped user_id from another row can't double-count.
+          activeThisWeek.add(c.user_id || `anon:${c.anonymous_id}`)
+        }
       }
     }
 
-    // Topic engagement — aggregate only, scoped to classroom students
+    // Topic engagement — aggregate only, scoped to authenticated students.
+    // Anonymous students don't create bill_interactions rows on the server.
     let topicEngagement = {}
-    if (studentIds.length > 0) {
+    if (studentUserIds.length > 0) {
       const { data: interactions } = await supabase.from('bill_interactions')
-        .select('topic_tag').in('user_id', studentIds)
+        .select('topic_tag').in('user_id', studentUserIds)
       for (const i of (interactions || [])) {
         if (i.topic_tag) topicEngagement[i.topic_tag] = (topicEngagement[i.topic_tag] || 0) + 1
       }
@@ -5657,19 +5785,22 @@ app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => 
   try {
     await requireClassroomTeacher(req, req.params.id)
 
-    // Get students
+    // Get students — both authenticated and anonymous members, in a single
+    // list ordered by joined_at so the matrix keeps a stable display order.
     const { data: members } = await supabase.from('classroom_members')
-      .select('user_id, joined_at').eq('classroom_id', req.params.id).eq('role', 'student')
+      .select('user_id, anonymous_id, display_name, joined_at')
+      .eq('classroom_id', req.params.id).eq('role', 'student')
       .order('joined_at', { ascending: true })
-    const studentIds = (members || []).map(m => m.user_id)
+    const userIds = (members || []).filter(m => m.user_id).map(m => m.user_id)
 
-    // Fetch display names
+    // Fetch display names for authenticated users (anonymous students carry
+    // their own display_name on the membership row).
     const nameMap = {}
-    if (studentIds.length > 0) {
+    if (userIds.length > 0) {
       const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 })
       if (usersData.users.length >= 1000) { const page2 = await supabase.auth.admin.listUsers({ perPage: 1000, page: 2 }); if (page2.data?.users) usersData.users.push(...page2.data.users) }
       for (const u of (usersData.users || [])) {
-        if (studentIds.includes(u.id)) {
+        if (userIds.includes(u.id)) {
           nameMap[u.id] = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split('@')[0] || 'Student'
         }
       }
@@ -5682,24 +5813,32 @@ app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => 
       .order('created_at', { ascending: true })
     const assignmentIds = (assignments || []).map(a => a.id)
 
+    // Shared stable identifier so the student list and completion rows align:
+    // authenticated students → their user_id; anonymous students → 'anon:<uuid>'.
+    const memberKey = m => m.user_id || `anon:${m.anonymous_id}`
+
     // Get all completions for these assignments
     let completionsByAssignment = {}
     if (assignmentIds.length > 0) {
       const { data: completions } = await supabase.from('assignment_completions')
-        .select('assignment_id, user_id, completed_at, time_spent_sec')
+        .select('assignment_id, user_id, anonymous_id, completed_at, time_spent_sec')
         .in('assignment_id', assignmentIds)
       for (const c of (completions || [])) {
         if (!completionsByAssignment[c.assignment_id]) completionsByAssignment[c.assignment_id] = {}
-        completionsByAssignment[c.assignment_id][c.user_id] = {
+        const key = c.user_id || `anon:${c.anonymous_id}`
+        completionsByAssignment[c.assignment_id][key] = {
           completedAt: c.completed_at,
           timeSpent: c.time_spent_sec,
         }
       }
     }
 
-    const students = studentIds.map(uid => ({
-      id: uid,
-      name: nameMap[uid] || 'Student',
+    const students = (members || []).map(m => ({
+      id: memberKey(m),
+      name: m.user_id
+        ? (nameMap[m.user_id] || 'Student')
+        : (m.display_name || 'Anonymous student'),
+      anonymous: !m.user_id,
     }))
 
     const assignmentList = (assignments || []).map(a => ({
@@ -5712,10 +5851,10 @@ app.get('/api/classroom/:id/completions', classroomLimiter, async (req, res) => 
 
     // Build per-student completion map: { studentId: { assignmentId: { completedAt, timeSpent } } }
     const completionMap = {}
-    for (const uid of studentIds) {
-      completionMap[uid] = {}
+    for (const s of students) {
+      completionMap[s.id] = {}
       for (const aId of assignmentIds) {
-        completionMap[uid][aId] = completionsByAssignment[aId]?.[uid] || null
+        completionMap[s.id][aId] = completionsByAssignment[aId]?.[s.id] || null
       }
     }
 
