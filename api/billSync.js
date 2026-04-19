@@ -1147,6 +1147,25 @@ async function walkVersionsAndExtract(versions, label) {
 // Each synthesizer returns an array of candidate URLs tried in order; the
 // first one that yields a real PDF wins.
 const URL_SYNTHESIZERS = {
+  // Federal: www.govinfo.gov/content/pkg/BILLS-{congress}{type}{num}{version}/pdf/BILLS-{congress}{type}{num}{version}.pdf
+  // Static URLs, much faster than Congress.gov's 2-API-call-per-bill text fetch.
+  // Version codes picked by chamber:
+  //   House (hr/hres/hjres/hconres): ih (intro) → eh (engrossed) → rh (reported)
+  //   Senate (s/sres/sjres/sconres): is (intro) → es (engrossed) → rs (reported)
+  // Try intro first (universal); enrolled/engrossed as fresher-version fallbacks.
+  // session stored as congress number string ("119").
+  US: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    const congress = b.session || '119'
+    if (!type) return []
+    const num = b.bill_number
+    const isSenate = type === 's' || type.startsWith('s')
+    const versions = isSenate ? ['is', 'es', 'rs', 'enr'] : ['ih', 'eh', 'rh', 'enr']
+    return versions.map(v =>
+      `https://www.govinfo.gov/content/pkg/BILLS-${congress}${type}${num}${v}/pdf/BILLS-${congress}${type}${num}${v}.pdf`
+    )
+  },
+
   // Connecticut: www.cga.ct.gov/{year}/TOB/{chamber}/pdf/{year}{TYPE}-{5-digit}-R00-{SUFFIX}.pdf
   // R00 is the first-introduced version. Amended bills republish under R01/R02,
   // but every bill has an R00 available once introduced. If R00 404s we fall
