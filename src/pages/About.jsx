@@ -55,8 +55,8 @@ export default function About() {
                 badge: 'Data source'
               },
               {
-                name: 'Claude AI (Anthropic)',
-                desc: 'Generates personalized plain-language explanations of each bill based on your profile. Prompted to be strictly nonpartisan.',
+                name: 'Qwen (via Groq) + Claude fallback',
+                desc: 'AI generates personalized plain-language explanations of each bill based on your profile. Prompted to be strictly nonpartisan.',
                 badge: 'Personalization'
               },
               {
@@ -76,18 +76,143 @@ export default function About() {
 
         <div className={styles.section}>
           <h2>Frequently asked</h2>
-          <details className={styles.faq}>
-            <summary>Why can't I select New Hampshire?</summary>
-            <p>
-              The New Hampshire state legislature's website uses bot-protection
-              that blocks automated access to bill text. Most other states
-              publish bills as static PDFs or through an API, but NH serves
-              bills through an ASP.NET form flow layered with an anti-scraping
-              script, so our normal pipeline can't pull them reliably. We're
-              exploring a browser-based workaround and will re-enable NH once
-              we can serve accurate, up-to-date bill text.
-            </p>
-          </details>
+          <div className={styles.faqList}>
+
+            <details className={styles.faq}>
+              <summary>Is CapitolKey free to use?</summary>
+              <p>
+                Yes. CapitolKey is free for students, teachers, and anyone who
+                wants to understand what's happening in Congress and their
+                state legislature. There's no paywall, no subscription, and
+                no ads.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Do I need to create an account?</summary>
+              <p>
+                No. You can set up a profile and browse personalized legislation
+                anonymously, with everything stored only in your browser.
+                Signing in with Google or email is optional and lets you sync
+                your profile, bookmarks, and notification preferences across
+                devices.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>How do you decide which bills to show me?</summary>
+              <p>
+                We pull real bills from LegiScan for Congress and your state,
+                then rank them using the policy areas you selected in your
+                profile together with your past interactions (views, bookmarks,
+                opens). The feed adapts over time so you see more of what's
+                relevant to you and less of what isn't.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>How do I know the summaries are nonpartisan?</summary>
+              <p>
+                The AI model that writes summaries is prompted to describe
+                impact as fact, never to recommend a position. Every bill page
+                shows both what would change if the bill passes and what stays
+                the same if it fails, so both outcomes are visible side by side.
+                The original bill text is always linked so you can read the
+                source yourself.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Can the AI get a bill wrong?</summary>
+              <p>
+                Sometimes, yes. Language models occasionally misread complex
+                legislative text, especially amendments that reference other
+                statutes. We review flagged summaries and adjust our prompts
+                when we find systematic errors. If you spot a summary that
+                looks off, please send feedback through the Contact page.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Why do you ask for my state and grade level?</summary>
+              <p>
+                Your state determines which state legislature we track for you.
+                Grade level helps the AI choose examples and vocabulary that
+                fit your age. Neither field is shared outside the app.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Do you sell or share my data?</summary>
+              <p>
+                No. We don't sell, rent, or share your personal information
+                with advertisers, data brokers, or third parties. Your profile
+                is used only to personalize the bills you see. Full details
+                are in our Privacy Policy.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Do you cover local or city-level legislation?</summary>
+              <p>
+                Not yet. CapitolKey currently covers the U.S. Congress and all
+                50 state legislatures. Town councils, county boards, and school
+                boards are on our roadmap.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>How often is bill data updated?</summary>
+              <p>
+                Federal and state bill data refreshes every few hours from
+                LegiScan. Status changes (introduced, in committee, passed,
+                signed into law) typically appear the same day they happen.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Can teachers use CapitolKey in class?</summary>
+              <p>
+                Yes. CapitolKey includes a classroom mode where teachers can
+                create a class, share a join code, pin specific bills, and
+                track student engagement. The Educators page has standards
+                alignment and lesson ideas.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>What happens when I click "Contact your representative"?</summary>
+              <p>
+                We link you to your official federal or state representative's
+                contact form. We never send messages on your behalf, and we
+                don't see or store what you write to them.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>Why can't I select New Hampshire?</summary>
+              <p>
+                The New Hampshire state legislature's website uses bot-protection
+                that blocks automated access to bill text. Most other states
+                publish bills as static PDFs or through an API, but NH serves
+                bills through an ASP.NET form flow layered with an anti-scraping
+                script, so our normal pipeline can't pull them reliably. We're
+                exploring a browser-based workaround and will re-enable NH once
+                we can serve accurate, up-to-date bill text.
+              </p>
+            </details>
+
+            <details className={styles.faq}>
+              <summary>How can I report an error or share feedback?</summary>
+              <p>
+                The fastest way is the Contact page. Tell us the bill ID and
+                what looked wrong, and we'll review it. We treat feedback on
+                summary accuracy as high priority, because the whole value of
+                CapitolKey depends on being trustworthy.
+              </p>
+            </details>
+
+          </div>
         </div>
 
         <div className={styles.section}>
