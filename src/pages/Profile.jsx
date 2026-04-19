@@ -34,7 +34,6 @@ const US_STATES = [
   { code: 'MT', name: 'Montana' },
   { code: 'NE', name: 'Nebraska' },
   { code: 'NV', name: 'Nevada' },
-  { code: 'NH', name: 'New Hampshire' },
   { code: 'NJ', name: 'New Jersey' },
   { code: 'NM', name: 'New Mexico' },
   { code: 'NY', name: 'New York' },
@@ -310,6 +309,9 @@ export default function Profile() {
                   <option value="">Select your state</option>
                   {US_STATES.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
                 </select>
+                <p className={styles.stateNote}>
+                  New Hampshire isn't currently supported. The NH legislature's website uses bot-protection that blocks automated access to bill text, so we can't reliably pull NH legislation yet. We're working on a solution.
+                </p>
               </div>
 
               <div className={styles.field}>

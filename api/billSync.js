@@ -1793,13 +1793,19 @@ const URL_SYNTHESIZERS = {
 async function fetchBillText(supabase, bill) {
   if (!bill || bill.full_text) return bill.full_text || null
 
-  // Gate: we need either a synthesizer for this jurisdiction (works off bill
-  // metadata alone) OR an openstates_id (for the GraphQL/REST hybrid fallback).
-  // LegiScan-sourced bills have neither source='openstates' nor openstates_id;
-  // for those we rely entirely on the URL synthesizer.
+  // Gate: we can proceed if any of these paths is viable:
+  //   - Synthesizer (URL built from metadata — zero external quota)
+  //   - OpenStates hybrid (source='openstates' with openstates_id)
+  //   - LegiScan-API fallback (bill has legiscan_bill_id, not in skip list)
+  // Previously the gate blocked LegiScan-only states (e.g., NH) before they
+  // could reach the LegiScan fallback block further down.
   const synthesizer = URL_SYNTHESIZERS[bill.jurisdiction]
   const canHybrid = bill.source === 'openstates' && bill.openstates_id
-  if (!synthesizer && !canHybrid) return null
+  const SKIP_LEGISCAN_FALLBACK = new Set(['ME'])
+  const canLegiscan = bill.legiscan_bill_id &&
+    process.env.LEGISCAN_API_KEY &&
+    !SKIP_LEGISCAN_FALLBACK.has(bill.jurisdiction)
+  if (!synthesizer && !canHybrid && !canLegiscan) return null
 
   const apiKey = process.env.OPENSTATES_API_KEY
   if (!apiKey && !synthesizer) {
@@ -1850,14 +1856,12 @@ async function fetchBillText(supabase, bill) {
 
   // LegiScan API fallback: for bills without openstates_id that the synth
   // can't handle. 2 API calls per bill, free-tier budget 30k/month.
-  //
-  // ME is skipped by jurisdiction: ~2,100 orphan LD bills would burn
-  // ~4,200 calls in one backfill run, consuming ~14% of monthly budget for
-  // a single state that isn't worth prioritizing. If we ever want ME
-  // coverage, do it via a purpose-built one-shot script rather than this
-  // per-call fallback.
-  const SKIP_LEGISCAN_FALLBACK = new Set(['ME'])
-  if (!canHybrid && bill.legiscan_bill_id && process.env.LEGISCAN_API_KEY && !SKIP_LEGISCAN_FALLBACK.has(bill.jurisdiction)) {
+  // SKIP_LEGISCAN_FALLBACK set already declared in the gate above.
+  // ME is skipped: ~2,100 orphan LD bills would burn ~4,200 calls in one
+  // backfill run, consuming ~14% of monthly budget for a single state that
+  // isn't worth prioritizing. If we ever want ME coverage, do it via a
+  // purpose-built one-shot script rather than this per-call fallback.
+  if (canLegiscan && !canHybrid) {
     try {
       const apiKey = process.env.LEGISCAN_API_KEY
       const billUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${bill.legiscan_bill_id}`

@@ -96,6 +96,14 @@
   font-size: 0.98rem;
 }
 
+.stateNote {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: var(--space-xs);
+  line-height: 1.45;
+  font-style: italic;
+}
+
 /* Fields */
 .field {
   margin-bottom: var(--space-xl);

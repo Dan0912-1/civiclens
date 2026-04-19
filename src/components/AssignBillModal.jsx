@@ -22,7 +22,7 @@ const US_STATES = [
   { code: 'MN', name: 'Minnesota' }, { code: 'MS', name: 'Mississippi' },
   { code: 'MO', name: 'Missouri' }, { code: 'MT', name: 'Montana' },
   { code: 'NE', name: 'Nebraska' }, { code: 'NV', name: 'Nevada' },
-  { code: 'NH', name: 'New Hampshire' }, { code: 'NJ', name: 'New Jersey' },
+  { code: 'NJ', name: 'New Jersey' },
   { code: 'NM', name: 'New Mexico' }, { code: 'NY', name: 'New York' },
   { code: 'NC', name: 'North Carolina' }, { code: 'ND', name: 'North Dakota' },
   { code: 'OH', name: 'Ohio' }, { code: 'OK', name: 'Oklahoma' },
