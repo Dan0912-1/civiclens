@@ -1207,6 +1207,19 @@ const URL_SYNTHESIZERS = {
     return [`https://ilga.gov/documents/legislation/${ga}/${type}/PDF/${ga}00${type}${num}.pdf`]
   },
 
+  // North Dakota: ndlegis.gov/files/resource/{assembly}-{year}/library/{type}{num}.pdf
+  // Assembly # maps from the odd start-year: 69th = 2025. Covers hb/sb/hcr/scr;
+  // hr/hm/sjr don't follow this pattern and will 404 (tolerable ~4% miss).
+  ND: (b) => {
+    const type = (b.bill_type || '').toLowerCase()
+    if (!type || !b.session) return []
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const oddYr = parseInt(yr, 10) % 2 === 1 ? parseInt(yr, 10) : parseInt(yr, 10) - 1
+    const assembly = Math.floor((oddYr - 1889) / 2) + 1
+    return [`https://ndlegis.gov/files/resource/${assembly}-${oddYr}/library/${type}${b.bill_number}.pdf`]
+  },
+
   // Nebraska: nebraskalegislature.gov/FloorDocs/{GA}/PDF/{Intro|Final}/{TYPE}{num}.pdf
   // Every bill has an Intro version; Final exists only for passed bills.
   // Try Intro first (universal), Final as a freshness upgrade.
