@@ -58,52 +58,6 @@
   margin-bottom: 0;
 }
 
-/* Standards alignment cards */
-.standardsGrid {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.standardCard {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-left: 2px solid var(--amber);
-  border-radius: 1px;
-  padding: var(--space-lg);
-  box-shadow: none;
-}
-
-.standardCode {
-  display: inline-block;
-  background: transparent;
-  color: var(--amber-dark);
-  border: 1px solid var(--amber);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  padding: 2px 8px;
-  border-radius: 1px;
-  margin-bottom: var(--space-xs);
-}
-
-.standardCard h3 {
-  font-family: var(--font-body);
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--navy);
-  margin-bottom: var(--space-xs);
-}
-
-.standardCard p {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  line-height: 1.55;
-  margin: 0;
-}
-
 /* Lesson plan cards */
 .lessonGrid {
   display: grid;

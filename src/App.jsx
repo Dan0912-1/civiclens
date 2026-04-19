@@ -51,7 +51,7 @@ const PAGE_TITLES = {
   '/profile': 'Set Up Your Feed | CapitolKey',
   '/results': 'Your Legislation | CapitolKey',
   '/search': 'Search Bills | CapitolKey',
-  '/about': 'How It Works | CapitolKey',
+  '/about': 'About | CapitolKey',
   '/contact': 'Contact | CapitolKey',
   '/support': 'Contact | CapitolKey',
   '/bookmarks': 'Saved Bills | CapitolKey',

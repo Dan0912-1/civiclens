@@ -70,16 +70,17 @@ export default function Nav() {
               <div className={styles.dropdown}>
                 <button className={styles.dropItem} onClick={() => handleNav('/')}>Home</button>
                 <button className={styles.dropItem} onClick={() => handleNav('/search')}>Search Bills</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/about')}>How It Works</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My Profile</button>
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/bookmarks')}>Saved Bills</button>
                 )}
-                <button className={styles.dropItem} onClick={() => handleNav('/classroom')}>Classrooms</button>
-                <button className={styles.dropItem} onClick={() => handleNav('/educators')}>For Educators</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/profile')}>My Profile</button>
                 {user && (
                   <button className={styles.dropItem} onClick={() => handleNav('/settings')}>Settings</button>
                 )}
+                <div className={styles.dropDivider} />
+                <button className={styles.dropItem} onClick={() => handleNav('/about')}>About</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/educators')}>For Educators</button>
+                <button className={styles.dropItem} onClick={() => handleNav('/classroom')}>Classrooms</button>
                 <div className={styles.dropDivider} />
                 <button className={styles.dropItem} onClick={() => handleNav('/contact')}>Contact Us</button>
                 <div className={styles.dropDivider} />
