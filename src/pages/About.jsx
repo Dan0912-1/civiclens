@@ -177,8 +177,7 @@ export default function About() {
               <p>
                 Yes. CapitolKey includes a classroom mode where teachers can
                 create a class, share a join code, pin specific bills, and
-                track student engagement. The Educators page has standards
-                alignment and lesson ideas.
+                track student engagement from the Classrooms dashboard.
               </p>
             </details>
 
