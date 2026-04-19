@@ -1,5 +1,5 @@
 import { useEffect, useState, Suspense, lazy } from 'react'
-import { Routes, Route, useLocation, useNavigate, Link } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase, getSessionSafe } from './lib/supabase'
 import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
@@ -27,7 +27,6 @@ const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
 const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
 const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
 const ClassroomView = lazy(() => import('./pages/ClassroomView.jsx'))
-const Educators = lazy(() => import('./pages/Educators.jsx'))
 
 function PageLoader() {
   return (
@@ -59,7 +58,6 @@ const PAGE_TITLES = {
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
   '/admin': 'Admin | CapitolKey',
-  '/educators': 'For Educators | CapitolKey',
   '/classroom': 'Classrooms | CapitolKey',
   '/classroom/join': 'Join Classroom | CapitolKey',
 }
@@ -316,7 +314,7 @@ export default function App() {
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
           <Route path="/admin"          element={<Admin />} />
-          <Route path="/educators"  element={<Educators />} />
+          <Route path="/educators" element={<Navigate to="/classroom" replace />} />
           <Route path="/classroom"       element={<TeacherDashboard />} />
           <Route path="/classroom/join"  element={<JoinClassroom />} />
           <Route path="/classroom/join/:code" element={<JoinClassroom />} />

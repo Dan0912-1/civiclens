@@ -276,7 +276,6 @@ export default function Home() {
         <Link to="/privacy">Privacy Policy</Link>
         <Link to="/terms">Terms of Service</Link>
         <Link to="/about">About</Link>
-        <Link to="/educators">Educators</Link>
         <Link to="/contact">Contact</Link>
       </footer>
 
