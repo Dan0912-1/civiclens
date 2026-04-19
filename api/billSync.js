@@ -1756,13 +1756,15 @@ async function fetchBillText(supabase, bill) {
   }
 
   // LegiScan API fallback: for bills without openstates_id that the synth
-  // can't handle (e.g. ME LD types where the LD→HP/SP mapping is arbitrary,
-  // or any state we haven't synthesized). LegiScan's getBill + getBillText
-  // returns base64-encoded bill text directly — 2 API calls per bill.
-  // Free tier is ~30k calls/month so this is the last-resort tier, not
-  // every-bill default. Paces at 1.5s between calls to stay well under
-  // LegiScan's published 1 call/sec rate.
-  if (!canHybrid && bill.legiscan_bill_id && process.env.LEGISCAN_API_KEY) {
+  // can't handle. 2 API calls per bill, free-tier budget 30k/month.
+  //
+  // ME is skipped by jurisdiction: ~2,100 orphan LD bills would burn
+  // ~4,200 calls in one backfill run, consuming ~14% of monthly budget for
+  // a single state that isn't worth prioritizing. If we ever want ME
+  // coverage, do it via a purpose-built one-shot script rather than this
+  // per-call fallback.
+  const SKIP_LEGISCAN_FALLBACK = new Set(['ME'])
+  if (!canHybrid && bill.legiscan_bill_id && process.env.LEGISCAN_API_KEY && !SKIP_LEGISCAN_FALLBACK.has(bill.jurisdiction)) {
     try {
       const apiKey = process.env.LEGISCAN_API_KEY
       const billUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${bill.legiscan_bill_id}`
