@@ -1101,7 +1101,9 @@ function isValidGrade(val) {
 const VALID_INTERESTS = ['education', 'environment', 'economy', 'healthcare', 'technology', 'housing', 'immigration', 'civil_rights', 'community']
 const VALID_EMPLOYMENT = ['none', 'part_time', 'full_time']
 const VALID_FAMILY = ['standard', 'independent', 'low_income', 'immigrant', 'foster']
-const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
+// NH excluded: the NH legislature website uses bot-protection that blocks
+// automated bill-text access. Users see a note on the Profile state selector.
+const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
 
 function validateLegislationBody(body) {
   const errors = []
