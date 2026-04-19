@@ -6,7 +6,7 @@ import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
-import { markComplete, getMyClassrooms, createAssignment } from '../lib/classroom'
+import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillDetail.module.css'
@@ -130,12 +130,14 @@ export default function BillDetail() {
     })
   }, [user, bill, congress, type, number])
 
-  // Assignment completion: start timer when page loads with assignment context
+  // Assignment completion: start timer when page loads with assignment context.
+  // Anonymous students need the timer too so the teacher's "avg time" metric
+  // reflects their sessions.
   useEffect(() => {
-    if (!assignmentId || !assignmentClassroomId || !user) return
+    if (!assignmentId || !assignmentClassroomId) return
     assignmentTimerRef.current = Date.now()
     return () => { assignmentTimerRef.current = null }
-  }, [assignmentId, assignmentClassroomId, user])
+  }, [assignmentId, assignmentClassroomId])
 
   // Close assign dropdown on outside click
   useEffect(() => {
@@ -186,19 +188,26 @@ export default function BillDetail() {
   }
 
   async function handleMarkComplete() {
-    if (!assignmentId || !assignmentClassroomId || !user || assignmentCompleted || markCompleteBusy) return
+    if (!assignmentId || !assignmentClassroomId || assignmentCompleted || markCompleteBusy) return
     setMarkCompleteBusy(true)
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
-      if (!token) {
-        showToast('Please sign in to mark this complete', 'error')
-        return
-      }
       const elapsed = assignmentTimerRef.current
         ? Math.round((Date.now() - assignmentTimerRef.current) / 1000)
         : null
-      await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
+      if (user) {
+        const session = await getSessionSafe()
+        const token = session?.access_token
+        if (!token) {
+          showToast('Please sign in to mark this complete', 'error')
+          return
+        }
+        await markComplete(token, assignmentClassroomId, assignmentId, elapsed)
+      } else {
+        // Anonymous student: the join-anon flow already created a member row
+        // keyed on the localStorage anonymous_id, so the server can attribute
+        // this completion back to the teacher's roster.
+        await markCompleteAnon(assignmentClassroomId, assignmentId, elapsed)
+      }
       setAssignmentCompleted(true)
       showToast('Marked as read!')
     } catch (err) {
@@ -420,7 +429,7 @@ export default function BillDetail() {
               <span className={styles.assignmentBannerText}>
                 {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
               </span>
-              {!assignmentCompleted && user && (
+              {!assignmentCompleted && (
                 <button
                   className={styles.markCompleteBtn}
                   onClick={handleMarkComplete}
