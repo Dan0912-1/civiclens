@@ -1,34 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import styles from './Educators.module.css'
 
-const STANDARDS = [
-  {
-    code: 'D2.Civ.1',
-    title: 'Civic and Political Institutions',
-    desc: 'Students use the bill tracker and status progression to understand how institutions like Congress, committees, and state legislatures create and advance legislation.',
-  },
-  {
-    code: 'D2.Civ.2',
-    title: 'Participation and Deliberation',
-    desc: 'The civic actions feature shows students concrete ways to participate: contacting representatives, attending hearings, and registering to vote.',
-  },
-  {
-    code: 'D2.Civ.3',
-    title: 'Processes, Rules, and Laws',
-    desc: 'Bill lifecycle stages (introduced, in committee, passed chamber, enacted) give students a real-time view of how proposals become law.',
-  },
-  {
-    code: 'D2.Civ.6',
-    title: 'Rights and Responsibilities',
-    desc: 'The civil rights topic area surfaces legislation related to constitutional rights, helping students connect abstract principles to current proposals.',
-  },
-  {
-    code: 'D2.Civ.10',
-    title: 'Roles of Citizens',
-    desc: 'Personalized relevance scores and "Take Action" prompts help students see themselves as active participants in governance, not passive observers.',
-  },
-]
-
 const LESSONS = [
   {
     num: '01',
@@ -69,24 +41,6 @@ export default function Educators() {
             aligned to the standards you already teach. Built by a student who
             wanted the tool that didn't exist.
           </p>
-        </div>
-
-        <div className={styles.section}>
-          <h2>C3 Framework Alignment</h2>
-          <p>
-            CapitolKey maps directly to the College, Career, and Civic Life (C3)
-            Framework for Social Studies. Here is how each feature connects to
-            the Civics dimension standards.
-          </p>
-          <div className={styles.standardsGrid}>
-            {STANDARDS.map(s => (
-              <div key={s.code} className={styles.standardCard}>
-                <span className={styles.standardCode}>{s.code}</span>
-                <h3>{s.title}</h3>
-                <p>{s.desc}</p>
-              </div>
-            ))}
-          </div>
         </div>
 
         <div className={styles.section}>
