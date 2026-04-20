@@ -974,12 +974,14 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
 // ─── Main sync orchestrator ────────────────────────────────────────────────
 
 async function runDailySync(supabase, config) {
-  // legiscanApiKey intentionally NOT used in bulk sync anymore. LegiScan's
-  // 30K/month quota is reserved for:
-  //   1. runtime fetch when a student clicks Personalize on a search result
-  //   2. on-demand text backfill when a teacher pins a bill via classroom assignment
+  // LegiScan budget (30K/month free tier) is split between:
+  //   1. Daily catalog sync (~51 getMasterList calls/day = ~1.5K/month) to
+  //      detect change_hash diffs on state bills — invalidates full_text so
+  //      our scrapers re-run on the next backfillStateTexts pass.
+  //   2. Runtime fetch when a student clicks Personalize on a search result.
+  //   3. On-demand text backfill when a teacher pins a bill to a classroom.
   // See api/server.js — fetchBillTextFromLegiScan and pinBillForAssignment.
-  const { congressApiKey, openStatesApiKey, states } = config
+  const { congressApiKey, openStatesApiKey, legiscanApiKey, states } = config
   const startTime = Date.now()
   const results = {}
 
@@ -1018,10 +1020,26 @@ async function runDailySync(supabase, config) {
     // steady state. The function is still exported for one-off use when
     // seeding a brand-new jurisdiction.
 
+    // Phase 3.5: LegiScan change-hash detection.
+    // getMasterList per state (~51 calls) returns every bill's current
+    // change_hash. When it differs from what we stored, syncLegiScanCatalog
+    // nulls the row's full_text so Phase 4 below re-runs our scrapers on it.
+    // Without this, state bills that already have text are never checked for
+    // amendments/substitutes — our scrapers only run on first fetch.
+    if (legiscanApiKey) {
+      try {
+        const lsStates = states || Object.keys(STATE_NAMES)
+        results.legiscanCatalog = await syncLegiScanCatalog(supabase, legiscanApiKey, { states: lsStates })
+      } catch (err) {
+        console.error('[sync] LegiScan catalog sync failed:', err.message)
+        results.legiscanCatalog = { error: err.message }
+      }
+    }
+
     // Phase 4: State text via Open States → legislature PDF/HTML.
-    // With Phase 3 retired, the full Open States daily budget (minus ~100-300
-    // consumed by Phase 2 metadata sync) is available for text fetching.
-    // We ask for 1000 attempts but the backfill breaks early the moment
+    // Runs after Phase 3.5 so any bill whose change_hash just flipped (and
+    // therefore had full_text nulled) gets re-scraped on this same run.
+    // We ask for 3000 attempts but the backfill breaks early the moment
     // Open States returns 429 (see OpenStatesRateLimitError handling) — so
     // on light-Phase-2 days we capture the extra headroom, and on heavy
     // days we stop cleanly without scoring false strikes against bills.

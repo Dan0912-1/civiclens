@@ -3480,7 +3480,10 @@ if (supabase) {
         await runDailySync(supabase, {
           congressApiKey: CONGRESS_API_KEY,
           openStatesApiKey: OPENSTATES_KEY,
-          // legiscanApiKey intentionally omitted — reserved for runtime fallback
+          // LegiScan used daily for change-hash detection (~51 getMasterList
+          // calls/day = ~5% of free-tier 30K/month). Invalidates stale state
+          // text so our scrapers re-run on amended/substituted bills.
+          legiscanApiKey: LEGISCAN_KEY,
         })
         // Refresh text for pinned + top-active federal bills (catches amendments)
         await refreshHotBillTexts(supabase, CONGRESS_API_KEY)
