@@ -707,6 +707,21 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
       }
 
       const sessionInfo = json.masterlist.session
+      // Stale-session safeguard. getMasterList with no session param returns
+      // what LegiScan calls "current", which for biennial states between
+      // regular sessions is the most-recently-adjourned one. Without this
+      // guard, an 2026-04-20 run imports 12k+ TX bills from the 2025 session
+      // that ended in June — real bills, but not fresh, and we'd re-import
+      // them every day forever.
+      //
+      // Skip if LegiScan flags the session as adjourned sine die, OR if the
+      // session ended before last year. Active special sessions still have
+      // sine_die=0 and pass through.
+      const nowYear = new Date().getUTCFullYear()
+      if (sessionInfo.sine_die === 1 || (sessionInfo.year_end && sessionInfo.year_end < nowYear - 1)) {
+        console.log(`[legiscan-catalog] ${state}: skipping — session "${sessionInfo.session_name}" is closed (sine_die=${sessionInfo.sine_die}, year_end=${sessionInfo.year_end})`)
+        continue
+      }
       const session = normalizeLegiScanSession(sessionInfo, state)
       const lsBills = Object.entries(json.masterlist)
         .filter(([k]) => k !== 'session')
