@@ -111,6 +111,19 @@ export default function Home() {
     return () => { clearTimeout(timer); clearTimeout(fadeTimer) }
   }, [billIndex])
 
+  // Warm the Results chunk for returning users so the Suspense lazy-load
+  // doesn't add to the perceived click-to-content latency. This runs after
+  // the hero paints (requestIdleCallback keeps us off the critical path).
+  useEffect(() => {
+    if (!hasExistingProfile) return
+    const schedule = window.requestIdleCallback || (cb => setTimeout(cb, 300))
+    const handle = schedule(() => { import('./Results.jsx').catch(() => {}) })
+    return () => {
+      const cancel = window.cancelIdleCallback || clearTimeout
+      try { cancel(handle) } catch {}
+    }
+  }, [hasExistingProfile])
+
   return (
     <main className={styles.home}>
 

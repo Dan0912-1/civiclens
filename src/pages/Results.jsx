@@ -14,10 +14,26 @@ import styles from './Results.module.css'
 const API_BASE = getApiBase()
 const BILLS_PER_PAGE = 3
 
+// Read a valid profile synchronously from sessionStorage so Results can render
+// its tabs + bill skeletons on the first paint. Returning users have their
+// profile cached here (Results seeds sessionStorage on every successful load,
+// and Profile.jsx writes to it on save). Without this, every navigation to
+// /results hits a multi-hundred-ms blank window while we wait for Supabase —
+// the tabs and skeletons don't render until profile state is non-null.
+function readProfileSync() {
+  try {
+    const raw = sessionStorage.getItem('civicProfile')
+    if (!raw) return null
+    const p = JSON.parse(raw)
+    if (!p?.state || !p?.grade || !p?.interests?.length) return null
+    return p
+  } catch { return null }
+}
+
 export default function Results() {
   const navigate = useNavigate()
   const { user } = useAuth()
-  const [profile, setProfile] = useState(null)
+  const [profile, setProfile] = useState(readProfileSync)
   const [bills, setBills] = useState([])
   const [analyses, setAnalyses] = useState({}) // billId → analysis
   const [loadingBills, setLoadingBills] = useState(true)
@@ -42,38 +58,47 @@ export default function Results() {
     }, [profile])
   )
 
-  // Load profile — try Supabase first for logged-in users, fall back to sessionStorage
+  // Keep profile in sync with Supabase. On mount we've already seeded from
+  // sessionStorage synchronously (see readProfileSync), so this effect's job
+  // is:
+  //   1. For logged-in users: refresh from Supabase in the background so any
+  //      cross-device edit is eventually consistent. Don't block the UI — if
+  //      we already have a cached profile, the tabs + skeletons are already
+  //      painting by the time this resolves.
+  //   2. For anyone without a cached profile: bounce to /profile.
+  //   3. For a logged-in user whose Supabase row is missing but session has
+  //      a profile: write it back so their future devices see it.
   useEffect(() => {
-    async function load() {
+    let cancelled = false
+    async function sync() {
+      const cached = readProfileSync()
       if (user) {
         const cloud = await loadProfile(user.id)
+        if (cancelled) return
         if (cloud) {
           sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
           setProfile(cloud)
           return
         }
-        // No cloud profile — check sessionStorage and sync it to Supabase
-        const stored = sessionStorage.getItem('civicProfile')
-        if (stored) {
-          let localProfile
-          try { localProfile = JSON.parse(stored) } catch { navigate('/profile'); return }
-          setProfile(localProfile)
-          // Save local profile to Supabase so it persists across sessions
-          saveProfile(user.id, localProfile)
+        if (cached) {
+          // No cloud profile yet — persist the cached one so it syncs across
+          // devices. Fire-and-forget so we don't block.
+          saveProfile(user.id, cached)
           return
         }
         // No profile anywhere — send to profile setup
         navigate('/profile')
         return
       }
-      const stored = sessionStorage.getItem('civicProfile')
-      if (!stored) {
-        navigate('/profile')
+      // Anonymous flow
+      if (cached) {
+        setProfile(cached)
         return
       }
-      try { setProfile(JSON.parse(stored)) } catch { navigate('/profile'); return }
+      navigate('/profile')
     }
-    load()
+    sync()
+    return () => { cancelled = true }
   }, [navigate, user])
 
   // Fetch interaction summary and sync local interactions on login
