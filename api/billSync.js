@@ -1476,12 +1476,20 @@ const URL_SYNTHESIZERS = {
   NJ: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session) return []
-    if (type !== 'A' && type !== 'S') return []
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
     const n = b.bill_number
-    const bucket = String(Math.ceil(n / 500) * 500).padStart(4, '0')
-    return [`https://pub.njleg.gov/bills/${yr}/${type}${bucket}/${n}_I1.PDF`]
+    // A/S regular bills use a 500-bucket subdirectory: bills/{yr}/A0500/95_I1.PDF.
+    // Resolutions (AJR/SJR/AR/SR/ACR/SCR) live directly under the type:
+    // bills/{yr}/SJR/95_I1.PDF. Confirmed both with 200s on pub.njleg.gov.
+    if (type === 'A' || type === 'S') {
+      const bucket = String(Math.ceil(n / 500) * 500).padStart(4, '0')
+      return [`https://pub.njleg.gov/bills/${yr}/${type}${bucket}/${n}_I1.PDF`]
+    }
+    if (/^(AJR|SJR|AR|SR|ACR|SCR)$/.test(type)) {
+      return [`https://pub.njleg.gov/bills/${yr}/${type}/${n}_I1.PDF`]
+    }
+    return []
   },
 
   // Minnesota: revisor.mn.gov/bin/bldbill.php?bill={CHAMBER}{num:04}.0.html&session=ls{leg}
@@ -1500,9 +1508,14 @@ const URL_SYNTHESIZERS = {
     return [`https://www.revisor.mn.gov/bin/bldbill.php?bill=${chamber}${num}.0.html&session=ls${leg}`]
   },
 
-  // Oklahoma: oklegislature.gov/cf_pdf/{yyyy}-{yy+1}%20INT/{TYPE}/{TYPE}{num}%20INT.PDF
-  // Session "2026 Regular Session" → 2025-26 (4-digit first year, 2-digit second).
-  // OK biennium starts odd years; 2026 reg session maps to 2025-26 biennium.
+  // Oklahoma: bills vs. resolutions use different subpaths + case conventions.
+  //   Bills (HB/SB):
+  //     cf_pdf/{yyyy}-{yy+1}%20INT/{TYPE}/{TYPE}{num}%20INT.PDF   (caps)
+  //   Resolutions (HR/SR/HJR/SJR/HCR/SCR):
+  //     cf_pdf/{yyyy}-{yy+1}%20int/{h|s}res/{TYPE}{num}%20int.pdf (lowercase,
+  //     shared hres/sres subdirs regardless of simple/joint/concurrent kind)
+  // Session "2026 Regular Session" → 2025-26 (4-digit first year, 2-digit
+  // second). OK biennium starts odd years; 2026 reg session maps to 2025-26.
   OK: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session) return []
@@ -1511,7 +1524,14 @@ const URL_SYNTHESIZERS = {
     const yr = parseInt(m[1], 10)
     const yr1 = yr % 2 === 1 ? yr : yr - 1
     const yy2 = String((yr1 + 1) % 100).padStart(2, '0')
-    return [`https://www.oklegislature.gov/cf_pdf/${yr1}-${yy2}%20INT/${type}/${type}${b.bill_number}%20INT.PDF`]
+    if (type === 'HB' || type === 'SB') {
+      return [`https://www.oklegislature.gov/cf_pdf/${yr1}-${yy2}%20INT/${type}/${type}${b.bill_number}%20INT.PDF`]
+    }
+    if (/^(HR|SR|HJR|SJR|HCR|SCR)$/.test(type)) {
+      const sub = type.startsWith('S') ? 'sres' : 'hres'
+      return [`https://www.oklegislature.gov/cf_pdf/${yr1}-${yy2}%20int/${sub}/${type}${b.bill_number}%20int.pdf`]
+    }
+    return []
   },
 
   // Arizona: azleg.gov/legtext/{NN}leg/{S}R/bills/{TYPE}{num}P.pdf
@@ -1619,15 +1639,27 @@ const URL_SYNTHESIZERS = {
   MI: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session) return []
-    if (type !== 'HB' && type !== 'SB') return []
     const m = String(b.session).match(/^(\d{4})(?:-(\d{4}))?/)
     if (!m) return []
     const yr1 = m[1]
     const yr2 = m[2] || String(parseInt(yr1, 10) + 1)
-    const chamber = type === 'SB' ? 'Senate' : 'House'
-    const code = type === 'SB' ? 'SIB' : 'HIB'
     const num = String(b.bill_number).padStart(4, '0')
-    return [`https://www.legislature.mi.gov/documents/${yr1}-${yr2}/billintroduced/${chamber}/pdf/${yr1}-${code}-${num}.pdf`]
+    // Regular bills → /billintroduced/{Chamber}/pdf/{yr}-{SIB|HIB}-{num}.pdf
+    // Resolutions → /resolutionintroduced/{Chamber}/pdf/{yr}-{SIR|HIR|SCR|HCR|SJR|HJR}-{num}.pdf
+    //   SIR/HIR = simple resolutions, SCR/HCR = concurrent, SJR/HJR = joint.
+    //   Chamber derived from the first letter of the type.
+    if (type === 'HB' || type === 'SB') {
+      const chamber = type === 'SB' ? 'Senate' : 'House'
+      const code = type === 'SB' ? 'SIB' : 'HIB'
+      return [`https://www.legislature.mi.gov/documents/${yr1}-${yr2}/billintroduced/${chamber}/pdf/${yr1}-${code}-${num}.pdf`]
+    }
+    if (/^(HR|SR|HCR|SCR|HJR|SJR)$/.test(type)) {
+      const chamber = type.startsWith('S') ? 'Senate' : 'House'
+      // HR → HIR, SR → SIR; HCR/SCR/HJR/SJR stay as-is in the URL code
+      const code = type === 'HR' ? 'HIR' : type === 'SR' ? 'SIR' : type
+      return [`https://www.legislature.mi.gov/documents/${yr1}-${yr2}/resolutionintroduced/${chamber}/pdf/${yr1}-${code}-${num}.pdf`]
+    }
+    return []
   },
 
   // West Virginia: wvlegislature.gov/Bill_Text_HTML/{year}_Sessions/RS/bills/{TYPE}{num}%20INTR.htm
@@ -1749,7 +1781,14 @@ const URL_SYNTHESIZERS = {
   CA: (b) => {
     const type = (b.bill_type || '').toUpperCase()
     if (!type || !b.session || !b.bill_number) return []
-    const s = String(b.session).match(/^(\d{8})/)?.[1]
+    // Session may arrive as "20252026" (Open States) or "2025-2026 Regular
+    // Session" / "2025-2026 1st Extraordinary Session" (LegiScan). Accept
+    // both — collapse the hyphenated form to 8 digits before building the URL.
+    let s = String(b.session).match(/^(\d{8})/)?.[1]
+    if (!s) {
+      const m = String(b.session).match(/^(\d{4})-(\d{4})/)
+      if (m) s = m[1] + m[2]
+    }
     if (!s) return []
     return [`https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=${s}0${type}${b.bill_number}`]
   },
