@@ -125,8 +125,16 @@ export async function addBookmark(userId, billId, billData) {
     const { error } = await supabase
       .from('bookmarks')
       .upsert(row, { onConflict: 'user_id,bill_id' })
+    if (error) {
+      // Log the actual Supabase error so a silent "Could not save" toast can
+      // be diagnosed instead of failing invisibly. Most common causes:
+      // missing unique(user_id, bill_id) constraint, RLS policy rejection,
+      // or a stale auth session.
+      console.error('[bookmarks] upsert error:', error.code, error.message, error.details)
+    }
     return !error
-  } catch {
+  } catch (err) {
+    console.error('[bookmarks] network error, queueing:', err?.message)
     // Network failure — queue for retry when back online.
     // Pass the computed savedStatusStage through so the replay path can
     // stamp it too; otherwise offline-created bookmarks would lose the
@@ -154,8 +162,12 @@ export async function removeBookmark(userId, billId) {
       .delete()
       .eq('user_id', userId)
       .eq('bill_id', billId)
+    if (error) {
+      console.error('[bookmarks] delete error:', error.code, error.message, error.details)
+    }
     return !error
-  } catch {
+  } catch (err) {
+    console.error('[bookmarks] delete network error, queueing:', err?.message)
     // Network failure — queue for retry when back online
     enqueue('supabase:bookmarks', 'DELETE', { user_id: userId, bill_id: billId })
     return false

@@ -228,26 +228,58 @@ export async function peekClassroom(code, signal) {
   return resp.json()
 }
 
-// Session storage helpers for anonymous classroom access
+// Persistent storage for anonymous classroom access. Uses localStorage so a
+// student who joins once sees the classroom again after closing the browser —
+// matches the stable anonymous_id in localStorage, which is what the server
+// uses to attribute completions back to them.
+//
+// Migration: older builds wrote to sessionStorage. On first read we pull any
+// existing sessionStorage entries into localStorage so returning users don't
+// lose their joined classrooms after the upgrade.
 const JOINED_KEY = 'ck_joined_classrooms'
 
-export function getJoinedClassrooms() {
+function readStoredJoined() {
   try {
-    return JSON.parse(sessionStorage.getItem(JOINED_KEY) || '[]')
-  } catch { return [] }
+    const ls = JSON.parse(localStorage.getItem(JOINED_KEY) || '[]')
+    if (ls.length) return ls
+  } catch {}
+  try {
+    // One-shot migration from the legacy sessionStorage location
+    const ss = sessionStorage.getItem(JOINED_KEY)
+    if (ss) {
+      localStorage.setItem(JOINED_KEY, ss)
+      sessionStorage.removeItem(JOINED_KEY)
+      return JSON.parse(ss) || []
+    }
+  } catch {}
+  return []
+}
+
+function writeStoredJoined(list) {
+  try {
+    localStorage.setItem(JOINED_KEY, JSON.stringify(list))
+  } catch {
+    // localStorage may be unavailable (private mode). Fall back to
+    // sessionStorage so the current session still works.
+    try { sessionStorage.setItem(JOINED_KEY, JSON.stringify(list)) } catch {}
+  }
+}
+
+export function getJoinedClassrooms() {
+  return readStoredJoined()
 }
 
 export function addJoinedClassroom(code, name, classroomId, studentName) {
-  const joined = getJoinedClassrooms().filter(c => c.code !== code)
+  const joined = readStoredJoined().filter(c => c.code !== code)
   const entry = { code, name, classroomId, joinedAt: new Date().toISOString() }
   if (studentName) entry.studentName = studentName
   joined.push(entry)
-  sessionStorage.setItem(JOINED_KEY, JSON.stringify(joined))
+  writeStoredJoined(joined)
 }
 
 export function removeJoinedClassroom(code) {
-  const joined = getJoinedClassrooms().filter(c => c.code !== code)
-  sessionStorage.setItem(JOINED_KEY, JSON.stringify(joined))
+  const joined = readStoredJoined().filter(c => c.code !== code)
+  writeStoredJoined(joined)
 }
 
 // Stable per-browser id for no-account students. Persisted in localStorage

@@ -778,6 +778,95 @@
   background: #15263a;
 }
 
+.billTextSection {
+  margin-top: var(--space-2xl);
+  padding: var(--space-lg);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
+}
+
+.billTextHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.billTextHeading {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  color: var(--navy);
+  margin: 0;
+}
+
+.billTextMeta {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.billTextCloseBtn {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.billTextCloseBtn:hover {
+  color: var(--navy);
+  border-color: var(--navy);
+}
+
+.billTextBody {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: var(--space-md);
+  background: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--navy);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.billTextFooter {
+  margin-top: var(--space-sm);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.billTextFooter a {
+  color: var(--amber);
+  text-decoration: underline;
+}
+
+.billTextSkeleton {
+  min-height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  gap: 8px;
+}
+
 .error {
   text-align: center;
   padding: var(--space-2xl);

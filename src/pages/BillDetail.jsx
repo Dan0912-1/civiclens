@@ -76,6 +76,9 @@ export default function BillDetail() {
   const [assignClassrooms, setAssignClassrooms] = useState([])
   const [assignLoading, setAssignLoading] = useState(false)
   const assignRef = useRef(null)
+  const [fullText, setFullText] = useState(null) // { text, wordCount, version }
+  const [fullTextLoading, setFullTextLoading] = useState(false)
+  const [fullTextUnavailable, setFullTextUnavailable] = useState(false)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -91,6 +94,9 @@ export default function BillDetail() {
     setBookmarked(false)
     setBookmarkBusy(false)
     setHistoryOpen(false)
+    setFullText(null)
+    setFullTextLoading(false)
+    setFullTextUnavailable(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -187,6 +193,42 @@ export default function BillDetail() {
     }
   }
 
+  // Load the full bill text from our own storage (bill_text_cache + bills
+  // table populated by our scrapers). If we don't have it locally, we'll
+  // surface a fallback CTA pointing at the authoritative source on
+  // Congress.gov or the state legislature. This keeps the reading flow in the
+  // app instead of bouncing users out to a third-party site.
+  async function handleOpenFullText() {
+    if (fullText) return
+    setFullTextLoading(true)
+    setFullTextUnavailable(false)
+    try {
+      const legiscanId = bill?.legiscan_bill_id
+        || new URLSearchParams(window.location.search).get('legiscan_id')
+        || ''
+      const url = legiscanId
+        ? `${API_BASE}/api/bill/${congress}/${type}/${number}/text?legiscan_id=${legiscanId}`
+        : `${API_BASE}/api/bill/${congress}/${type}/${number}/text`
+      const resp = await fetch(url, { signal: AbortSignal.timeout(15000) })
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data?.text) {
+          setFullText({ text: data.text, wordCount: data.wordCount || 0, version: data.version || '' })
+        } else {
+          setFullTextUnavailable(true)
+        }
+      } else {
+        // 404 = no local text available; anything else = transient. Either way
+        // we surface the external link as the fallback.
+        setFullTextUnavailable(true)
+      }
+    } catch {
+      setFullTextUnavailable(true)
+    } finally {
+      setFullTextLoading(false)
+    }
+  }
+
   async function handleMarkComplete() {
     if (!assignmentId || !assignmentClassroomId || assignmentCompleted || markCompleteBusy) return
     setMarkCompleteBusy(true)
@@ -209,9 +251,9 @@ export default function BillDetail() {
         await markCompleteAnon(assignmentClassroomId, assignmentId, elapsed)
       }
       setAssignmentCompleted(true)
-      showToast('Marked as read!')
+      showToast('Assignment marked done — your teacher can see it')
     } catch (err) {
-      showToast(err.message || 'Could not mark as read', 'error')
+      showToast(err.message || 'Could not mark assignment done', 'error')
     } finally {
       setMarkCompleteBusy(false)
     }
@@ -427,7 +469,9 @@ export default function BillDetail() {
           <div className={styles.assignmentBanner}>
             <div className={styles.assignmentBannerMain}>
               <span className={styles.assignmentBannerText}>
-                {assignmentCompleted ? 'Assignment completed' : 'Assigned by your class'}
+                {assignmentCompleted
+                  ? '✓ You finished this assignment'
+                  : 'Assigned by your class — mark done when you finish reading'}
               </span>
               {!assignmentCompleted && (
                 <button
@@ -435,8 +479,9 @@ export default function BillDetail() {
                   onClick={handleMarkComplete}
                   disabled={markCompleteBusy}
                   aria-busy={markCompleteBusy || undefined}
+                  title="Tells your teacher you've read the bill"
                 >
-                  {markCompleteBusy ? 'Saving…' : 'Mark as Read'}
+                  {markCompleteBusy ? 'Saving…' : 'Mark assignment done'}
                 </button>
               )}
             </div>
@@ -773,11 +818,64 @@ export default function BillDetail() {
           </div>
           <button
             className={styles.congressLink}
-            onClick={() => openInAppBrowser(billUrl)}
+            onClick={handleOpenFullText}
+            disabled={fullTextLoading || !!fullText}
           >
-            Read full bill text →
+            {fullTextLoading
+              ? 'Loading text…'
+              : fullText
+              ? 'Text loaded below ↓'
+              : 'Read full bill text →'}
           </button>
         </div>
+
+        {/* In-app bill text — pulled from our own storage so the reader stays
+            in CapitolKey. Falls back to the external source when we don't
+            have the text locally. */}
+        {(fullText || fullTextUnavailable) && (
+          <section className={styles.billTextSection} aria-label="Full bill text">
+            <div className={styles.billTextHeaderRow}>
+              <h3 className={styles.billTextHeading}>Full bill text</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {fullText && (
+                  <span className={styles.billTextMeta}>
+                    {fullText.wordCount.toLocaleString()} words
+                    {fullText.version ? ` · ${fullText.version}` : ''}
+                  </span>
+                )}
+                <button
+                  className={styles.billTextCloseBtn}
+                  onClick={() => { setFullText(null); setFullTextUnavailable(false) }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            {fullText ? (
+              <>
+                <div className={styles.billTextBody}>{fullText.text}</div>
+                <p className={styles.billTextFooter}>
+                  Cached from the authoritative source.{' '}
+                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billUrl) }}>
+                    View original →
+                  </a>
+                </p>
+              </>
+            ) : (
+              <>
+                <div className={styles.billTextSkeleton}>
+                  Full text isn't available in-app for this bill yet.
+                </div>
+                <p className={styles.billTextFooter}>
+                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billUrl) }}>
+                    Read it on the original source →
+                  </a>
+                </p>
+              </>
+            )}
+          </section>
+        )}
       </div>
     </main>
   )

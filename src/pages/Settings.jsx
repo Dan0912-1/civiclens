@@ -110,6 +110,19 @@ export default function Settings() {
         </div>
 
         <div className={styles.section}>
+          <h2>Your profile</h2>
+          <p className={styles.muted}>
+            Update your state, age, interests, and situation — the answers behind your personalized bills.
+          </p>
+          <button className={styles.linkBtn} onClick={() => navigate('/profile')}>
+            Edit my profile →
+          </button>
+          <button className={styles.linkBtn} onClick={() => navigate('/bookmarks')}>
+            Saved bills →
+          </button>
+        </div>
+
+        <div className={styles.section}>
           <h2>Legal</h2>
           <button className={styles.linkBtn} onClick={() => navigate('/privacy')}>
             Privacy Policy

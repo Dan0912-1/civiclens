@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 import FeaturedBills from '../components/FeaturedBills'
 import styles from './Home.module.css'
 
@@ -46,12 +47,19 @@ const TOPICS = [
 
 export default function Home() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [billIndex, setBillIndex] = useState(0)
   const [typedTitle, setTypedTitle] = useState('')
   const [showSummary, setShowSummary] = useState(false)
   const [fading, setFading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const intervalRef = useRef(null)
+  // Treat a logged-in user OR an anonymous sessionStorage profile as "returning"
+  // so the hero CTA re-labels from "Get Started" → "See my bills" and skips the
+  // questionnaire. Read once at mount; the CTA doesn't need reactive updates.
+  const hasExistingProfile = Boolean(user) || (() => {
+    try { return Boolean(sessionStorage.getItem('civicProfile')) } catch { return false }
+  })()
 
   function handleSearch(e) {
     e.preventDefault()
@@ -61,10 +69,11 @@ export default function Home() {
     }
   }
 
-  // Skip the brief blank flash from /results bouncing anonymous users back
-  // to /profile. If we already have a stored profile, head straight to the
-  // feed; otherwise route to the questionnaire ourselves.
+  // Skip the questionnaire for returning users. Logged-in users have their
+  // profile in Supabase — /results loads it on mount and only falls back to
+  // /profile if none exists. Anonymous users' profile lives in sessionStorage.
   function handleExploreBills() {
+    if (user) { navigate('/results'); return }
     const hasProfile = !!sessionStorage.getItem('civicProfile')
     navigate(hasProfile ? '/results' : '/profile')
   }
@@ -122,15 +131,18 @@ export default function Home() {
           <div className={styles.ctaRow}>
             <button
               className={styles.ctaPrimary}
-              onClick={() => navigate('/profile')}
+              onClick={handleExploreBills}
             >
-              Get Started →
+              {hasExistingProfile ? 'See my bills' : 'Get Started'}
             </button>
             <button
               className={styles.ctaSecondary}
-              onClick={handleExploreBills}
+              onClick={() => {
+                const q = searchQuery.trim()
+                navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search')
+              }}
             >
-              Explore Bills
+              Search Bills
             </button>
           </div>
           <div className={styles.trustStrip}>
@@ -261,12 +273,16 @@ export default function Home() {
       {/* CTA */}
       <section className={styles.ctaSection}>
         <h2>Start tracking bills that affect you.</h2>
-        <p>No account needed. Set your state and interests to get started.</p>
+        <p>
+          {hasExistingProfile
+            ? 'Welcome back. Jump back into your feed — or update your answers in Settings.'
+            : 'No account needed. Set your state and interests to get started.'}
+        </p>
         <button
           className={styles.ctaPrimary}
-          onClick={() => navigate('/profile')}
+          onClick={handleExploreBills}
         >
-          Get Started →
+          {hasExistingProfile ? 'See my bills' : 'Get Started'}
         </button>
       </section>
 

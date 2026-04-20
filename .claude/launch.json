@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Frontend (Vite)",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--host", "127.0.0.1"],
       "port": 5173,
       "autoPort": true
     },

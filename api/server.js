@@ -1778,6 +1778,56 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
   }
 })
 
+// Serve the full bill text from our own storage so the "Read full bill text"
+// button can render in-app instead of punting users out to Congress.gov or
+// LegiScan. Checks bill_text_cache first (the persistent cache populated by
+// the personalization pipeline) then falls back to bills.full_text (populated
+// by the scrapers). Returns 404 when we don't have the text locally so the
+// client can degrade to the external link.
+app.get('/api/bill/:congress/:type/:number/text', billDetailLimiter, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Storage unavailable' })
+  const { congress, type, number } = req.params
+  const legiscanId = req.query.legiscan_id
+
+  try {
+    // 1) bill_text_cache — keyed the same way the personalization path keys it
+    const cacheKey = legiscanId
+      ? `bt-ls-${legiscanId}`
+      : `bt-${congress}-${type.toLowerCase()}-${number}`
+    const cached = await getBillTextFromSupabase(cacheKey)
+    if (cached?.bill_text && cached.bill_text.length > 200) {
+      return res.json({
+        text: cached.bill_text,
+        wordCount: cached.word_count || cached.bill_text.split(/\s+/).length,
+        version: cached.version || '',
+        source: 'cache',
+      })
+    }
+
+    // 2) bills.full_text (scrapers write here for state + selected federal bills)
+    const q = supabase
+      .from('bills')
+      .select('full_text, text_version, text_word_count')
+    const { data } = legiscanId
+      ? await q.eq('legiscan_bill_id', Number(legiscanId)).maybeSingle()
+      : await q.eq('congress_bill_id', `${congress}-${type.toLowerCase()}-${number}`).maybeSingle()
+
+    if (data?.full_text && data.full_text.length > 200) {
+      return res.json({
+        text: data.full_text,
+        wordCount: data.text_word_count || data.full_text.split(/\s+/).length,
+        version: data.text_version || '',
+        source: 'bills',
+      })
+    }
+
+    return res.status(404).json({ error: 'No local text available' })
+  } catch (err) {
+    console.error('[bill-text] fetch error:', err.message)
+    return res.status(500).json({ error: 'Failed to fetch bill text' })
+  }
+})
+
 // ─── Shared personalization helpers ─────────────────────────────────────────
 
 // Tightened v6 system prompt — same intent as v5 but ~35% shorter to cut input
@@ -4962,9 +5012,16 @@ function deriveStatusLabel(bill) {
 
 // Rough 1-10 "Civic Impact" score for anonymous visitors.
 // Weights: recency (40%) + legislative stage (40%) + youth-topic match (20%)
+//
+// Recency is based on `latestActionDate` (actual legislative action) not
+// Congress.gov's `updateDate` (record-touch timestamp). Those diverge — a bill
+// whose record gets re-indexed by Congress.gov has a fresh updateDate but a
+// stale last action, and we don't want stale bills surfacing in "Moving this
+// week" just because Congress.gov happened to touch the record.
 function computeCivicImpactScore(bill, topicTag) {
-  const daysSinceUpdate = Math.max(0, (Date.now() - new Date(bill.updateDate || 0).getTime()) / 86400000)
-  const recencyScore = Math.max(0, 1 - daysSinceUpdate / 60) // 0 at 60+ days old
+  const actionDate = bill.latestActionDate || bill.updateDate || 0
+  const daysSinceAction = Math.max(0, (Date.now() - new Date(actionDate).getTime()) / 86400000)
+  const recencyScore = Math.max(0, 1 - daysSinceAction / 30) // 0 at 30+ days old
 
   const action = (bill.latestAction || '').toLowerCase()
   let stageScore = 0.3
@@ -4983,11 +5040,16 @@ function computeCivicImpactScore(bill, topicTag) {
 
 async function buildFeaturedBills() {
   if (!supabase) return null
-  // Pull the most-recently-updated curated bills across all categories
+  // Pull recently-acted-on curated bills across all categories. Order by
+  // latest_action_date (actual legislative action) rather than update_date
+  // (Congress.gov record-touch), and apply a hard 14-day cutoff so bills that
+  // Congress.gov merely re-indexed don't surface as "Moving this week".
+  const movingCutoff = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10)
   const { data, error } = await supabase
     .from('curated_bills')
     .select('*')
-    .order('update_date', { ascending: false })
+    .gte('latest_action_date', movingCutoff)
+    .order('latest_action_date', { ascending: false })
     .limit(120)
   if (error || !data || !data.length) return null
 
