@@ -3,14 +3,40 @@ import { getApiBase } from './api'
 import { enqueue } from './offlineQueue'
 import { normalizeStage, stagesEqual } from './billStage'
 
+// Hard cap how long we'll wait for Supabase reads. supabase-js internally
+// calls auth.getSession() to attach the JWT, and that call goes through a
+// navigator.locks-based mutex that can wedge indefinitely when a prior
+// session was orphaned (hot-reload, Safari tab-freeze, a sibling tab still
+// holding the lock). A wedged read here shows up to the user as a blank
+// /results page because Results stays in the skeleton state while profile
+// is null.
+//
+// See src/lib/supabase.js (getSessionSafe, withAuthTimeout) for the rest of
+// the pattern. We apply the same pattern to storage reads so a wedged lock
+// can never hang the UI past this budget.
+const PROFILE_READ_TIMEOUT_MS = 4000
+
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    promise,
+    new Promise(resolve => setTimeout(() => resolve(fallback), ms)),
+  ])
+}
+
 export async function loadProfile(userId) {
   if (!supabase) return null
   try {
-    const { data, error } = await supabase
+    const query = supabase
       .from('user_profiles')
       .select('profile')
       .eq('id', userId)
       .single()
+    const result = await withTimeout(query, PROFILE_READ_TIMEOUT_MS, { __timeout: true })
+    if (result?.__timeout) {
+      console.warn('[loadProfile] Supabase read timed out — falling back to sessionStorage')
+      return null
+    }
+    const { data, error } = result
     if (error || !data) return null
     return data.profile
   } catch {
