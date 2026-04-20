@@ -8,7 +8,13 @@
  *
  * Fills full_text for every bill missing it, prioritizing the cheapest source:
  *   1. Federal via Congress.gov (unlimited) — runs until done
- *   2. State via Open States + legislature HTML scrape (quota: 1,000/day)
+ *   2. State via URL synthesizer (zero quota for 42 states) + Open States
+ *      hybrid fallback (~500-3000/day quota for bills synth can't hit).
+ *
+ * State pass picks up ALL missing-text state bills regardless of source —
+ * including LegiScan-only rows with no openstates_id, which the daily cron's
+ * backfillStateTexts can't see. Runs 5 workers in parallel since fetchBillText
+ * is stateless per-bill and synth-state scraping has no quota limit.
  *
  * Safe to re-run — it always picks up bills still missing text.
  */
@@ -121,44 +127,83 @@ async function fillFederalText() {
   return { attempted, filled }
 }
 
-// ─── State (Open States + HTML scrape — 1,000/day quota) ─────────────────────
-async function fillStateText(maxBills = 900) {
-  if (!OPENSTATES_KEY) {
-    console.log('[state] Skipping — no OPENSTATES_API_KEY')
-    return
+// ─── State (synth + Open States hybrid) ──────────────────────────────────────
+// Picks up every missing-text state bill regardless of source — LegiScan-only
+// rows with no openstates_id are still fillable via URL synthesizer for the
+// 42 synth-covered states. Runs 5 workers in parallel; fetchBillText is
+// stateless per-bill and synth-state scraping has no quota limit.
+//
+// Cooldown: skips bills that have failed >= 5 times within the last 14 days
+// (consistent with backfillStateTexts' shelving logic).
+async function fillStateText() {
+  const CONCURRENCY = 5
+  const PER_WORKER_DELAY_MS = 750
+  const COOLDOWN_STRIKES = 5
+  const COOLDOWN_CUTOFF = new Date(Date.now() - 14 * 86400000).toISOString()
+
+  // Paginate — Supabase caps .limit() at ~1000 rows silently.
+  console.log('[state] Fetching candidate list...')
+  const PAGE = 1000
+  const candidates = []
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error } = await supabase
+      .from('bills')
+      .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, legiscan_bill_id, text_fetch_attempts, text_fetch_last_at')
+      .neq('jurisdiction', 'US')
+      .is('full_text', null)
+      .range(from, from + PAGE - 1)
+    if (error) { console.error('[state] query error:', error.message); return }
+    if (!page?.length) break
+    candidates.push(...page)
+    if (page.length < PAGE) break
   }
 
-  const { data: bills, error } = await supabase
-    .from('bills')
-    .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text')
-    .eq('source', 'openstates')
-    .is('full_text', null)
-    .not('openstates_id', 'is', null)
-    .order('updated_at', { ascending: false })
-    .limit(maxBills)
+  const eligible = candidates.filter((b) => {
+    const attempts = b.text_fetch_attempts || 0
+    if (attempts < COOLDOWN_STRIKES) return true
+    return !b.text_fetch_last_at || b.text_fetch_last_at < COOLDOWN_CUTOFF
+  })
 
-  if (error) { console.error('[state] query error', error.message); return }
-  if (!bills?.length) { console.log('[state] No bills need text'); return }
+  const shelved = candidates.length - eligible.length
+  console.log(`[state] ${candidates.length} candidates, ${eligible.length} eligible (${shelved} in cooldown)`)
+  if (!eligible.length) return { attempted: 0, filled: 0 }
 
-  console.log(`[state] Fetching text for ${bills.length} bills (budget ~900/day)`)
-  let filled = 0
+  // Shuffle so workers don't all pile on one state (TX alone is ~11k of the gap)
+  for (let i = eligible.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[eligible[i], eligible[j]] = [eligible[j], eligible[i]]
+  }
+
+  const startedAt = Date.now()
   let attempted = 0
+  let filled = 0
 
-  for (const bill of bills) {
-    attempted++
-    try {
-      const text = await fetchBillText(supabase, bill)
-      if (text) filled++
-      if (attempted % 25 === 0) {
-        console.log(`[state] ${attempted}/${bills.length} attempted, ${filled} filled so far`)
+  async function worker(id) {
+    while (true) {
+      const bill = eligible.pop()
+      if (!bill) return
+      attempted++
+      try {
+        const text = await fetchBillText(supabase, bill)
+        if (text) filled++
+      } catch (err) {
+        console.error(`[state w${id}] ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}:`, err.message)
       }
-      await sleep(1600) // ~38/min (under 40/min limit)
-    } catch (err) {
-      console.error(`[state] ${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}:`, err.message)
+      if (attempted % 100 === 0) {
+        const elapsedMin = (Date.now() - startedAt) / 60000
+        const rate = attempted / ((Date.now() - startedAt) / 1000)
+        const etaMin = (eligible.length / (attempted / elapsedMin)).toFixed(1)
+        const pct = (((candidates.length - shelved - eligible.length) / (candidates.length - shelved)) * 100).toFixed(1)
+        console.log(`[state] ${attempted} attempted, ${filled} filled — ${rate.toFixed(1)}/s — ${elapsedMin.toFixed(1)}m elapsed, ~${etaMin}m remaining (${pct}%)`)
+      }
+      await sleep(PER_WORKER_DELAY_MS)
     }
   }
 
-  console.log(`[state] Done: ${filled}/${attempted} bills filled with text`)
+  await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => worker(i)))
+
+  const elapsedMin = ((Date.now() - startedAt) / 60000).toFixed(1)
+  console.log(`[state] Done in ${elapsedMin}m: ${filled}/${attempted} bills filled`)
   return { attempted, filled }
 }
 
