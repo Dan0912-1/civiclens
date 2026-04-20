@@ -1871,6 +1871,42 @@ const URL_SYNTHESIZERS = {
       : String(b.bill_number)
     return [`https://iga.in.gov/pdf-documents/${ga}/${year}/${chamber}/${folder}/${type}${num}/${type}${num}.01.INTR.pdf`]
   },
+
+  // Montana: bearbeta.legmt.gov JSON-API endpoint returns the bill PDF as
+  //   application/octet-stream (the same endpoint Montana's own Bill Explorer
+  //   uses). Our DB has 1,761 MT bills missing text and no scraper before
+  //   this entry; Open States returns only the legmt.gov index page, not
+  //   the canonical PDF.
+  //
+  // URL:  /docs/v1/documents/getBillText?legislatureOrdinal={N}&sessionOrdinal={YEAR}{1|2}&billType={HB|SB|HJ|SJ|HR|SR}&billNumber={num}
+  //
+  // Mappings:
+  //   - legOrd: 69 for 2025 biennium. MT is biennial starting odd years; we
+  //     derive from the session-year with (year - 1889)/2 + 1 = 69 for 2025.
+  //   - sessionOrd: YYYY + 1 for regular, YYYY + 2/3/... for specials. We
+  //     default to 1 (regular). If LegiScan ever emits a "Special Session"
+  //     row we don't have a safe way to derive the index — skip.
+  //   - billType: MT only publishes six types — HB/SB/HJ/SJ/HR/SR. Our
+  //     LegiScan-sourced rows sometimes carry HJR/SJR/HCR/SCR; remap
+  //     HJR→HJ, SJR→SJ, HCR→HJ, SCR→SJ (MT has no concurrent resolutions;
+  //     best-effort fallback returns the joint-resolution equivalent, which
+  //     may 404 for rows that were truly mis-classified).
+  MT: (b) => {
+    let type = (b.bill_type || '').toUpperCase()
+    if (!type || !b.session || !b.bill_number) return []
+    const TYPE_REMAP = { HJR: 'HJ', SJR: 'SJ', HCR: 'HJ', SCR: 'SJ' }
+    type = TYPE_REMAP[type] || type
+    if (!/^(HB|SB|HJ|SJ|HR|SR)$/.test(type)) return []
+    // Pull the 4-digit session year (e.g., "2025 Regular Session" → 2025,
+    // "69th Regular Session" → no match, bail).
+    const yr = String(b.session).match(/^(\d{4})/)?.[1]
+    if (!yr) return []
+    const year = parseInt(yr, 10)
+    if (year % 2 === 0) return [] // MT legislature only meets odd years
+    const legOrd = Math.floor((year - 1889) / 2) + 1 // 1889→1, 2025→69
+    const sessionOrd = `${year}1` // regular session suffix = 1
+    return [`https://bearbeta.legmt.gov/docs/v1/documents/getBillText?legislatureOrdinal=${legOrd}&sessionOrdinal=${sessionOrd}&billType=${type}&billNumber=${b.bill_number}`]
+  },
 }
 
 async function fetchBillText(supabase, bill) {
