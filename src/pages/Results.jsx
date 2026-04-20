@@ -425,13 +425,22 @@ export default function Results() {
   const hasMore = allFilteredBills.length > visibleCount
 
   // Profile is still resolving (Supabase loadProfile for signed-in users can
-  // take a few seconds on slow networks). Render a skeleton instead of null
-  // so the user doesn't see a blank screen between mount and the first
-  // setProfile (or the navigate('/profile') redirect).
+  // take a few seconds on slow networks). Render the full page shell —
+  // heading, Federal/State tab bar, and skeleton bill cards — so the
+  // perceived layout is identical to the populated state instead of a blank
+  // wait. Without this the first paint is empty until profile arrives.
   if (!profile) {
     return (
       <main className={styles.page}>
         <div className={styles.container}>
+          <div className={styles.header}>
+            <h1 className={styles.heading}>Your Legislation</h1>
+            <p className={styles.subhead}>Real bills, explained for your life.</p>
+          </div>
+          <div className={styles.tabBar}>
+            <button className={`${styles.tab} ${styles.tabActive}`} disabled>Federal</button>
+            <button className={styles.tab} disabled>State</button>
+          </div>
           <div className={styles.loadingGrid}>
             {[...Array(3)].map((_, i) => (
               <div key={i} className={styles.skeleton} style={{ animationDelay: `${i * 0.1}s` }} />

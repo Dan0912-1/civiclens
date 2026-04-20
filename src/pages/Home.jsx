@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { loadProfile } from '../lib/userProfile'
 import FeaturedBills from '../components/FeaturedBills'
 import styles from './Home.module.css'
 
@@ -111,18 +112,42 @@ export default function Home() {
     return () => { clearTimeout(timer); clearTimeout(fadeTimer) }
   }, [billIndex])
 
-  // Warm the Results chunk for returning users so the Suspense lazy-load
-  // doesn't add to the perceived click-to-content latency. This runs after
-  // the hero paints (requestIdleCallback keeps us off the critical path).
+  // Warm the Results chunk AND prefetch the profile into sessionStorage so
+  // that when the user clicks "See my bills" the target page has everything
+  // it needs to paint tabs + skeletons on the first frame. Without the
+  // profile prefetch, a fresh-tab logged-in user hits /results with an empty
+  // sessionStorage and Results has to wait on Supabase again before showing
+  // the tabs — that's the "few seconds blank" you see on the live site.
+  //
+  // Runs after the hero paints (requestIdleCallback keeps us off the critical
+  // path). Fire-and-forget — failures just mean Results falls back to its
+  // own load path, same as before.
   useEffect(() => {
     if (!hasExistingProfile) return
+    let cancelled = false
     const schedule = window.requestIdleCallback || (cb => setTimeout(cb, 300))
-    const handle = schedule(() => { import('./Results.jsx').catch(() => {}) })
+    const handle = schedule(async () => {
+      // Parse the Results chunk up-front.
+      import('./Results.jsx').catch(() => {})
+
+      // Hydrate sessionStorage from Supabase for logged-in users who don't
+      // have a cached profile yet (e.g. fresh tab or cold PWA boot).
+      if (!user) return
+      try {
+        if (sessionStorage.getItem('civicProfile')) return
+      } catch { return }
+      try {
+        const cloud = await loadProfile(user.id)
+        if (cancelled || !cloud) return
+        sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
+      } catch {}
+    })
     return () => {
+      cancelled = true
       const cancel = window.cancelIdleCallback || clearTimeout
       try { cancel(handle) } catch {}
     }
-  }, [hasExistingProfile])
+  }, [hasExistingProfile, user])
 
   return (
     <main className={styles.home}>
