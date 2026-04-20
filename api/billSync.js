@@ -1256,7 +1256,18 @@ const URL_SYNTHESIZERS = {
     if (!type || !b.session) return []
     const ga = String(b.session).replace(/(?:st|nd|rd|th)$/i, '')
     const num = String(b.bill_number).padStart(4, '0')
-    return [`https://ilga.gov/documents/legislation/${ga}/${type}/PDF/${ga}00${type}${num}.pdf`]
+    // Directory uses the full bill_type, but the filename uses an abbreviated
+    // 2-letter document code for joint resolutions. Non-joint types (HB/SB/
+    // HR/SR) keep their type as-is. Confirmed live on ilga.gov for the 104th
+    // GA: HJR→HJ, SJR→SJ, HJRCA→HC, SJRCA→SC.
+    const FILE_CODE = { HJR: 'HJ', SJR: 'SJ', HJRCA: 'HC', SJRCA: 'SC' }
+    const filecode = FILE_CODE[type] || type
+    // Some bills are only published as the "latest version" (post-amendment)
+    // with an "lv" suffix; try plain introduced first, fall back to lv.
+    return [
+      `https://www.ilga.gov/documents/legislation/${ga}/${type}/PDF/${ga}00${filecode}${num}.pdf`,
+      `https://www.ilga.gov/documents/legislation/${ga}/${type}/PDF/${ga}00${filecode}${num}lv.pdf`,
+    ]
   },
 
   // North Dakota: ndlegis.gov/files/resource/{assembly}-{year}/library/{type}{num}.pdf
