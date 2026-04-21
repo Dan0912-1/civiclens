@@ -728,6 +728,27 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
         .map(([, b]) => b)
         .filter(b => b && b.bill_id)
 
+      // Second staleness guard: biennial states (TX, ND, MT) keep sine_die=0
+      // through the off-year, so the flag alone lets adjourned sessions
+      // through. Check the newest last_action_date in the masterlist — if
+      // every bill has been quiet for 90+ days, the session is effectively
+      // closed even if LegiScan hasn't flipped the flag yet. Active
+      // legislatures show action within a couple weeks; TX/ND last acted
+      // 300+ days ago when this guard was added.
+      const STALE_DAYS = 90
+      const actionDates = lsBills
+        .map(b => b.last_action_date)
+        .filter(d => d && d !== '0000-00-00')
+        .sort()
+      const newestAction = actionDates[actionDates.length - 1]
+      if (newestAction) {
+        const daysSince = Math.floor((Date.now() - new Date(newestAction).getTime()) / 86400000)
+        if (daysSince > STALE_DAYS) {
+          console.log(`[legiscan-catalog] ${state}: skipping — session "${sessionInfo.session_name}" has no activity in ${daysSince}d (newest action ${newestAction}, sine_die=${sessionInfo.sine_die})`)
+          continue
+        }
+      }
+
       // Read existing rows to dedupe. Match by (bill_type, bill_number)
       // ignoring session so we catch openstates-sourced rows with a
       // different session string format. Supabase caps single SELECTs at
