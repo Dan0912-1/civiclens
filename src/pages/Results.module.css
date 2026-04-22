@@ -296,6 +296,36 @@
   color: var(--navy);
 }
 
+/* Session notice — shown on the State tab when the user's state is adjourned
+   for the year or only meets biennially. Replaces the bill grid. */
+.sessionNotice {
+  background: var(--cream-dark, #efe9dc);
+  border-left: 3px solid var(--amber);
+  padding: var(--space-lg);
+  margin: var(--space-lg) 0;
+  border-radius: 1px;
+  line-height: 1.55;
+}
+
+.sessionNotice strong {
+  display: block;
+  color: var(--navy);
+  font-family: var(--font-heading, 'Playfair Display', serif);
+  font-size: 1.15rem;
+  margin-bottom: var(--space-sm);
+}
+
+.sessionNotice p {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.sessionNoticeHint {
+  color: var(--text-muted) !important;
+  font-size: 0.88rem !important;
+}
+
 /* Disclaimer */
 .disclaimer {
   margin-top: var(--space-3xl);

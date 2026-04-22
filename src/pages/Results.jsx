@@ -9,6 +9,7 @@ import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } f
 import usePullToRefresh from '../hooks/usePullToRefresh'
 import BillCard from '../components/BillCard.jsx'
 import { makeBillId, stripBillForPersonalize } from '../lib/billId'
+import { getSessionNote, isStateInSession } from '../lib/stateSessions'
 import styles from './Results.module.css'
 
 const API_BASE = getApiBase()
@@ -392,11 +393,25 @@ export default function Results() {
     Object.values(analyses).map(a => a.topic_tag).filter(Boolean)
   )], [analyses])
 
+  // When the user's state isn't in session (adjourned for the year or biennial
+  // off-year), the State tab shows an explanatory note instead of bills. See
+  // src/lib/stateSessions.js for the 50-state status table.
+  const stateSessionNote = useMemo(
+    () => (profile?.state ? getSessionNote(profile.state) : null),
+    [profile?.state]
+  )
+  const userStateInSession = useMemo(
+    () => (profile?.state ? isStateInSession(profile.state) : true),
+    [profile?.state]
+  )
+
   const allFilteredBills = useMemo(() => {
-    // First filter by tab (federal vs state)
+    // First filter by tab (federal vs state). Suppress state bills entirely
+    // when the user's state isn't in session — the note below explains why.
     let tabFiltered = bills.filter(b =>
       activeTab === 'federal' ? !b.isStateBill : b.isStateBill
     )
+    if (activeTab === 'state' && !userStateInSession) tabFiltered = []
     // Then filter by topic tag
     const filtered = activeFilter === 'All'
       ? tabFiltered
@@ -416,7 +431,7 @@ export default function Results() {
       const scoreB = relB != null ? (algB * 0.5) + ((relB / 10) * 0.5) : algB
       return scoreB - scoreA
     })
-  }, [activeTab, activeFilter, bills, analyses])
+  }, [activeTab, activeFilter, bills, analyses, userStateInSession])
 
   const filteredBills = useMemo(() =>
     allFilteredBills.slice(0, visibleCount)
@@ -544,8 +559,20 @@ export default function Results() {
           </button>
         </div>
 
+        {/* State-not-in-session notice — shown instead of the topic filter +
+            bill list when the user's state is adjourned or off-year biennial. */}
+        {activeTab === 'state' && stateSessionNote && (
+          <div className={styles.sessionNotice} role="status">
+            <strong>{stateSessionNote.title}</strong>
+            <p>{stateSessionNote.body}</p>
+            <p className={styles.sessionNoticeHint}>
+              Switch to the Federal tab to see bills that are active right now.
+            </p>
+          </div>
+        )}
+
         {/* Filter bar */}
-        {topicTags.length > 1 && (
+        {!(activeTab === 'state' && stateSessionNote) && topicTags.length > 1 && (
           <div className={styles.filterBar}>
             {topicTags.map(tag => (
               <button
@@ -560,7 +587,7 @@ export default function Results() {
         )}
 
         {/* Loading state */}
-        {loadingBills && (
+        {loadingBills && !(activeTab === 'state' && stateSessionNote) && (
           <div className={styles.loadingGrid}>
             {[...Array(3)].map((_, i) => (
               <div key={i} className={styles.skeleton} style={{ animationDelay: `${i * 0.1}s` }} />
@@ -569,7 +596,7 @@ export default function Results() {
         )}
 
         {/* Error */}
-        {billError && (
+        {billError && !(activeTab === 'state' && stateSessionNote) && (
           <div className={styles.error}>
             <p>{billError}</p>
             <button className={styles.retryBtn} onClick={fetchBills}>Try again</button>
@@ -586,7 +613,7 @@ export default function Results() {
         )}
 
         {/* Bill cards */}
-        {!loadingBills && !billError && (
+        {!loadingBills && !billError && !(activeTab === 'state' && stateSessionNote) && (
           <>
             <div className={styles.meta}>
               Showing {filteredBills.length} of {allFilteredBills.length} bill{allFilteredBills.length !== 1 ? 's' : ''}
@@ -630,7 +657,7 @@ export default function Results() {
             1. Service degraded (external sources failed) → show retry
             2. Topic filter narrowed everything out → suggest reset to "All"
             3. Nothing in this tab at all → suggest the other tab           */}
-        {!loadingBills && !billError && filteredBills.length === 0 && (
+        {!loadingBills && !billError && filteredBills.length === 0 && !(activeTab === 'state' && stateSessionNote) && (
           <div className={styles.empty}>
             {billsMeta?.degraded ? (
               <>
