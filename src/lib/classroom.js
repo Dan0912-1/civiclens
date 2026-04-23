@@ -338,6 +338,31 @@ export async function joinClassroomAnon(code, displayName) {
   return data.classroom
 }
 
+// Anonymous leave — best-effort call to remove the server-side row so a
+// student who leaves doesn't linger in the teacher's roster as a ghost
+// member. Network failure is non-fatal; the local cleanup still happens.
+export async function leaveClassroomAnon(classroomId) {
+  const url = `${API}/api/classroom/${classroomId}/leave-anon`
+  const body = JSON.stringify({ anonymousId: getOrCreateAnonymousId() })
+  try {
+    const resp = await apiFetch(url, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      throw new Error(err.error || 'Failed to leave classroom')
+    }
+  } catch (err) {
+    if (err.name === 'AbortError' || err.name === 'TypeError') {
+      enqueue(url, 'DELETE', body)
+      return
+    }
+    throw err
+  }
+}
+
 export async function markCompleteAnon(classroomId, assignmentId, timeSpentSec) {
   const url = `${API}/api/classroom/${classroomId}/assignments/${assignmentId}/complete-anon`
   const body = JSON.stringify({

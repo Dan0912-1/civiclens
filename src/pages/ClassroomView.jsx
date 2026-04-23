@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { peekClassroom, removeJoinedClassroom } from '../lib/classroom'
+import * as Sentry from '@sentry/react'
+import { peekClassroom, removeJoinedClassroom, leaveClassroomAnon } from '../lib/classroom'
 import styles from './ClassroomDetail.module.css'
 
 export default function ClassroomView() {
@@ -36,7 +37,14 @@ export default function ClassroomView() {
     }
   }, [code])
 
-  function handleLeave() {
+  async function handleLeave() {
+    // Remove the server-side row first so the teacher's roster shrinks
+    // immediately. Failure here is non-fatal — we still clear local state
+    // so the student isn't stuck on a classroom they just tried to leave.
+    if (classroom?.id) {
+      try { await leaveClassroomAnon(classroom.id) }
+      catch (err) { Sentry.captureException(err, { tags: { scope: 'classroom:leave-anon' } }) }
+    }
     removeJoinedClassroom(code)
     navigate('/classroom')
   }

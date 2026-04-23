@@ -5496,6 +5496,42 @@ app.delete('/api/classroom/:id/leave', classroomLimiter, async (req, res) => {
   }
 })
 
+// Leave classroom as an anonymous student. Mirror of /leave for no-account
+// members — without this the row stayed in classroom_members forever and
+// inflated the teacher's student count after a student left.
+app.delete('/api/classroom/:id/leave-anon', classroomLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    // Accept anonymousId via body for DELETE with JSON body, or query string
+    // for environments that strip DELETE bodies (some proxies do).
+    const raw = (req.body && req.body.anonymousId) || req.query.anonymousId
+    const anonymousId = typeof raw === 'string' ? raw.trim() : ''
+    if (!ANON_ID_RE.test(anonymousId)) return res.status(400).json({ error: 'anonymousId must be a UUID' })
+
+    // Cascade from classroom_members → assignment_completions on delete is
+    // via the assignment_id FK only, not anonymous_id. Clear completions
+    // explicitly so a re-join with the same anon id doesn't inherit stale
+    // completion rows from the prior membership.
+    const { data: assignments } = await supabase.from('classroom_assignments')
+      .select('id').eq('classroom_id', req.params.id)
+    const assignmentIds = (assignments || []).map(a => a.id)
+    if (assignmentIds.length > 0) {
+      await supabase.from('assignment_completions')
+        .delete().eq('anonymous_id', anonymousId).in('assignment_id', assignmentIds)
+    }
+
+    await supabase.from('classroom_members')
+      .delete()
+      .eq('classroom_id', req.params.id)
+      .eq('anonymous_id', anonymousId)
+      .eq('role', 'student')
+    res.json({ left: true })
+  } catch (err) {
+    console.error('[classroom] leave-anon error:', err.message)
+    res.status(500).json({ error: 'Failed to leave classroom' })
+  }
+})
+
 // List members (teacher only — names only, no interaction data)
 app.get('/api/classroom/:id/members', classroomLimiter, async (req, res) => {
   try {
