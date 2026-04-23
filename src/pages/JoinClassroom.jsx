@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import * as Sentry from '@sentry/react'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
 import { joinClassroom, peekClassroom, addJoinedClassroom, joinClassroomAnon } from '../lib/classroom'
@@ -49,8 +50,14 @@ export default function JoinClassroom() {
           // Server-side join creates a classroom_members row keyed on the
           // student's anonymous_id so the teacher's analytics count this
           // join. Network failure here shouldn't block the student from
-          // viewing the class, so log and continue to the local join.
-          try { await joinClassroomAnon(trimmed) } catch (e) { console.warn('[classroom] anon join failed:', e.message) }
+          // viewing the class; the original bug was teachers seeing zero
+          // students because this call silently fell through, so surface
+          // failures to Sentry rather than burying them in console.
+          try {
+            await joinClassroomAnon(trimmed)
+          } catch (err) {
+            Sentry.captureException(err, { tags: { scope: 'classroom:join-anon' } })
+          }
           addJoinedClassroom(trimmed, data.classroom.name, data.classroom.id)
           navigate(`/classroom/view/${trimmed}`)
         }
@@ -66,7 +73,11 @@ export default function JoinClassroom() {
     if (!firstName.trim()) { setError('First name is required'); return }
     const studentName = `${firstName.trim()} ${lastName.trim()}`.trim()
     const trimmed = code.trim().toUpperCase()
-    try { await joinClassroomAnon(trimmed, studentName) } catch (err) { console.warn('[classroom] anon join failed:', err.message) }
+    try {
+      await joinClassroomAnon(trimmed, studentName)
+    } catch (err) {
+      Sentry.captureException(err, { tags: { scope: 'classroom:join-anon' } })
+    }
     addJoinedClassroom(trimmed, pendingData.classroom.name, pendingData.classroom.id, studentName)
     navigate(`/classroom/view/${trimmed}`)
   }
