@@ -1,4 +1,4 @@
-// State legislative session status as of 2026-04-22.
+// State legislative session status as of 2026-05-08.
 // Sources: NCSL 2026 calendar, MultiState, LegiScan, state legislative sites.
 //
 // Update this file as sessions adjourn or convene. The data drives the State
@@ -12,15 +12,15 @@
 export const STATE_SESSIONS = {
   AL: { status: 'adjourned', adjournedOn: '2026-04-09', nextConvenes: '2027-01' },
   AK: { status: 'in_session', scheduledAdjournment: '2026-05-20' },
-  AZ: { status: 'in_session', scheduledAdjournment: '2026-04-25' },
-  AR: { status: 'in_session', scheduledAdjournment: '2026-05-07', note: 'Fiscal session' },
+  AZ: { status: 'adjourned', adjournedOn: '2026-04-25', nextConvenes: '2027-01' },
+  AR: { status: 'adjourned', adjournedOn: '2026-04-29', nextConvenes: '2027-01', note: 'Fiscal session' },
   CA: { status: 'in_session', scheduledAdjournment: '2026-08-31' },
   CO: { status: 'in_session', scheduledAdjournment: '2026-05-13' },
-  CT: { status: 'in_session', scheduledAdjournment: '2026-05-06' },
+  CT: { status: 'adjourned', adjournedOn: '2026-05-06', nextConvenes: '2027-01' },
   DE: { status: 'in_session', scheduledAdjournment: '2026-06-30' },
   FL: { status: 'adjourned', adjournedOn: '2026-03-13', nextConvenes: '2027-01' },
   GA: { status: 'adjourned', adjournedOn: '2026-04-06', nextConvenes: '2027-01' },
-  HI: { status: 'in_session', scheduledAdjournment: '2026-05-08' },
+  HI: { status: 'adjourned', adjournedOn: '2026-05-08', nextConvenes: '2027-01' },
   ID: { status: 'adjourned', adjournedOn: '2026-04-02', nextConvenes: '2027-01' },
   IL: { status: 'in_session', scheduledAdjournment: '2026-05-31' },
   IN: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },
@@ -28,7 +28,7 @@ export const STATE_SESSIONS = {
   KS: { status: 'adjourned', adjournedOn: '2026-04-11', nextConvenes: '2027-01' },
   KY: { status: 'adjourned', adjournedOn: '2026-04-15', nextConvenes: '2027-01' },
   LA: { status: 'in_session', scheduledAdjournment: '2026-06-01' },
-  ME: { status: 'in_session', scheduledAdjournment: '2026-04-29' },
+  ME: { status: 'adjourned', adjournedOn: '2026-04-29', nextConvenes: '2027-01' },
   MD: { status: 'adjourned', adjournedOn: '2026-04-13', nextConvenes: '2027-01' },
   MA: { status: 'in_session', scheduledAdjournment: '2026-07-31', yearRound: true },
   MI: { status: 'in_session', yearRound: true },
@@ -51,10 +51,10 @@ export const STATE_SESSIONS = {
   RI: { status: 'in_session', scheduledAdjournment: '2026-06-30' },
   SC: { status: 'in_session', scheduledAdjournment: '2026-05-07' },
   SD: { status: 'adjourned', adjournedOn: '2026-03-30', nextConvenes: '2027-01' },
-  TN: { status: 'in_session', scheduledAdjournment: '2026-04-24' },
+  TN: { status: 'adjourned', adjournedOn: '2026-04-23', nextConvenes: '2027-01' },
   TX: { status: 'biennial_off_year', nextConvenes: '2027-01' },
   UT: { status: 'adjourned', adjournedOn: '2026-03-06', nextConvenes: '2027-01' },
-  VT: { status: 'in_session', scheduledAdjournment: '2026-05-08' },
+  VT: { status: 'adjourned', adjournedOn: '2026-05-08', nextConvenes: '2027-01' },
   VA: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },
   WA: { status: 'adjourned', adjournedOn: '2026-03-12', nextConvenes: '2027-01' },
   WV: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },

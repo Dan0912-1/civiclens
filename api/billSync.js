@@ -1337,15 +1337,20 @@ const URL_SYNTHESIZERS = {
     return [`https://docs.legis.wisconsin.gov/document/proposaltext/${yr}/REG/${type}${b.bill_number}.pdf`]
   },
 
-  // New York: legislation.nysenate.gov/pdf/bills/{year}/{TYPE}{number}
-  // Note: no .pdf extension — the URL serves PDF with application/pdf content-type
-  // directly. Session stored as "2025-2026"; use the first year.
+  // New York: assembly.state.ny.us print view serves bill text in HTML for
+  // both Senate (S/J/K) and Assembly (A/E) prefixes. We previously used
+  // legislation.nysenate.gov/pdf/bills/{year}/... — that endpoint works in
+  // the open internet but Railway's egress IPs cannot complete a TCP connect
+  // to it (UND_ERR_CONNECT_TIMEOUT on every attempt), so the synth never
+  // returned text in prod. The Assembly print URL lives on different infra
+  // and is the same URL Open States returns in its text/html version links.
+  // Session stored as "2025-2026"; the term parameter is the start year.
   NY: (b) => {
     const type = (b.bill_type || '').toUpperCase()
-    if (!type || !b.session) return []
+    if (!type || !b.session || !b.bill_number) return []
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
-    return [`https://legislation.nysenate.gov/pdf/bills/${yr}/${type}${b.bill_number}`]
+    return [`https://assembly.state.ny.us/leg/?sh=printbill&bn=${type}${b.bill_number}&term=${yr}&Text=Y`]
   },
 
   // Texas: capitol.texas.gov/tlodocs/{session-code}/billtext/pdf/{TYPE}{num:05}I.pdf
