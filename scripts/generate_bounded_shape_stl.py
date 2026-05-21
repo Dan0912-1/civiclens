@@ -3,15 +3,18 @@ Generate an STL for a calculus demonstration of the solid whose base is
 the region bounded by y = tan^2(x) and y = 4 - x^2, with square
 cross-sections perpendicular to the x-axis.
 
-The solid is split into N discrete slabs along x with gaps between them.
-Each slab is a chunk of the continuous solid: its two flat end-faces
-(at x = x_a and x = x_b) are perfect squares showing the cross-section
-at that x, and its sides/top follow tan^2(x), 4 - x^2, and
-s(x) = (4 - x^2) - tan^2(x). This way the slabs taper naturally and
-never overshoot the lens-shaped base, while still clearly displaying
-square cross-sections at the slab boundaries.
+The solid is rendered as N discrete square-prism slabs spaced along x
+with gaps between them. Each slab is a rectangular box with constant
+square cross-section sized by its midpoint x_c:
 
-All slabs sit on a flat base plate shaped like the bounded region.
+    y in [tan^2(x_c), 4 - x_c^2]
+    z in [0, s(x_c)]   where s(x_c) = (4 - x_c^2) - tan^2(x_c)
+
+To make the slabs print reliably and never overhang the base, the base
+plate is the union of the smooth lens-shaped region and each slab's
+rectangular footprint. Each slab box also extends down through the base
+plate so the whole part is one connected solid -- the slabs are
+anchored across the full base thickness, not just attached at z = 0.
 """
 
 import math
@@ -19,9 +22,8 @@ import os
 import struct
 
 # ---------- parameters ----------
-N_SLABS = 5                   # number of slabs (odd -> centered slab at x = 0)
+N_SLABS = 5                   # number of box slabs (odd -> centered slab at x = 0)
 SLAB_FRACTION = 0.75          # slab x-thickness as a fraction of slab-to-slab spacing
-N_SAMPLES_PER_SLAB = 24       # x samples within each slab for curve fidelity
 SCALE_MM_PER_UNIT = 10.0
 BASE_THICKNESS_MM = 3.0
 OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "bounded_shape.stl")
@@ -72,42 +74,30 @@ def add_quad(a, b, c, d):
     add_tri(a, c, d)
 
 
-def add_curved_slab(x_a: float, x_b: float) -> None:
-    """Add a chunk of the continuous solid between x = x_a and x = x_b.
-
-    Side faces follow y = tan^2(x) and y = 4 - x^2; the top follows
-    z = s(x). The two end-caps at x_a and x_b are exact squares of side
-    s(x_a) and s(x_b) respectively, showing the cross-section.
-    """
-    xs_loc = [x_a + (x_b - x_a) * i / (N_SAMPLES_PER_SLAB - 1) for i in range(N_SAMPLES_PER_SLAB)]
-
-    for i in range(N_SAMPLES_PER_SLAB - 1):
-        x1, x2 = xs_loc[i], xs_loc[i + 1]
-        lo1, lo2 = lower(x1), lower(x2)
-        hi1, hi2 = upper(x1), upper(x2)
-        s1, s2 = hi1 - lo1, hi2 - lo2
-
-        # Bottom (z = 0), outward normal -z.
-        add_quad(P(x1, lo1, 0.0), P(x1, hi1, 0.0), P(x2, hi2, 0.0), P(x2, lo2, 0.0))
-        # Top (z = s(x)), outward normal +z.
-        add_quad(P(x1, lo1, s1), P(x2, lo2, s2), P(x2, hi2, s2), P(x1, hi1, s1))
-        # Front face (y = tan^2(x)), outward normal -y.
-        add_quad(P(x1, lo1, 0.0), P(x2, lo2, 0.0), P(x2, lo2, s2), P(x1, lo1, s1))
-        # Back face (y = 4 - x^2), outward normal +y.
-        add_quad(P(x1, hi1, 0.0), P(x1, hi1, s1), P(x2, hi2, s2), P(x2, hi2, 0.0))
-
-    # End cap at x = x_a: square in y-z plane, outward normal -x.
-    lo_a, hi_a = lower(x_a), upper(x_a)
-    s_a = hi_a - lo_a
-    add_quad(P(x_a, lo_a, 0.0), P(x_a, hi_a, 0.0), P(x_a, hi_a, s_a), P(x_a, lo_a, s_a))
-
-    # End cap at x = x_b: square in y-z plane, outward normal +x.
-    lo_b, hi_b = lower(x_b), upper(x_b)
-    s_b = hi_b - lo_b
-    add_quad(P(x_b, lo_b, 0.0), P(x_b, lo_b, s_b), P(x_b, hi_b, s_b), P(x_b, hi_b, 0.0))
+def add_box(xmin: float, xmax: float, ymin: float, ymax: float, zmin: float, zmax: float):
+    v000 = P(xmin, ymin, zmin)
+    v100 = P(xmax, ymin, zmin)
+    v110 = P(xmax, ymax, zmin)
+    v010 = P(xmin, ymax, zmin)
+    v001 = P(xmin, ymin, zmax)
+    v101 = P(xmax, ymin, zmax)
+    v111 = P(xmax, ymax, zmax)
+    v011 = P(xmin, ymax, zmax)
+    # Bottom (z = zmin), outward normal -z. CCW seen from below.
+    add_quad(v000, v010, v110, v100)
+    # Top (z = zmax), outward normal +z.
+    add_quad(v001, v101, v111, v011)
+    # -y face.
+    add_quad(v000, v100, v101, v001)
+    # +y face.
+    add_quad(v010, v011, v111, v110)
+    # -x face.
+    add_quad(v000, v001, v011, v010)
+    # +x face.
+    add_quad(v100, v110, v111, v101)
 
 
-# ---- slabs ----
+# ---- slabs (box from z = -base to z = s(x_c) so they're anchored through the base) ----
 dx = (2.0 * x_root) / N_SLABS
 slab_width = dx * SLAB_FRACTION
 gap_width = dx - slab_width
@@ -118,18 +108,25 @@ print(
     f"gap = {gap_width * S:.2f} mm"
 )
 
-slab_heights: list[tuple[float, float]] = []
+Z_BOT = -BASE_THICKNESS_UNITS
+
 for xc in slab_centers:
     x_a = xc - slab_width / 2.0
     x_b = xc + slab_width / 2.0
-    add_curved_slab(x_a, x_b)
-    s_a = upper(x_a) - lower(x_a)
-    s_b = upper(x_b) - lower(x_b)
-    slab_heights.append((s_a * S, s_b * S))
-    print(f"  slab at x = {xc:+.3f}: end-cap squares {s_a * S:.2f} mm and {s_b * S:.2f} mm")
+    y_lo = lower(xc)
+    y_hi = upper(xc)
+    side = y_hi - y_lo
+    if side <= 0:
+        continue
+    add_box(x_a, x_b, y_lo, y_hi, Z_BOT, side)
+    print(f"  slab at x = {xc:+.3f}: {side * S:.2f} mm square, {slab_width * S:.2f} mm thick")
 
 
-# ---- base plate: bounded region extruded down to z = -base_thickness ----
+# ---- base plate: smooth lens region extruded down to z = -base_thickness ----
+# Slabs overlap the base in z = [-base, 0] and in xy where their boxes extend
+# beyond the lens, so the slicer's boolean union gives a base with rectangular
+# tongues at each slab position. Every slab footprint is therefore fully
+# supported by the base.
 N_BASE = 400
 xs_base = [-x_root + 2.0 * x_root * i / (N_BASE - 1) for i in range(N_BASE)]
 y_lo_b = [lower(x) for x in xs_base]
@@ -138,20 +135,15 @@ y_lo_b[0] = y_hi_b[0] = 0.5 * (y_lo_b[0] + y_hi_b[0])
 y_lo_b[-1] = y_hi_b[-1] = 0.5 * (y_lo_b[-1] + y_hi_b[-1])
 
 Z_TOP = 0.0
-Z_BOT = -BASE_THICKNESS_UNITS
 
 for i in range(N_BASE - 1):
     x1, x2 = xs_base[i], xs_base[i + 1]
     lo1, lo2 = y_lo_b[i], y_lo_b[i + 1]
     hi1, hi2 = y_hi_b[i], y_hi_b[i + 1]
 
-    # Top of base (z = 0), outward normal +z.
     add_quad(P(x1, lo1, Z_TOP), P(x2, lo2, Z_TOP), P(x2, hi2, Z_TOP), P(x1, hi1, Z_TOP))
-    # Bottom of base (z = -t), outward normal -z.
     add_quad(P(x1, lo1, Z_BOT), P(x1, hi1, Z_BOT), P(x2, hi2, Z_BOT), P(x2, lo2, Z_BOT))
-    # Lower-curve side wall.
     add_quad(P(x1, lo1, Z_BOT), P(x2, lo2, Z_BOT), P(x2, lo2, Z_TOP), P(x1, lo1, Z_TOP))
-    # Upper-curve side wall.
     add_quad(P(x1, hi1, Z_BOT), P(x1, hi1, Z_TOP), P(x2, hi2, Z_TOP), P(x2, hi2, Z_BOT))
 
 
@@ -176,7 +168,7 @@ def normalize(v):
 
 
 with open(OUT_PATH, "wb") as f:
-    header = b"square-cross-section demo with curved-side slabs".ljust(80, b"\0")
+    header = b"square-cross-section demo with box slabs anchored through base".ljust(80, b"\0")
     f.write(header)
     f.write(struct.pack("<I", len(triangles)))
     for tri in triangles:
