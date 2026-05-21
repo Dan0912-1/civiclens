@@ -166,8 +166,14 @@ print(
 )
 
 for xc in slab_centers:
-    y_low = lower(xc)
-    y_high = upper(xc)
+    # The slab's footprint in x at z = 0 spans [xc - xhalf_bot, xc + xhalf_bot]
+    # (including the fillet flare). For the slab to stay strictly inside the
+    # bounded region across that whole x-range, use the cross-section at the
+    # outermost x of the footprint (since lower(x) grows and upper(x) shrinks
+    # away from 0). Both functions are even, so we just use |x|.
+    x_outer = abs(xc) + xhalf_bot
+    y_low = lower(x_outer)
+    y_high = upper(x_outer)
     side = y_high - y_low
     if side < MIN_SLAB_HEIGHT_UNITS:
         print(f"  skipping slab at x = {xc:.3f}: side {side * S:.2f} mm < min {MIN_SLAB_HEIGHT_MM} mm")
