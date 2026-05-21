@@ -23,9 +23,12 @@ import struct
 
 # ---------- parameters ----------
 N_SLABS = 5                   # number of box slabs (odd -> centered slab at x = 0)
-SLAB_FRACTION = 0.75          # slab x-thickness as a fraction of slab-to-slab spacing
+SLAB_FRACTION = 0.75          # base slab x-thickness as a fraction of slab-to-slab spacing
+EDGE_TAPER = 0.55             # how aggressively to thin the outer slabs (0 = no taper, 1 = full taper)
+MIN_TAPER_FACTOR = 0.45       # outer slab x-width never drops below this fraction
 SCALE_MM_PER_UNIT = 10.0
 BASE_THICKNESS_MM = 3.0
+MIN_SLAB_HEIGHT_MM = 4.0
 OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "bounded_shape.stl")
 
 
@@ -56,6 +59,7 @@ print(f"Intersection at x = +/- {x_root:.6f}")
 
 S = SCALE_MM_PER_UNIT
 BASE_THICKNESS_UNITS = BASE_THICKNESS_MM / S
+MIN_SLAB_HEIGHT_UNITS = MIN_SLAB_HEIGHT_MM / S
 
 
 def P(x: float, y: float, z: float) -> tuple[float, float, float]:
@@ -97,29 +101,37 @@ def add_box(xmin: float, xmax: float, ymin: float, ymax: float, zmin: float, zma
     add_quad(v100, v110, v111, v101)
 
 
-# ---- slabs (box from z = -base to z = s(x_c) so they're anchored through the base) ----
+# ---- slabs (box from z = -base to z = s(x_outer) so they're anchored through the base) ----
+# Outer slabs are tapered narrower in x, and each slab's square cross-section is
+# sized by its outer x edge so the slab fits strictly inside the lens base.
 dx = (2.0 * x_root) / N_SLABS
-slab_width = dx * SLAB_FRACTION
-gap_width = dx - slab_width
 slab_centers = [-x_root + (i + 0.5) * dx for i in range(N_SLABS)]
 
-print(
-    f"Slab spacing = {dx * S:.2f} mm, slab thickness = {slab_width * S:.2f} mm, "
-    f"gap = {gap_width * S:.2f} mm"
-)
+print(f"Slab spacing = {dx * S:.2f} mm")
 
 Z_BOT = -BASE_THICKNESS_UNITS
 
+
+def slab_x_width(xc: float) -> float:
+    factor = max(MIN_TAPER_FACTOR, 1.0 - EDGE_TAPER * (abs(xc) / x_root) ** 2)
+    return SLAB_FRACTION * dx * factor
+
+
 for xc in slab_centers:
-    x_a = xc - slab_width / 2.0
-    x_b = xc + slab_width / 2.0
-    y_lo = lower(xc)
-    y_hi = upper(xc)
+    w = slab_x_width(xc)
+    x_a = xc - w / 2.0
+    x_b = xc + w / 2.0
+    # Size the square cross-section by the slab's outer x edge so the slab box
+    # (footprint in x-y at every z) fits strictly inside the lens base region.
+    x_outer = max(abs(x_a), abs(x_b))
+    y_lo = lower(x_outer)
+    y_hi = upper(x_outer)
     side = y_hi - y_lo
-    if side <= 0:
+    if side < MIN_SLAB_HEIGHT_UNITS:
+        print(f"  skipping slab at x = {xc:+.3f}: side {side * S:.2f} mm < min {MIN_SLAB_HEIGHT_MM} mm")
         continue
     add_box(x_a, x_b, y_lo, y_hi, Z_BOT, side)
-    print(f"  slab at x = {xc:+.3f}: {side * S:.2f} mm square, {slab_width * S:.2f} mm thick")
+    print(f"  slab at x = {xc:+.3f}: {side * S:.2f} mm square, {w * S:.2f} mm thick")
 
 
 # ---- base plate: smooth lens region extruded down to z = -base_thickness ----
