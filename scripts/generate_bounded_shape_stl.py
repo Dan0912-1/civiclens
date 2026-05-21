@@ -1,9 +1,12 @@
 """
 Generate an STL of the 2D region bounded by y = tan^2(x) and y = 4 - x^2,
-extruded along z for 3D printing.
+together with its reflection across the x-axis, extruded along z for 3D
+printing.
 
-The two curves intersect symmetrically near x = +/- 1.0424.
-Over that interval, 4 - x^2 is the upper curve and tan^2(x) is the lower curve.
+The two curves intersect symmetrically near x = +/- 1.0410. Over that
+interval, 4 - x^2 is the upper curve and tan^2(x) is the lower curve.
+Reflecting the region across y = 0 produces a second lens below the
+x-axis; the two lenses meet at the origin.
 """
 
 import math
@@ -62,20 +65,18 @@ ys_upper[0] = ys_lower[0] = 0.5 * (ys_upper[0] + ys_lower[0])
 ys_upper[-1] = ys_lower[-1] = 0.5 * (ys_upper[-1] + ys_lower[-1])
 
 
-# Scale to mm; center the shape on the XY origin.
-y_min = min(ys_lower)
-y_max = max(ys_upper)
-y_center = 0.5 * (y_min + y_max)
-
-
+# Scale to mm; the shape is mirrored across the x-axis, so leave y centered on 0.
 def to_mm_xy(x: float, y: float) -> tuple[float, float]:
-    return (x * SCALE_MM_PER_UNIT, (y - y_center) * SCALE_MM_PER_UNIT)
+    return (x * SCALE_MM_PER_UNIT, y * SCALE_MM_PER_UNIT)
 
 
-# Build the 2D polygon: upper curve left->right, then lower curve right->left.
-# Skip duplicate endpoints when stitching.
+# Upper-lobe polygon edges.
 poly_top = [to_mm_xy(xs[i], ys_upper[i]) for i in range(N_SAMPLES)]
 poly_bot = [to_mm_xy(xs[i], ys_lower[i]) for i in range(N_SAMPLES)]
+# Reflected lobe (mirror across y = 0): the old "upper" boundary becomes the
+# new lower boundary, and vice versa.
+poly_top_m = [(x, -y) for (x, y) in poly_bot]
+poly_bot_m = [(x, -y) for (x, y) in poly_top]
 
 
 # ---------- build mesh ----------
@@ -95,58 +96,44 @@ def add_quad(a, b, c, d):
     add_tri(a, c, d)
 
 
-# Bottom face (z = 0), normal pointing -z, so wind clockwise when viewed from +z.
-# We'll use strips between consecutive x samples.
-for i in range(N_SAMPLES - 1):
-    ux1, uy1 = poly_top[i]
-    ux2, uy2 = poly_top[i + 1]
-    lx1, ly1 = poly_bot[i]
-    lx2, ly2 = poly_bot[i + 1]
-    # Quad in 2D: upper_i, upper_{i+1}, lower_{i+1}, lower_i
-    # For bottom face (z=0) viewed from below (-z), reverse winding.
-    a = (ux1, uy1, 0.0)
-    b = (ux2, uy2, 0.0)
-    c = (lx2, ly2, 0.0)
-    d = (lx1, ly1, 0.0)
-    # CW when viewed from +z => CCW from -z (outward normal -z): reverse order.
-    add_quad(a, d, c, b)
+def add_lobe(poly_top, poly_bot):
+    """Add the closed extruded mesh for one lobe to the global triangle list."""
+    n = len(poly_top)
+    for i in range(n - 1):
+        ux1, uy1 = poly_top[i]
+        ux2, uy2 = poly_top[i + 1]
+        lx1, ly1 = poly_bot[i]
+        lx2, ly2 = poly_bot[i + 1]
+        # Bottom face (z = 0), outward normal -z.
+        a = (ux1, uy1, 0.0); b = (ux2, uy2, 0.0)
+        c = (lx2, ly2, 0.0); d = (lx1, ly1, 0.0)
+        add_quad(a, d, c, b)
+        # Top face (z = T), outward normal +z.
+        a_t = (ux1, uy1, T); b_t = (ux2, uy2, T)
+        c_t = (lx2, ly2, T); d_t = (lx1, ly1, T)
+        add_quad(a_t, b_t, c_t, d_t)
 
-    # Top face (z = T), outward normal +z: keep CCW from +z.
-    a_t = (ux1, uy1, T)
-    b_t = (ux2, uy2, T)
-    c_t = (lx2, ly2, T)
-    d_t = (lx1, ly1, T)
-    add_quad(a_t, b_t, c_t, d_t)
+    # Side wall along upper boundary.
+    for i in range(n - 1):
+        p1x, p1y = poly_top[i]
+        p2x, p2y = poly_top[i + 1]
+        a = (p1x, p1y, 0.0); b = (p2x, p2y, 0.0)
+        c = (p2x, p2y, T);   d = (p1x, p1y, T)
+        add_quad(a, b, c, d)
 
-
-# Side walls along the upper curve (between successive top-points).
-# Outward normal points roughly +y (upward in 2D plane).
-for i in range(N_SAMPLES - 1):
-    p1x, p1y = poly_top[i]
-    p2x, p2y = poly_top[i + 1]
-    # Quad: (p1, z=0) -> (p2, z=0) -> (p2, z=T) -> (p1, z=T)
-    a = (p1x, p1y, 0.0)
-    b = (p2x, p2y, 0.0)
-    c = (p2x, p2y, T)
-    d = (p1x, p1y, T)
-    add_quad(a, b, c, d)
+    # Side wall along lower boundary (reversed winding for outward normal).
+    for i in range(n - 1):
+        p1x, p1y = poly_bot[i]
+        p2x, p2y = poly_bot[i + 1]
+        a = (p1x, p1y, 0.0); b = (p2x, p2y, 0.0)
+        c = (p2x, p2y, T);   d = (p1x, p1y, T)
+        add_quad(a, d, c, b)
 
 
-# Side walls along the lower curve. Outward normal roughly -y.
-# Reverse order so the outward normal points the other way.
-for i in range(N_SAMPLES - 1):
-    p1x, p1y = poly_bot[i]
-    p2x, p2y = poly_bot[i + 1]
-    a = (p1x, p1y, 0.0)
-    b = (p2x, p2y, 0.0)
-    c = (p2x, p2y, T)
-    d = (p1x, p1y, T)
-    # Reverse winding compared to the upper-curve side.
-    add_quad(a, d, c, b)
-
-
-# (Endpoints already collapse to a point because upper == lower there,
-# so we don't need separate left/right end caps.)
+add_lobe(poly_top, poly_bot)
+add_lobe(poly_top_m, poly_bot_m)
+# (Endpoints already collapse to a single point because upper == lower there,
+# so no separate left/right end caps are needed.)
 
 
 # ---------- compute normal for each triangle and write binary STL ----------
@@ -170,7 +157,7 @@ def normalize(v):
 
 
 with open(OUT_PATH, "wb") as f:
-    header = b"bounded by y=tan^2(x) and y=4-x^2".ljust(80, b"\0")
+    header = b"region bounded by y=tan^2(x) and y=4-x^2, mirrored across x-axis".ljust(80, b"\0")
     f.write(header)
     f.write(struct.pack("<I", len(triangles)))
     for tri in triangles:
