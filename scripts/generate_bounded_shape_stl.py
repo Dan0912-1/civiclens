@@ -1,22 +1,24 @@
 """
-Generate an STL of the 2D region bounded by y = tan^2(x) and y = 4 - x^2,
-together with its reflection across the x-axis, extruded along z for 3D
-printing.
+Generate an STL of the solid obtained by revolving the 2D region bounded by
+y = tan^2(x) and y = 4 - x^2 a full 360 degrees around the x-axis.
 
 The two curves intersect symmetrically near x = +/- 1.0410. Over that
-interval, 4 - x^2 is the upper curve and tan^2(x) is the lower curve.
-Reflecting the region across y = 0 produces a second lens below the
-x-axis; the two lenses meet at the origin.
+interval, 4 - x^2 is the upper curve (outer radius after revolution) and
+tan^2(x) is the lower curve (inner radius after revolution). At the
+intersections, outer radius == inner radius == ~2.916, so the outer and
+inner surfaces meet there and the solid closes off without explicit end
+caps. At x = 0 the inner radius collapses to a point (tan^2(0) = 0), so the
+inner surface pinches the cavity into two cone-like voids.
 """
 
 import math
-import struct
 import os
+import struct
 
-# ---------- geometry parameters ----------
-N_SAMPLES = 400              # samples along x for each curve
-THICKNESS_MM = 5.0           # extrusion depth (z)
-SCALE_MM_PER_UNIT = 20.0     # scale factor: 1 math-unit -> 20 mm
+# ---------- parameters ----------
+N_SAMPLES_X = 401      # samples along x (odd so x = 0 is hit exactly)
+N_SAMPLES_THETA = 96   # angular samples around x-axis
+SCALE_MM_PER_UNIT = 10.0
 OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "bounded_shape.stl")
 
 
@@ -33,57 +35,44 @@ def diff(x: float) -> float:
     return upper(x) - lower(x)
 
 
-def find_root(a: float, b: float, tol: float = 1e-12) -> float:
-    fa, fb = diff(a), diff(b)
-    assert fa * fb < 0, "no sign change on [a, b]"
-    for _ in range(200):
-        m = 0.5 * (a + b)
-        fm = diff(m)
-        if abs(fm) < tol or (b - a) < tol:
-            return m
-        if fa * fm < 0:
-            b, fb = m, fm
-        else:
-            a, fa = m, fm
-    return 0.5 * (a + b)
+# Find the positive intersection by bisection.
+a, b = 1.0, 1.5
+assert diff(a) > 0 > diff(b)
+for _ in range(200):
+    m = 0.5 * (a + b)
+    if diff(m) > 0:
+        a = m
+    else:
+        b = m
+x_root = 0.5 * (a + b)
+print(f"Intersection at x = +/- {x_root:.6f}")
+print(f"At intersection: R = r = {upper(x_root):.6f}")
+
+# x samples — odd count ensures x = 0 is sampled (so inner radius pinches to 0 exactly).
+xs = [-x_root + 2.0 * x_root * i / (N_SAMPLES_X - 1) for i in range(N_SAMPLES_X)]
+# Make the endpoint radii match exactly (numerical safety).
+end_radius = 0.5 * (upper(x_root) + lower(x_root))
+Rs = [upper(x) for x in xs]
+rs = [lower(x) for x in xs]
+Rs[0] = rs[0] = end_radius
+Rs[-1] = rs[-1] = end_radius
+
+# Precompute ring trig.
+thetas = [2.0 * math.pi * j / N_SAMPLES_THETA for j in range(N_SAMPLES_THETA)]
+cos_t = [math.cos(t) for t in thetas]
+sin_t = [math.sin(t) for t in thetas]
 
 
-# Intersection in (0, pi/2)
-x_right = find_root(1.0, 1.5)
-x_left = -x_right
-print(f"Intersection at x = +/- {x_right:.6f}")
-print(f"At intersection: upper={upper(x_right):.6f}, lower={lower(x_right):.6f}")
+def point(x_i: int, radius_list: list[float], j: int) -> tuple[float, float, float]:
+    r = radius_list[x_i]
+    return (
+        xs[x_i] * SCALE_MM_PER_UNIT,
+        r * cos_t[j] * SCALE_MM_PER_UNIT,
+        r * sin_t[j] * SCALE_MM_PER_UNIT,
+    )
 
 
-# ---------- sample the two curves between -x_root and +x_root ----------
-xs = [x_left + (x_right - x_left) * i / (N_SAMPLES - 1) for i in range(N_SAMPLES)]
-# Pin the endpoints exactly so top and bottom meet to zero thickness there.
-ys_upper = [upper(x) for x in xs]
-ys_lower = [lower(x) for x in xs]
-# Force the endpoints to coincide (numerical safety).
-ys_upper[0] = ys_lower[0] = 0.5 * (ys_upper[0] + ys_lower[0])
-ys_upper[-1] = ys_lower[-1] = 0.5 * (ys_upper[-1] + ys_lower[-1])
-
-
-# Scale to mm; the shape is mirrored across the x-axis, so leave y centered on 0.
-def to_mm_xy(x: float, y: float) -> tuple[float, float]:
-    return (x * SCALE_MM_PER_UNIT, y * SCALE_MM_PER_UNIT)
-
-
-# Upper-lobe polygon edges.
-poly_top = [to_mm_xy(xs[i], ys_upper[i]) for i in range(N_SAMPLES)]
-poly_bot = [to_mm_xy(xs[i], ys_lower[i]) for i in range(N_SAMPLES)]
-# Reflected lobe (mirror across y = 0): the old "upper" boundary becomes the
-# new lower boundary, and vice versa.
-poly_top_m = [(x, -y) for (x, y) in poly_bot]
-poly_bot_m = [(x, -y) for (x, y) in poly_top]
-
-
-# ---------- build mesh ----------
-# Vertices: for each i, we have an upper and a lower point on both z=0 and z=T.
-# Strip triangulation of top/bottom faces uses (upper_i, lower_i) pairs.
-T = THICKNESS_MM
-triangles: list[tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]] = []
+triangles: list[tuple[tuple[float, float, float], ...]] = []
 
 
 def add_tri(a, b, c):
@@ -91,52 +80,37 @@ def add_tri(a, b, c):
 
 
 def add_quad(a, b, c, d):
-    # quad ordered a-b-c-d going around the face; split into two triangles
     add_tri(a, b, c)
     add_tri(a, c, d)
 
 
-def add_lobe(poly_top, poly_bot):
-    """Add the closed extruded mesh for one lobe to the global triangle list."""
-    n = len(poly_top)
-    for i in range(n - 1):
-        ux1, uy1 = poly_top[i]
-        ux2, uy2 = poly_top[i + 1]
-        lx1, ly1 = poly_bot[i]
-        lx2, ly2 = poly_bot[i + 1]
-        # Bottom face (z = 0), outward normal -z.
-        a = (ux1, uy1, 0.0); b = (ux2, uy2, 0.0)
-        c = (lx2, ly2, 0.0); d = (lx1, ly1, 0.0)
-        add_quad(a, d, c, b)
-        # Top face (z = T), outward normal +z.
-        a_t = (ux1, uy1, T); b_t = (ux2, uy2, T)
-        c_t = (lx2, ly2, T); d_t = (lx1, ly1, T)
-        add_quad(a_t, b_t, c_t, d_t)
+# ---- outer surface (radius = 4 - x^2). Outward normal points radially out. ----
+for i in range(N_SAMPLES_X - 1):
+    for j in range(N_SAMPLES_THETA):
+        j2 = (j + 1) % N_SAMPLES_THETA
+        p11 = point(i, Rs, j)
+        p12 = point(i, Rs, j2)
+        p21 = point(i + 1, Rs, j)
+        p22 = point(i + 1, Rs, j2)
+        # CCW seen from outside (radially): p11 -> p21 -> p22 -> p12
+        add_quad(p11, p21, p22, p12)
 
-    # Side wall along upper boundary.
-    for i in range(n - 1):
-        p1x, p1y = poly_top[i]
-        p2x, p2y = poly_top[i + 1]
-        a = (p1x, p1y, 0.0); b = (p2x, p2y, 0.0)
-        c = (p2x, p2y, T);   d = (p1x, p1y, T)
-        add_quad(a, b, c, d)
+# ---- inner surface (radius = tan^2(x)). Outward normal points radially IN. ----
+# Reverse winding so the normal flips compared to the outer surface.
+for i in range(N_SAMPLES_X - 1):
+    for j in range(N_SAMPLES_THETA):
+        j2 = (j + 1) % N_SAMPLES_THETA
+        p11 = point(i, rs, j)
+        p12 = point(i, rs, j2)
+        p21 = point(i + 1, rs, j)
+        p22 = point(i + 1, rs, j2)
+        add_quad(p11, p12, p22, p21)
 
-    # Side wall along lower boundary (reversed winding for outward normal).
-    for i in range(n - 1):
-        p1x, p1y = poly_bot[i]
-        p2x, p2y = poly_bot[i + 1]
-        a = (p1x, p1y, 0.0); b = (p2x, p2y, 0.0)
-        c = (p2x, p2y, T);   d = (p1x, p1y, T)
-        add_quad(a, d, c, b)
+# (No end caps needed: at i=0 and i=N-1, Rs[i] == rs[i], so the inner and
+# outer rings are geometrically the same circle, sealing the solid.)
 
 
-add_lobe(poly_top, poly_bot)
-add_lobe(poly_top_m, poly_bot_m)
-# (Endpoints already collapse to a single point because upper == lower there,
-# so no separate left/right end caps are needed.)
-
-
-# ---------- compute normal for each triangle and write binary STL ----------
+# ---------- write binary STL ----------
 def cross(u, v):
     return (
         u[1] * v[2] - u[2] * v[1],
@@ -157,7 +131,7 @@ def normalize(v):
 
 
 with open(OUT_PATH, "wb") as f:
-    header = b"region bounded by y=tan^2(x) and y=4-x^2, mirrored across x-axis".ljust(80, b"\0")
+    header = b"solid of revolution of region between tan^2(x) and 4-x^2".ljust(80, b"\0")
     f.write(header)
     f.write(struct.pack("<I", len(triangles)))
     for tri in triangles:
@@ -172,13 +146,10 @@ with open(OUT_PATH, "wb") as f:
 
 print(f"Wrote {len(triangles)} triangles to {os.path.abspath(OUT_PATH)}")
 
-# Print bounding box for the user.
-all_pts = []
+xs_mm, ys_mm, zs_mm = [], [], []
 for tri in triangles:
-    all_pts.extend(tri)
-xs_mm = [p[0] for p in all_pts]
-ys_mm = [p[1] for p in all_pts]
-zs_mm = [p[2] for p in all_pts]
+    for p in tri:
+        xs_mm.append(p[0]); ys_mm.append(p[1]); zs_mm.append(p[2])
 print(
     f"Bounding box (mm): "
     f"x [{min(xs_mm):.2f}, {max(xs_mm):.2f}]  "
