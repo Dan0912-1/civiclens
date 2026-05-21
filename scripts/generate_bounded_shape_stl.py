@@ -1,14 +1,18 @@
 """
-Generate an STL of the solid obtained by revolving the 2D region bounded by
-y = tan^2(x) and y = 4 - x^2 a full 360 degrees around the x-axis.
+Generate an STL of the solid whose base is the 2D region bounded by
+y = tan^2(x) and y = 4 - x^2, with square cross-sections perpendicular
+to the x-axis.
 
-The two curves intersect symmetrically near x = +/- 1.0410. Over that
-interval, 4 - x^2 is the upper curve (outer radius after revolution) and
-tan^2(x) is the lower curve (inner radius after revolution). At the
-intersections, outer radius == inner radius == ~2.916, so the outer and
-inner surfaces meet there and the solid closes off without explicit end
-caps. At x = 0 the inner radius collapses to a point (tan^2(0) = 0), so the
-inner surface pinches the cavity into two cone-like voids.
+At each x, the cross-section is a square in the (y, z) plane:
+    y in [tan^2(x), 4 - x^2],   z in [0, s(x)]
+where s(x) = (4 - x^2) - tan^2(x) is the height of the base region at x.
+
+The two boundary curves meet at x = +/- 1.0410, where s = 0, so the solid
+tapers to a point at both ends. The solid is bounded by:
+  * bottom face: the base region in the xy-plane (z = 0)
+  * top face: the surface z = s(x) for (x, y) over the base region
+  * front face: y = tan^2(x), z in [0, s(x)]
+  * back face: y = 4 - x^2, z in [0, s(x)]
 """
 
 import math
@@ -16,9 +20,8 @@ import os
 import struct
 
 # ---------- parameters ----------
-N_SAMPLES_X = 401      # samples along x (odd so x = 0 is hit exactly)
-N_SAMPLES_THETA = 96   # angular samples around x-axis
-SCALE_MM_PER_UNIT = 10.0
+N_SAMPLES = 600
+SCALE_MM_PER_UNIT = 15.0
 OUT_PATH = os.path.join(os.path.dirname(__file__), "..", "bounded_shape.stl")
 
 
@@ -35,7 +38,7 @@ def diff(x: float) -> float:
     return upper(x) - lower(x)
 
 
-# Find the positive intersection by bisection.
+# Find positive intersection via bisection.
 a, b = 1.0, 1.5
 assert diff(a) > 0 > diff(b)
 for _ in range(200):
@@ -46,30 +49,22 @@ for _ in range(200):
         b = m
 x_root = 0.5 * (a + b)
 print(f"Intersection at x = +/- {x_root:.6f}")
-print(f"At intersection: R = r = {upper(x_root):.6f}")
 
-# x samples — odd count ensures x = 0 is sampled (so inner radius pinches to 0 exactly).
-xs = [-x_root + 2.0 * x_root * i / (N_SAMPLES_X - 1) for i in range(N_SAMPLES_X)]
-# Make the endpoint radii match exactly (numerical safety).
-end_radius = 0.5 * (upper(x_root) + lower(x_root))
-Rs = [upper(x) for x in xs]
-rs = [lower(x) for x in xs]
-Rs[0] = rs[0] = end_radius
-Rs[-1] = rs[-1] = end_radius
-
-# Precompute ring trig.
-thetas = [2.0 * math.pi * j / N_SAMPLES_THETA for j in range(N_SAMPLES_THETA)]
-cos_t = [math.cos(t) for t in thetas]
-sin_t = [math.sin(t) for t in thetas]
+xs = [-x_root + 2.0 * x_root * i / (N_SAMPLES - 1) for i in range(N_SAMPLES)]
+y_lo = [lower(x) for x in xs]
+y_hi = [upper(x) for x in xs]
+# Force endpoints to coincide (numerical safety).
+end_val = 0.5 * (y_lo[0] + y_hi[0])
+y_lo[0] = y_hi[0] = end_val
+y_lo[-1] = y_hi[-1] = 0.5 * (y_lo[-1] + y_hi[-1])
+s = [y_hi[i] - y_lo[i] for i in range(N_SAMPLES)]
 
 
-def point(x_i: int, radius_list: list[float], j: int) -> tuple[float, float, float]:
-    r = radius_list[x_i]
-    return (
-        xs[x_i] * SCALE_MM_PER_UNIT,
-        r * cos_t[j] * SCALE_MM_PER_UNIT,
-        r * sin_t[j] * SCALE_MM_PER_UNIT,
-    )
+S = SCALE_MM_PER_UNIT
+
+
+def P(x: float, y: float, z: float) -> tuple[float, float, float]:
+    return (x * S, y * S, z * S)
 
 
 triangles: list[tuple[tuple[float, float, float], ...]] = []
@@ -84,30 +79,39 @@ def add_quad(a, b, c, d):
     add_tri(a, c, d)
 
 
-# ---- outer surface (radius = 4 - x^2). Outward normal points radially out. ----
-for i in range(N_SAMPLES_X - 1):
-    for j in range(N_SAMPLES_THETA):
-        j2 = (j + 1) % N_SAMPLES_THETA
-        p11 = point(i, Rs, j)
-        p12 = point(i, Rs, j2)
-        p21 = point(i + 1, Rs, j)
-        p22 = point(i + 1, Rs, j2)
-        # CCW seen from outside (radially): p11 -> p21 -> p22 -> p12
-        add_quad(p11, p21, p22, p12)
+for i in range(N_SAMPLES - 1):
+    x1, x2 = xs[i], xs[i + 1]
+    lo1, lo2 = y_lo[i], y_lo[i + 1]
+    hi1, hi2 = y_hi[i], y_hi[i + 1]
+    s1, s2 = s[i], s[i + 1]
 
-# ---- inner surface (radius = tan^2(x)). Outward normal points radially IN. ----
-# Reverse winding so the normal flips compared to the outer surface.
-for i in range(N_SAMPLES_X - 1):
-    for j in range(N_SAMPLES_THETA):
-        j2 = (j + 1) % N_SAMPLES_THETA
-        p11 = point(i, rs, j)
-        p12 = point(i, rs, j2)
-        p21 = point(i + 1, rs, j)
-        p22 = point(i + 1, rs, j2)
-        add_quad(p11, p12, p22, p21)
+    # Bottom face (z = 0), outward normal -z.
+    b_lo1 = P(x1, lo1, 0.0)
+    b_lo2 = P(x2, lo2, 0.0)
+    b_hi1 = P(x1, hi1, 0.0)
+    b_hi2 = P(x2, hi2, 0.0)
+    # CCW seen from below: (lo1, hi1, hi2, lo2)
+    add_quad(b_lo1, b_hi1, b_hi2, b_lo2)
 
-# (No end caps needed: at i=0 and i=N-1, Rs[i] == rs[i], so the inner and
-# outer rings are geometrically the same circle, sealing the solid.)
+    # Top face (z = s(x)), outward normal +z.
+    t_lo1 = P(x1, lo1, s1)
+    t_lo2 = P(x2, lo2, s2)
+    t_hi1 = P(x1, hi1, s1)
+    t_hi2 = P(x2, hi2, s2)
+    # CCW from above: (lo1, lo2, hi2, hi1)
+    add_quad(t_lo1, t_lo2, t_hi2, t_hi1)
+
+    # Front face (y = tan^2(x)), outward normal in -y direction roughly.
+    # Quad: (x1, lo1, 0) -> (x2, lo2, 0) -> (x2, lo2, s2) -> (x1, lo1, s1)
+    add_quad(b_lo1, t_lo1, t_lo2, b_lo2)
+
+    # Back face (y = 4 - x^2), outward normal +y roughly.
+    # Reverse winding so normal flips.
+    add_quad(b_hi1, b_hi2, t_hi2, t_hi1)
+
+
+# No end caps: at i = 0 and i = N-1, lo == hi and s == 0, so the cross-section
+# is a single point — both ends taper naturally.
 
 
 # ---------- write binary STL ----------
@@ -131,7 +135,7 @@ def normalize(v):
 
 
 with open(OUT_PATH, "wb") as f:
-    header = b"solid of revolution of region between tan^2(x) and 4-x^2".ljust(80, b"\0")
+    header = b"square-cross-section solid over bounded region".ljust(80, b"\0")
     f.write(header)
     f.write(struct.pack("<I", len(triangles)))
     for tri in triangles:
