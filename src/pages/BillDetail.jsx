@@ -413,7 +413,11 @@ export default function BillDetail() {
   const isApiUrl = rawUrl.includes('api.congress.gov') || rawUrl.includes('api.legiscan.com')
   const billUrl = (rawUrl && !isApiUrl) ? rawUrl : (
     (passedBill?.isStateBill || bill?.isStateBill)
-      ? `https://legiscan.com/${passedBill?.state || bill?.state}/bill/${type.toUpperCase()}${number}/2026`
+      // Session year guess for the LegiScan fallback URL (was hardcoded 2026,
+      // which would go stale every January). LegiScan redirects to the right
+      // session page when the year is close, and detail/url usually wins
+      // before this fallback is used at all.
+      ? `https://legiscan.com/${passedBill?.state || bill?.state}/bill/${type.toUpperCase()}${number}/${new Date().getFullYear()}`
       : `https://www.congress.gov/bill/${congress}th-congress/${
           type === 's' ? 'senate-bill' : type === 'hr' ? 'house-bill' : type === 'sjres' ? 'senate-joint-resolution' : 'house-joint-resolution'
         }/${number}`

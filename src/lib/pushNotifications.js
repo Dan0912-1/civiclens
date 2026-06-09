@@ -26,6 +26,24 @@ export async function canRequestPush() {
   }
 }
 
+// Launch-time init that NEVER triggers the iOS permission dialog: only
+// (re-)registers the device when permission was already granted. First-time
+// permission goes through the PushPrompt soft primer (components/PushPrompt),
+// which calls initPushNotifications on accept — that's our one shot at the
+// system dialog, and it shouldn't fire contextless at login.
+export async function initPushIfGranted(userId, token) {
+  try {
+    const { Capacitor } = await import('@capacitor/core')
+    if (!Capacitor.isNativePlatform()) return
+    const { PushNotifications } = await import('@capacitor/push-notifications')
+    const perm = await PushNotifications.checkPermissions()
+    if (perm.receive !== 'granted') return
+    await initPushNotifications(userId, token)
+  } catch {
+    // plugin missing or web context — nothing to do
+  }
+}
+
 export async function initPushNotifications(userId, token) {
   if (registered) return
 

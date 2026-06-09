@@ -2,7 +2,7 @@ import { useEffect, useState, Suspense, lazy } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate, Link } from 'react-router-dom'
 import { useAuth } from './context/AuthContext'
 import { supabase, getSessionSafe } from './lib/supabase'
-import { initPushNotifications, setPushNavigate } from './lib/pushNotifications'
+import { initPushIfGranted, setPushNavigate } from './lib/pushNotifications'
 import { flush as flushOfflineQueue } from './lib/offlineQueue'
 import { getApiBase } from './lib/api'
 import Onboarding from './components/Onboarding.jsx'
@@ -10,8 +10,12 @@ import Nav from './components/Nav.jsx'
 import OfflineScreen from './components/OfflineScreen.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 
+// Home is imported statically: it's the most-visited route, and lazy-loading
+// it put an extra network round trip (chunk fetch after React mounts) between
+// the user and first meaningful paint. Costs ~10 KB gzip on the entry chunk.
+import Home from './pages/Home.jsx'
+
 // Lazy-loaded pages — reduces initial bundle size
-const Home = lazy(() => import('./pages/Home.jsx'))
 const Profile = lazy(() => import('./pages/Profile.jsx'))
 const Results = lazy(() => import('./pages/Results.jsx'))
 const BillDetail = lazy(() => import('./pages/BillDetail.jsx'))
@@ -177,12 +181,15 @@ export default function App() {
     }
   }, [])
 
-  // Initialize push notifications for logged-in native app users
+  // Re-register push for logged-in native users who ALREADY granted
+  // permission. First-time permission is requested via the PushPrompt soft
+  // primer on the Results page — calling requestPermissions() here used to
+  // fire the one-shot iOS system dialog contextless at login.
   useEffect(() => {
     if (!user || !supabase) return
     getSessionSafe().then((session) => {
       if (session?.access_token) {
-        initPushNotifications(user.id, session.access_token)
+        initPushIfGranted(user.id, session.access_token)
       }
     })
   }, [user])

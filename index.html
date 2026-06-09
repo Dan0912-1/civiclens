@@ -29,12 +29,16 @@
     <meta name="twitter:description" content="See how real legislation affects your life, personalized to your state, grade, and interests." />
     <meta name="twitter:image" content="https://capitolkey.org/og-image.png" />
 
-    <!-- Content Security Policy -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://*.supabase.co https://*.capitolkey.org https://*.railway.app https://*.sentry.io https://*.vercel.app; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:; frame-src 'none'; base-uri 'self'; form-action 'self';" />
+    <!-- Content Security Policy. Fonts are self-hosted (bundled woff2 via
+         @fontsource, see src/main.jsx), so font-src is 'self' and the
+         render-blocking Google Fonts origins are gone entirely. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://*.supabase.co https://*.capitolkey.org https://*.railway.app https://*.sentry.io https://*.vercel.app; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; frame-src 'none'; base-uri 'self'; form-action 'self';" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Source+Sans+3:wght@400;500;600;700&family=Source+Serif+4:wght@400;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <!-- Warm DNS+TCP+TLS to the two origins every session hits first: the
+         bill feed API and Supabase auth. Saves ~100-300ms on the first data
+         fetch on mobile. Dev requests are same-origin and ignore these. -->
+    <link rel="preconnect" href="https://civiclens-production-07ed.up.railway.app" />
+    <link rel="preconnect" href="https://drljemedyhpyvrzumusd.supabase.co" />
   </head>
   <body>
     <div id="root"></div>

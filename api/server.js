@@ -383,50 +383,43 @@ function releaseLLMSlot() {
   }
 }
 
-/**
- * Unified LLM call. Tries Haiku first; on credit/auth failure, falls back to Groq.
- * Returns { text, usage: { input_tokens, output_tokens }, provider }
- * Throws on unrecoverable errors.
- * All calls are gated by the global LLM semaphore (max GLOBAL_LLM_CONCURRENCY).
- */
-async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
-  await acquireLLMSlot()
-  let recursed = false
-  try {
-  // ── Groq path ──
-  if (_useGroqFallback) {
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-      body: JSON.stringify({
-        model: 'qwen/qwen3-32b',
-        max_tokens: Math.max(maxTokens, 1024), // Qwen needs more room
-        temperature,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: userPrompt + '\n\n/no_think' }
-        ]
-      })
-    })
-    if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({}))
-      throw new Error(`Groq ${resp.status}: ${errBody.error?.message || 'Unknown'}`)
-    }
-    const data = await resp.json()
-    const text = data.choices?.[0]?.message?.content || ''
-    recordGroqSuccess()
-    return {
-      text,
-      usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
-      provider: 'groq'
-    }
-  }
+// ── Per-provider single-shot calls ──────────────────────────────────────────
+// No semaphore handling in these — callLLM owns the slot for the whole call,
+// including a failover attempt, so concurrency accounting stays exact.
 
-  // ── Haiku path ──
+async function callGroqOnce({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+    body: JSON.stringify({
+      model: 'qwen/qwen3-32b',
+      max_tokens: Math.max(maxTokens, 1024), // Qwen needs more room
+      temperature,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userPrompt + '\n\n/no_think' }
+      ]
+    })
+  })
+  if (!resp.ok) {
+    const errBody = await resp.json().catch(() => ({}))
+    throw new Error(`Groq ${resp.status}: ${errBody.error?.message || 'Unknown'}`)
+  }
+  const data = await resp.json()
+  const text = data.choices?.[0]?.message?.content || ''
+  recordGroqSuccess()
+  return {
+    text,
+    usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 },
+    provider: 'groq'
+  }
+}
+
+async function callHaikuOnce({ system, userPrompt, maxTokens = 700, temperature = 0.4, timeoutMs = 30000 }) {
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -444,15 +437,15 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
     })
   })
 
-  // Credit exhaustion / auth failure → switch to Groq and retry once
+  // Credit exhaustion / auth failure — flagged so callLLM can fail over
   if (resp.status === 402 || resp.status === 401 || resp.status === 403) {
-    activateGroqFallback(`Anthropic HTTP ${resp.status}`)
-    recursed = true
-    releaseLLMSlot()
-    return callLLM({ system, userPrompt, maxTokens, temperature, timeoutMs })
+    const err = new Error(`Anthropic HTTP ${resp.status}`)
+    err.status = resp.status
+    err.authFailure = true
+    throw err
   }
 
-  // Return rate-limit and server errors to caller for their retry logic
+  // Rate-limit and server errors go to the caller's retry logic
   if (resp.status === 429) {
     setClaudeBackoff(resp.headers.get('retry-after'))
     const err = new Error('HTTP 429')
@@ -476,8 +469,68 @@ async function callLLM({ system, userPrompt, maxTokens = 700, temperature = 0.4,
     usage: { input_tokens: data.usage?.input_tokens || 0, output_tokens: data.usage?.output_tokens || 0 },
     provider: 'haiku'
   }
+}
+
+// Groq health tracking. After GROQ_FAIL_THRESHOLD consecutive failures we
+// stop trying Groq for GROQ_DISABLE_MS and route straight to Haiku, so a
+// Groq outage degrades to "Claude latency" instead of every request burning
+// a full Groq timeout before failing over.
+const GROQ_FAIL_THRESHOLD = 3
+const GROQ_DISABLE_MS = 5 * 60 * 1000
+let _groqConsecFails = 0
+let _groqDisabledUntil = 0
+
+/**
+ * Unified LLM call. Groq Qwen3-32B is primary (when configured); Claude
+ * Haiku is the fallback for Groq errors/outages. A Claude credit/auth
+ * failure flips the process to Groq-primary permanently (activateGroqFallback)
+ * and retries the in-flight call on Groq once — never recursively, so a
+ * misconfigured deploy (both providers down) fails fast instead of looping.
+ * Returns { text, usage: { input_tokens, output_tokens }, provider }.
+ * All calls are gated by the global LLM semaphore (max GLOBAL_LLM_CONCURRENCY).
+ */
+async function callLLM(opts) {
+  await acquireLLMSlot()
+  try {
+    const groqUsable = GROQ_API_KEY && Date.now() >= _groqDisabledUntil
+    const triedGroqFirst = _useGroqFallback && groqUsable
+
+    if (triedGroqFirst) {
+      try {
+        const result = await callGroqOnce(opts)
+        _groqConsecFails = 0
+        return result
+      } catch (groqErr) {
+        _groqConsecFails++
+        if (_groqConsecFails >= GROQ_FAIL_THRESHOLD && Date.now() >= _groqDisabledUntil) {
+          _groqDisabledUntil = Date.now() + GROQ_DISABLE_MS
+          console.error(`[llm-failover] Groq failed ${_groqConsecFails}x consecutively — routing to Claude Haiku for ${GROQ_DISABLE_MS / 60000} min`)
+        }
+        if (!ANTHROPIC_KEY || isClaudeBackedOff()) throw groqErr
+        console.warn(`[llm-failover] Groq error (${groqErr.message}) — retrying this call on Claude Haiku`)
+        // fall through to the Haiku attempt below
+      }
+    }
+
+    if (!ANTHROPIC_KEY) {
+      throw new Error('No LLM provider available (ANTHROPIC_API_KEY unset)')
+    }
+    try {
+      return await callHaikuOnce(opts)
+    } catch (err) {
+      // Credit/auth failure → prefer Groq for future calls and retry this
+      // one there, unless we already tried Groq (then there's nothing left).
+      if (err.authFailure) {
+        activateGroqFallback(err.message)
+        if (GROQ_API_KEY && !triedGroqFirst) {
+          _groqDisabledUntil = 0 // an auth-dead Claude overrides a Groq cooldown
+          return await callGroqOnce(opts)
+        }
+      }
+      throw err
+    }
   } finally {
-    if (!recursed) releaseLLMSlot()
+    releaseLLMSlot()
   }
 }
 
@@ -1418,6 +1471,10 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     // because they're a function of this specific request's random discovery
     // pick + the current user's interaction history; baking them into a 4-hour
     // shared cache would freeze one user's discovery slate for everyone.
+    // The _local* fields (full bill text + CRS summary) are stripped too —
+    // they were ~98% of the response payload (~410 KB of a 418 KB response)
+    // and nothing client-side reads them; both the personalize endpoints and
+    // the background prefetch/speculative paths fetch text from our own DB.
     for (const bill of balanced) {
       bill.rankScore = bill._score
       // Keep recommendReason for frontend badges
@@ -1425,6 +1482,10 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       delete bill._isDiscovery
       delete bill._isEmerging
       delete bill._topicTag
+      delete bill._localText
+      delete bill._localCrsSummary
+      delete bill._localTextWordCount
+      delete bill._localTextVersion
     }
 
     // ── Diversity metrics logging ──
@@ -2219,11 +2280,13 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
       // Fetch full bill content for accurate personalization
       const billType = bill.type?.toLowerCase().replace(/\./g, '') || ''
       let billData
-      if (bill.isStateBill && bill._localText) {
-        // State bill with text already from local DB (passed via frontend)
-        billData = { text: bill._localText, wordCount: bill._localTextWordCount || 0, version: bill._localTextVersion || 'local', crsSummary: bill._localCrsSummary || null, crsVersion: '' }
-      } else if (bill.isStateBill && !bill._localText) {
-        // State bill missing text — try on-demand fetch from Open States
+      if (bill.isStateBill) {
+        // State bill — always load text from OUR database (or Open States on
+        // demand), never from the client. Clients used to round-trip the
+        // feed's _localText back to us, which cost ~100 KB of upload per
+        // detail view and let a hostile client supply fabricated bill text
+        // for an analysis we then cache. The feed stopped sending _local*
+        // fields entirely; this path now ignores them even if present.
         let stateText = null
         let stateScores = null
         let stateExcerpt = null
@@ -2436,12 +2499,10 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       return { ...b, billData }
     }
 
-    // State bills: use local text or fetch from Open States
-    if (b.bill.isStateBill && b.bill._localText) {
-      const billData = { text: b.bill._localText, wordCount: b.bill._localTextWordCount || 0, version: b.bill._localTextVersion || 'local', crsSummary: b.bill._localCrsSummary || null, crsVersion: '' }
-      return { ...b, billData }
-    }
-    if (b.bill.isStateBill && !b.bill._localText && supabase) {
+    // State bills: load text from our own DB (or Open States on demand).
+    // Client-supplied _localText is deliberately ignored — see the same
+    // decision in /api/personalize.
+    if (b.bill.isStateBill && supabase) {
       const { data: dbBill } = await supabase
         .from('bills')
         .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, full_text, section_topic_scores, structured_excerpt')
@@ -4025,13 +4086,17 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
   const memCached = getCache(canonicalKey) || (alternateKey && getCache(alternateKey))
   if (memCached) return memCached
 
-  // L2: Supabase persistent (check both keys)
-  let dbCached = await getBillTextFromSupabase(canonicalKey)
-  if (!dbCached && alternateKey) dbCached = await getBillTextFromSupabase(alternateKey)
+  // L2: Supabase persistent (check both keys) + precomputes, all in parallel.
+  // These were three sequential awaits — each a single-row indexed read —
+  // adding ~100-150ms per cold bill on the personalize path. Both branches
+  // below need the precomputes, so fetching them eagerly wastes nothing.
+  const [dbCanonical, dbAlternate, precomputes] = await Promise.all([
+    getBillTextFromSupabase(canonicalKey),
+    alternateKey ? getBillTextFromSupabase(alternateKey) : Promise.resolve(null),
+    fetchBillPrecomputes(legiscanBillId, congress, type, number, 'US'),
+  ])
+  const dbCached = dbCanonical || dbAlternate
   if (dbCached && (dbCached.bill_text || dbCached.crs_summary) && !isStaleBillTextCache(dbCached)) {
-    // Fetch precomputes alongside — these live in the bills table, not the
-    // bill_text_cache, so a separate lookup is needed. Cheap indexed read.
-    const precomputes = await fetchBillPrecomputes(legiscanBillId, congress, type, number, 'US')
     const result = {
       text: dbCached.bill_text || null,
       wordCount: dbCached.word_count || 0,
@@ -4067,11 +4132,9 @@ async function fetchBillContent(congress, type, number, legiscanBillId) {
     }
   }
 
-  // Also fetch precomputed topic scores + structured excerpt from bills
-  // table. These get populated at sync time; reading them here lets the
-  // personalize path short-circuit the live regex pass.
-  const precomputes = await fetchBillPrecomputes(legiscanBillId, congress, type, number, 'US')
-
+  // Precomputed topic scores + structured excerpt were already fetched in
+  // parallel with the L2 lookup above; reuse them here so the LegiScan
+  // fallback path doesn't pay a second bills-table read.
   const result = {
     text: textResult?.text || null,
     wordCount: textResult?.wordCount || 0,

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { getApiBase } from '../lib/api'
+import { stripBillForPersonalize } from '../lib/billId'
 import styles from './SharePostModal.module.css'
 
 const PLATFORMS = [
@@ -71,7 +72,18 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
 
   if (!isOpen) return null
 
+  // Supersede guard + timeout: a second "Regenerate" tap aborts the first
+  // request (its late response could otherwise overwrite the fresh drafts),
+  // and a wedged connection can't leave the modal spinning forever. This was
+  // the only LLM-backed fetch in the app without a timeout.
+  const abortRef = useRef(null)
+
   async function generate() {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
+
     setLoading(true)
     setError('')
     setDrafts([])
@@ -87,15 +99,22 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
       const resp = await fetch(`${getApiBase()}/api/share-post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bill, analysis, profile, platform, perspective }),
+        body: JSON.stringify({ bill: stripBillForPersonalize(bill), analysis, profile, platform, perspective }),
+        signal: controller.signal,
       })
       const data = await resp.json()
+      if (controller.signal.aborted) return
       if (!resp.ok) throw new Error(data.error || 'Failed to generate drafts')
       setDrafts(data.drafts || [])
     } catch (err) {
-      setError(err.message || 'Something went wrong')
+      // Superseded by a newer generate() — that call owns the UI state now
+      if (abortRef.current !== controller) return
+      setError(err.name === 'AbortError'
+        ? 'The request timed out. Please try again.'
+        : err.message || 'Something went wrong')
     } finally {
-      setLoading(false)
+      clearTimeout(timeoutId)
+      if (abortRef.current === controller) setLoading(false)
     }
   }
 

@@ -16,7 +16,18 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Defer the SW registration script instead of render-blocking in <head>
+      injectRegister: 'script-defer',
       workbox: {
+        // Keep the first-visit precache lean: install icons and the OG image
+        // (~450 KB combined) load on demand, not as competing background
+        // downloads during the user's first page load.
+        globIgnores: [
+          '**/logo-512.png',
+          '**/logo-192.png',
+          '**/apple-touch-icon.png',
+          '**/og-image.png',
+        ],
         runtimeCaching: [
           {
             urlPattern: /\/api\/bill\//,

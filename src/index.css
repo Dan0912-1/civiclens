@@ -212,12 +212,6 @@ html {
   animation: fadeIn var(--dur-base) var(--ease-out) forwards;
 }
 
-/* Accessibility — global focus-visible ring */
-:focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: 2px;
-}
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;

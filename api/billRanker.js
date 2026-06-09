@@ -260,15 +260,34 @@ async function runRanker(supabase, options = {}) {
 
   if (verbose) console.log(`[ranker] Pulled ${candidates.length} candidates with text`)
 
-  // Interaction counts — federal only (state bills get too few views to matter)
-  const { data: interactions } = await supabase
-    .from('bill_interactions')
-    .select('bill_id')
-    .eq('action_type', 'view')
-
+  // Interaction counts — federal only (state bills get too few views to matter).
+  // Two fixes from the June 2026 audit:
+  //  1. The filter used to be action_type = 'view', a value nothing ever
+  //     writes (the app records 'view_detail' / 'expand_card' / 'bookmark'),
+  //     so popularity scoring silently matched zero rows.
+  //  2. The query was a single unpaged select — PostgREST caps responses at
+  //     1000 rows, which would have truncated counts once traffic grew.
   const viewCounts = new Map()
-  for (const row of interactions || []) {
-    viewCounts.set(row.bill_id, (viewCounts.get(row.bill_id) || 0) + 1)
+  {
+    let intFrom = 0
+    while (true) {
+      const { data: rows, error: intErr } = await supabase
+        .from('bill_interactions')
+        .select('bill_id')
+        .eq('action_type', 'view_detail')
+        .order('id')
+        .range(intFrom, intFrom + PAGE - 1)
+      if (intErr) {
+        console.error('[ranker] interactions query error:', intErr.message)
+        break // popularity is a soft signal — rank without it rather than abort
+      }
+      if (!rows?.length) break
+      for (const row of rows) {
+        viewCounts.set(row.bill_id, (viewCounts.get(row.bill_id) || 0) + 1)
+      }
+      if (rows.length < PAGE) break
+      intFrom += PAGE
+    }
   }
   if (verbose) console.log(`[ranker] ${viewCounts.size} bills have view history`)
 
