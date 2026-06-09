@@ -85,7 +85,11 @@ async function openRepLookup() {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-export default memo(function BillCard({ bill, analysis, style, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false, onPersonalize, personalizing = false }) {
+// Memoized — parents pass stable callback references and a plain
+// animationDelay string (NOT an inline style object) so cards don't
+// re-render on every personalization-wave state update. Callbacks receive
+// (billId, bill, analysis) / (bill) so parents don't need per-card closures.
+export default memo(function BillCard({ bill, analysis, animationDelay, isBookmarked = false, onToggleBookmark, onTrackInteraction, personalizationFailed = false, onPersonalize, personalizing = false }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -118,7 +122,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
       if (!isBookmarked && onTrackInteraction) {
         onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
       }
-      onToggleBookmark()
+      onToggleBookmark(billId, bill, analysis)
     }
     setSwipeOffset(0)
     swipeStart.current = null
@@ -134,7 +138,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
   return (
     <div
       className={`${styles.card} ${styles[`tag_${tagColor}`]}`}
-      style={{ ...style, transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
+      style={{ animationDelay, transform: swipeOffset ? `translateX(${swipeOffset}px)` : undefined }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -203,7 +207,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
 
       {/* Analysis — on-demand personalize button (search page) */}
       {isLoading && !personalizationFailed && onPersonalize && !personalizing && (
-        <button className={styles.personalizeBtn} onClick={onPersonalize}>
+        <button className={styles.personalizeBtn} onClick={() => onPersonalize(bill)}>
           Personalize this bill
         </button>
       )}
@@ -229,7 +233,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
         <div className={styles.analyzeFailed}>
           <span>Personalization unavailable</span>
           {onPersonalize ? (
-            <button className={styles.retryBtn} onClick={onPersonalize}>
+            <button className={styles.retryBtn} onClick={() => onPersonalize(bill)}>
               Try again
             </button>
           ) : (
@@ -313,7 +317,7 @@ export default memo(function BillCard({ bill, analysis, style, isBookmarked = fa
                     if (!isBookmarked && onTrackInteraction) {
                       onTrackInteraction({ billId, actionType: 'bookmark', topicTag: analysis?.topic_tag })
                     }
-                    onToggleBookmark()
+                    onToggleBookmark(billId, bill, analysis)
                   }}
                   aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark this bill'}
                 >

@@ -1,5 +1,4 @@
 import { Component } from 'react'
-import * as Sentry from '@sentry/react'
 
 export default class ErrorBoundary extends Component {
   state = { hasError: false }
@@ -10,7 +9,14 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error('ErrorBoundary caught:', error, info.componentStack)
-    Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } })
+    // Dynamic import keeps the Sentry SDK out of the entry chunk (it's
+    // initialized lazily in main.jsx). By the time a render error occurs,
+    // the chunk is almost certainly loaded — this resolves from module cache.
+    import('@sentry/react')
+      .then((Sentry) => {
+        Sentry.captureException(error, { contexts: { react: { componentStack: info.componentStack } } })
+      })
+      .catch(() => {})
   }
 
   render() {

@@ -70,9 +70,12 @@ export default function JoinClassroom() {
 
   async function handleNameSubmit(e) {
     e.preventDefault()
+    if (loading) return // double-tap fired two anon joins before this guard
     if (!firstName.trim()) { setError('First name is required'); return }
     const studentName = `${firstName.trim()} ${lastName.trim()}`.trim()
     const trimmed = code.trim().toUpperCase()
+    setLoading(true)
+    setError('')
     try {
       await joinClassroomAnon(trimmed, studentName)
     } catch (err) {
@@ -112,9 +115,10 @@ export default function JoinClassroom() {
             <button
               type="submit"
               className={styles.btn}
-              disabled={!firstName.trim()}
+              disabled={!firstName.trim() || loading}
+              aria-busy={loading || undefined}
             >
-              Join Class
+              {loading ? 'Joining…' : 'Join Class'}
             </button>
           </form>
 

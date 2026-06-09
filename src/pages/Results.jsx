@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
-import { trackInteraction, getInteractionSummary, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
+import { trackInteraction, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
+import { initPushNotifications } from '../lib/pushNotifications'
+import PushPrompt from '../components/PushPrompt.jsx'
 import { supabase, getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getAssignments, getJoinedClassrooms, peekClassroom } from '../lib/classroom'
 import usePullToRefresh from '../hooks/usePullToRefresh'
@@ -43,8 +45,16 @@ export default function Results() {
   const [settledBills, setSettledBills] = useState(new Set())
   const [failedBills, setFailedBills] = useState(new Set())
   const [bookmarkedIds, setBookmarkedIds] = useState(new Set())
-  const [bookmarkBusy, setBookmarkBusy] = useState(false)
-  const [interactionSummary, setInteractionSummary] = useState(null)
+  // Anonymous users' interaction summary is computed synchronously from
+  // sessionStorage so the FIRST feed fetch already carries it. Previously it
+  // arrived via an effect after the first fetch had fired, triggering a
+  // second /api/legislation call (and a second round of personalization
+  // waves) on every visit. Logged-in users don't need a client summary at
+  // all — /api/legislation reads their interaction history server-side.
+  const [interactionSummary] = useState(() => {
+    const local = getLocalInteractions()
+    return local.length ? computeLocalSummary(local) : null
+  })
   const [visibleCount, setVisibleCount] = useState(BILLS_PER_PAGE)
   const [activeTab, setActiveTab] = useState('federal') // 'federal' or 'state'
   // Backend may return _meta when the personalized pipeline fell back to a
@@ -78,7 +88,12 @@ export default function Results() {
         if (cancelled) return
         if (cloud) {
           sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
-          setProfile(cloud)
+          // Keep the existing state identity when the cloud copy matches —
+          // swapping in an identical-but-new object retriggers the feed
+          // fetch effect for a second, redundant /api/legislation call.
+          setProfile(prev =>
+            prev && JSON.stringify(prev) === JSON.stringify(cloud) ? prev : cloud
+          )
           return
         }
         if (cached) {
@@ -91,9 +106,11 @@ export default function Results() {
         navigate('/profile')
         return
       }
-      // Anonymous flow
+      // Anonymous flow — the mount-time initializer already loaded this
+      // profile; only set state if it's somehow still empty (prev || cached
+      // preserves identity and avoids a redundant feed refetch).
       if (cached) {
-        setProfile(cached)
+        setProfile(prev => prev || cached)
         return
       }
       navigate('/profile')
@@ -102,27 +119,20 @@ export default function Results() {
     return () => { cancelled = true }
   }, [navigate, user])
 
-  // Fetch interaction summary and sync local interactions on login
+  // Sync anonymous local interactions up to the account on login. No summary
+  // fetch-back needed: the feed endpoint scores signed-in users from
+  // server-side history directly (see /api/legislation step 1).
   useEffect(() => {
-    async function loadInteractions() {
-      if (user && supabase) {
-        // Sync local interactions to server if user just logged in
-        if (!prevUserRef.current) {
-          const session = await getSessionSafe()
-          if (session?.access_token) {
-            await syncLocalInteractions(user.id, session.access_token)
-            const summary = await getInteractionSummary(session.access_token)
-            if (summary) setInteractionSummary(summary)
-          }
+    async function syncOnLogin() {
+      if (user && supabase && !prevUserRef.current) {
+        const session = await getSessionSafe()
+        if (session?.access_token) {
+          await syncLocalInteractions(user.id, session.access_token)
         }
-      } else {
-        // Anonymous: compute locally
-        const local = getLocalInteractions()
-        if (local.length) setInteractionSummary(computeLocalSummary(local))
       }
       prevUserRef.current = user
     }
-    loadInteractions()
+    syncOnLogin()
   }, [user])
 
   // Load bookmarks for logged-in users
@@ -131,9 +141,12 @@ export default function Results() {
     getBookmarks(user.id).then(bm => setBookmarkedIds(new Set(bm.map(b => b.bill_id))))
   }, [user])
 
-  // Load pending classroom assignments for students (logged-in or anonymous)
+  // Load pending classroom assignments for students (logged-in or anonymous).
+  // Per-classroom fetches run in parallel — they used to await one classroom
+  // at a time, which made this scale linearly with class count.
   const [pendingAssignments, setPendingAssignments] = useState([])
   useEffect(() => {
+    let cancelled = false
     async function loadAssignments() {
       const allAssignments = []
 
@@ -144,46 +157,49 @@ export default function Results() {
         if (token) {
           const classrooms = await getMyClassrooms(token)
           const studentClasses = classrooms.filter(c => c.role === 'student')
-          for (const cls of studentClasses) {
-            const assignments = await getAssignments(token, cls.id)
-            for (const a of assignments) {
-              if (!a.completed) allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.id })
-            }
-          }
+          const perClass = await Promise.all(studentClasses.map(async cls => {
+            try {
+              const assignments = await getAssignments(token, cls.id)
+              return assignments
+                .filter(a => !a.completed)
+                .map(a => ({ ...a, classroomName: cls.name, classroomId: cls.id }))
+            } catch { return [] }
+          }))
+          for (const list of perClass) allAssignments.push(...list)
         }
       }
 
       // Anonymous: fetch from sessionStorage codes via peek
       const localJoined = getJoinedClassrooms()
-      for (const cls of localJoined) {
+      const perJoined = await Promise.all(localJoined.map(async cls => {
         try {
           const data = await peekClassroom(cls.code)
-          for (const a of (data.assignments || [])) {
-            allAssignments.push({ ...a, classroomName: cls.name, classroomId: cls.classroomId })
-          }
-        } catch {}
-      }
+          return (data.assignments || []).map(a =>
+            ({ ...a, classroomName: cls.name, classroomId: cls.classroomId }))
+        } catch { return [] }
+      }))
+      for (const list of perJoined) allAssignments.push(...list)
 
-      setPendingAssignments(allAssignments)
+      if (!cancelled) setPendingAssignments(allAssignments)
     }
     loadAssignments()
+    return () => { cancelled = true }
   }, [user])
 
-  // Fetch bills when profile is ready. Also re-fetch once the interaction
-  // summary loads so the interest-weighted ranking uses the user's click
-  // history on the first render (otherwise new logins see generic ranking
-  // until their next pull-to-refresh).
+  // Fetch bills when profile is ready. interactionSummary is intentionally
+  // NOT a dependency: it's set once at mount (anonymous users) or unused
+  // (logged-in users get server-side scoring), so depending on it only
+  // reintroduces the old double-fetch.
   //
-  // Uses a cancelled flag to prevent a stale fetchBills() (triggered when
-  // profile loads first) from corrupting state after a newer fetchBills()
-  // starts (triggered when interactionSummary arrives).
+  // Uses a cancelled flag so a stale fetchBills() can't corrupt state after
+  // a newer one starts (e.g. profile updated from Supabase mid-flight).
   useEffect(() => {
     if (!profile) return
     let cancelled = false
     fetchBills({ cancelled: () => cancelled })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, interactionSummary])
+  }, [profile])
 
   // Personalize a batch of bills in a single API call (all Claude calls run in parallel server-side).
   // Auto-retries any failed bills once to recover from transient errors before surfacing failure to the user.
@@ -372,11 +388,20 @@ export default function Results() {
     trackInteraction(user?.id, token, { billId, actionType, topicTag })
   }, [user])
 
-  async function toggleBookmark(billId, bill, analysis) {
-    if (!user || bookmarkBusy) return
-    setBookmarkBusy(true)
+  // Stable handlers for BillCard. The cards are memo()ized, but inline arrow
+  // props used to recreate on every render, so each personalization-wave
+  // state update re-rendered every visible card anyway. Refs hold the
+  // current bookmark set / busy flag so the callbacks never need to change
+  // identity.
+  const bookmarkedIdsRef = useRef(bookmarkedIds)
+  useEffect(() => { bookmarkedIdsRef.current = bookmarkedIds }, [bookmarkedIds])
+  const bookmarkBusyRef = useRef(false)
+
+  const toggleBookmark = useCallback(async (billId, bill, analysis) => {
+    if (!user || bookmarkBusyRef.current) return
+    bookmarkBusyRef.current = true
     try {
-      if (bookmarkedIds.has(billId)) {
+      if (bookmarkedIdsRef.current.has(billId)) {
         setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
         const ok = await removeBookmark(user.id, billId)
         if (!ok) setBookmarkedIds(prev => new Set(prev).add(billId))
@@ -385,8 +410,20 @@ export default function Results() {
         const ok = await addBookmark(user.id, billId, { bill, analysis })
         if (!ok) setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
       }
-    } finally { setBookmarkBusy(false) }
-  }
+    } finally { bookmarkBusyRef.current = false }
+  }, [user])
+
+  // "Latest ref" pattern: personalizeBillsBatch closes over the current
+  // profile, so the retry handler calls through a ref instead of capturing
+  // a stale closure.
+  const personalizeRef = useRef(null)
+  personalizeRef.current = personalizeBillsBatch
+  const handleRetryPersonalize = useCallback((bill) => {
+    const billId = makeBillId(bill)
+    setFailedBills(prev => { const next = new Set(prev); next.delete(billId); return next })
+    setSettledBills(prev => { const next = new Set(prev); next.delete(billId); return next })
+    personalizeRef.current([bill])
+  }, [])
 
   // Collect all topic tags for filter bar
   const topicTags = useMemo(() => ['All', ...new Set(
@@ -630,15 +667,11 @@ export default function Results() {
                     bill={bill}
                     analysis={analyses[billId] || null}
                     personalizationFailed={failedBills.has(billId)}
-                    onPersonalize={failedBills.has(billId) ? () => {
-                      setFailedBills(prev => { const next = new Set(prev); next.delete(billId); return next })
-                      setSettledBills(prev => { const next = new Set(prev); next.delete(billId); return next })
-                      personalizeBillsBatch([bill])
-                    } : undefined}
+                    onPersonalize={failedBills.has(billId) ? handleRetryPersonalize : undefined}
                     isBookmarked={bookmarkedIds.has(billId)}
-                    onToggleBookmark={() => toggleBookmark(billId, bill, analyses[billId])}
+                    onToggleBookmark={toggleBookmark}
                     onTrackInteraction={handleTrackInteraction}
-                    style={{ animationDelay: `${i * 0.08}s` }}
+                    animationDelay={`${i * 0.08}s`}
                   />
                 )
               })}
@@ -694,6 +727,20 @@ export default function Results() {
         </div>
 
       </div>
+
+      {/* Soft push-notification primer (native, signed in, permission still
+          undecided). The iOS system dialog only fires after the user accepts
+          this banner — protecting our single shot at the real permission. */}
+      {user && (
+        <PushPrompt
+          onAccept={async () => {
+            const session = await getSessionSafe()
+            if (session?.access_token) {
+              initPushNotifications(user.id, session.access_token)
+            }
+          }}
+        />
+      )}
     </main>
   )
 }

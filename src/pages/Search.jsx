@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
@@ -53,12 +53,14 @@ export default function Search() {
   const navigate = useNavigate()
   const { user } = useAuth()
 
-  const profile = (() => {
+  // Read once per mount (was an IIFE that re-parsed sessionStorage on every
+  // render and broke handler memoization via a fresh object identity).
+  const profile = useMemo(() => {
     try {
       const stored = sessionStorage.getItem('civicProfile')
       return stored ? JSON.parse(stored) : null
     } catch { return null }
-  })()
+  }, [])
 
   const initialQuery = searchParams.get('q') || ''
   const initialTab = searchParams.get('tab') || 'federal'
@@ -96,15 +98,26 @@ export default function Search() {
     if (activeTabParam !== activeTab) setActiveTab(activeTabParam)
   }, [activeTabParam])
 
+  // Single AbortController shared by EVERY fetch path (URL-driven effect,
+  // load-more, retry, state-select). Each new search aborts the previous one,
+  // so a quick state-A → state-B switch can't land A's results last. The
+  // effect-only controller used to cover just the URL-driven path.
+  const abortRef = useRef(null)
+
   useEffect(() => {
     if (!activeQuery) return
-    const controller = new AbortController()
     setInputValue(activeQuery)
-    fetchResults(activeQuery, 1, true, activeTab, undefined, controller.signal)
-    return () => controller.abort()
+    fetchResults(activeQuery, 1, true, activeTab)
+    return () => abortRef.current?.abort()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeQuery, activeTab])
 
-  async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride, signal) {
+  async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride) {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const { signal } = controller
+
     if (reset) {
       setLoading(true)
       setBills([])
@@ -126,6 +139,7 @@ export default function Search() {
         throw new Error(data.error || 'Search failed')
       }
       const data = await resp.json()
+      if (signal.aborted) return
       if (reset) {
         setBills(data.bills || [])
       } else {
@@ -135,11 +149,15 @@ export default function Search() {
       setHasMore(data.pagination?.hasMore || false)
       setTotalResults(data.pagination?.totalResults || 0)
     } catch (err) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError' || signal.aborted) return
       setError(err.message || 'Unable to search. Please try again.')
     } finally {
-      setLoading(false)
-      setLoadingMore(false)
+      // A superseding search already owns the loading flags — don't let the
+      // aborted request clear them mid-flight.
+      if (!signal.aborted) {
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
   }
 
@@ -173,7 +191,7 @@ export default function Search() {
     if (activeQuery) fetchResults(activeQuery, page + 1, false)
   }
 
-  async function personalizeBill(bill) {
+  const personalizeBill = useCallback(async (bill) => {
     if (!profile) {
       navigate('/profile', { state: { returnTo: `/search?${searchParams.toString()}` } })
       return
@@ -219,7 +237,7 @@ export default function Search() {
         return next
       })
     }
-  }
+  }, [profile, navigate, searchParams])
 
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null
@@ -230,16 +248,21 @@ export default function Search() {
     trackInteraction(user?.id, token, { billId, actionType, topicTag })
   }, [user])
 
-  async function toggleBookmark(billId, bill, analysis) {
+  // Ref mirror keeps this callback stable (see Results.jsx for rationale —
+  // memoized BillCards need stable handler identities).
+  const bookmarkedIdsRef = useRef(bookmarkedIds)
+  useEffect(() => { bookmarkedIdsRef.current = bookmarkedIds }, [bookmarkedIds])
+
+  const toggleBookmark = useCallback(async (billId, bill, analysis) => {
     if (!user) return
-    if (bookmarkedIds.has(billId)) {
+    if (bookmarkedIdsRef.current.has(billId)) {
       setBookmarkedIds(prev => { const next = new Set(prev); next.delete(billId); return next })
       await removeBookmark(user.id, billId)
     } else {
       setBookmarkedIds(prev => new Set(prev).add(billId))
       await addBookmark(user.id, billId, { bill, analysis })
     }
-  }
+  }, [user])
 
   const filterLabel = [
     activeTab === 'state'
@@ -384,11 +407,11 @@ export default function Search() {
                     analysis={analyses[billId] || null}
                     personalizationFailed={failedBills.has(billId)}
                     personalizing={personalizingBills.has(billId)}
-                    onPersonalize={() => personalizeBill(bill)}
+                    onPersonalize={personalizeBill}
                     isBookmarked={bookmarkedIds.has(billId)}
-                    onToggleBookmark={user ? () => toggleBookmark(billId, bill, analyses[billId]) : undefined}
+                    onToggleBookmark={user ? toggleBookmark : undefined}
                     onTrackInteraction={handleTrackInteraction}
-                    style={{ animationDelay: `${i * 0.08}s` }}
+                    animationDelay={`${i * 0.08}s`}
                   />
                 )
               })}

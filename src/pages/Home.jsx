@@ -46,38 +46,16 @@ const TOPICS = [
   { id: 'community',   label: 'Community',       emoji: '🤝', color: '#0A1929', bg: '#FFFFFF' },
 ]
 
-export default function Home() {
-  const navigate = useNavigate()
-  const { user } = useAuth()
+// The animated demo card owns its own state so the 40ms typewriter tick
+// re-renders ONLY this subtree. It used to live in Home itself, which made
+// the entire homepage (FeaturedBills included) re-render on every typed
+// character, indefinitely.
+function HeroDemo() {
   const [billIndex, setBillIndex] = useState(0)
   const [typedTitle, setTypedTitle] = useState('')
   const [showSummary, setShowSummary] = useState(false)
   const [fading, setFading] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
   const intervalRef = useRef(null)
-  // Treat a logged-in user OR an anonymous sessionStorage profile as "returning"
-  // so the hero CTA re-labels from "Get Started" → "See my bills" and skips the
-  // questionnaire. Read once at mount; the CTA doesn't need reactive updates.
-  const hasExistingProfile = Boolean(user) || (() => {
-    try { return Boolean(sessionStorage.getItem('civicProfile')) } catch { return false }
-  })()
-
-  function handleSearch(e) {
-    e.preventDefault()
-    const q = searchQuery.trim()
-    if (q) {
-      navigate(`/search?q=${encodeURIComponent(q)}`)
-    }
-  }
-
-  // Skip the questionnaire for returning users. Logged-in users have their
-  // profile in Supabase — /results loads it on mount and only falls back to
-  // /profile if none exists. Anonymous users' profile lives in sessionStorage.
-  function handleExploreBills() {
-    if (user) { navigate('/results'); return }
-    const hasProfile = !!sessionStorage.getItem('civicProfile')
-    navigate(hasProfile ? '/results' : '/profile')
-  }
 
   const bill = DEMO_BILLS[billIndex]
 
@@ -111,6 +89,74 @@ export default function Home() {
     }, 9000)
     return () => { clearTimeout(timer); clearTimeout(fadeTimer) }
   }, [billIndex])
+
+  return (
+    <div className={styles.heroDemo}>
+      <div className={styles.profileChips}>
+        {bill.chips.map((c, i) => (
+          <span key={i} className={styles.chip}>{c}</span>
+        ))}
+      </div>
+      <div className={`${styles.demoCard} ${fading ? styles.demoCardFading : ''}`}>
+        <div className={styles.demoCardHeader}>
+          <div className={styles.demoTag} style={{ background: bill.tagBg, color: bill.tagColor }}>
+            {bill.tag}
+          </div>
+          <span className={`${styles.demoChamberPill} ${bill.chamber === 'House' ? styles.chamberHouse : styles.chamberSenate}`}>
+            {bill.chamber}
+          </span>
+        </div>
+        <div className={styles.demoTitle}>
+          {typedTitle}<span className={styles.cursor}>|</span>
+        </div>
+        {showSummary && (
+          <div className={styles.demoSummary}>
+            {bill.summary}
+          </div>
+        )}
+        {showSummary && (
+          <div className={styles.demoRelevance}>
+            <span className={styles.relevanceDot} />
+            Relevance: {bill.relevance}/10
+          </div>
+        )}
+      </div>
+      <div className={styles.demoDots}>
+        {DEMO_BILLS.map((_, i) => (
+          <span key={i} className={`${styles.dot} ${i === billIndex ? styles.dotActive : ''}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default function Home() {
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const [searchQuery, setSearchQuery] = useState('')
+  // Treat a logged-in user OR an anonymous sessionStorage profile as "returning"
+  // so the hero CTA re-labels from "Get Started" → "See my bills" and skips the
+  // questionnaire. Read once at mount; the CTA doesn't need reactive updates.
+  const hasExistingProfile = Boolean(user) || (() => {
+    try { return Boolean(sessionStorage.getItem('civicProfile')) } catch { return false }
+  })()
+
+  function handleSearch(e) {
+    e.preventDefault()
+    const q = searchQuery.trim()
+    if (q) {
+      navigate(`/search?q=${encodeURIComponent(q)}`)
+    }
+  }
+
+  // Skip the questionnaire for returning users. Logged-in users have their
+  // profile in Supabase — /results loads it on mount and only falls back to
+  // /profile if none exists. Anonymous users' profile lives in sessionStorage.
+  function handleExploreBills() {
+    if (user) { navigate('/results'); return }
+    const hasProfile = !!sessionStorage.getItem('civicProfile')
+    navigate(hasProfile ? '/results' : '/profile')
+  }
 
   // Warm the Results chunk AND prefetch the profile into sessionStorage so
   // that when the user clicks "See my bills" the target page has everything
@@ -194,42 +240,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className={styles.heroDemo}>
-          <div className={styles.profileChips}>
-            {bill.chips.map((c, i) => (
-              <span key={i} className={styles.chip}>{c}</span>
-            ))}
-          </div>
-          <div className={`${styles.demoCard} ${fading ? styles.demoCardFading : ''}`}>
-            <div className={styles.demoCardHeader}>
-              <div className={styles.demoTag} style={{ background: bill.tagBg, color: bill.tagColor }}>
-                {bill.tag}
-              </div>
-              <span className={`${styles.demoChamberPill} ${bill.chamber === 'House' ? styles.chamberHouse : styles.chamberSenate}`}>
-                {bill.chamber}
-              </span>
-            </div>
-            <div className={styles.demoTitle}>
-              {typedTitle}<span className={styles.cursor}>|</span>
-            </div>
-            {showSummary && (
-              <div className={styles.demoSummary}>
-                {bill.summary}
-              </div>
-            )}
-            {showSummary && (
-              <div className={styles.demoRelevance}>
-                <span className={styles.relevanceDot} />
-                Relevance: {bill.relevance}/10
-              </div>
-            )}
-          </div>
-          <div className={styles.demoDots}>
-            {DEMO_BILLS.map((_, i) => (
-              <span key={i} className={`${styles.dot} ${i === billIndex ? styles.dotActive : ''}`} />
-            ))}
-          </div>
-        </div>
+        <HeroDemo />
         </div>
       </section>
 

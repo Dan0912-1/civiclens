@@ -27,6 +27,7 @@ export default function ClassroomDetail() {
   const [loadError, setLoadError] = useState(null)
   const [completionsData, setCompletionsData] = useState(null)
   const [completionsLoading, setCompletionsLoading] = useState(false)
+  const [completionsError, setCompletionsError] = useState('')
   // Tracks the latest in-flight stats request so that navigating away or
   // reloading the classroom doesn't let an old response stomp the new one
   // (and doesn't trigger a setState-on-unmounted-component warning).
@@ -186,12 +187,22 @@ export default function ClassroomDetail() {
 
   async function loadCompletions() {
     setCompletionsLoading(true)
+    setCompletionsError('')
     const t = token || await getToken()
-    if (!t) { setCompletionsLoading(false); return }
+    if (!t) {
+      setCompletionsLoading(false)
+      setCompletionsError('Your session expired. Please sign in again.')
+      return
+    }
     try {
       const data = await getCompletions(t, id)
-      setCompletionsData(data)
-    } catch { setCompletionsData(null) }
+      // getCompletions returns null on any non-OK response — surfacing that
+      // as an error keeps a network blip from reading as "no students yet".
+      if (data) setCompletionsData(data)
+      else setCompletionsError('Could not load student data. Check your connection and try again.')
+    } catch (err) {
+      setCompletionsError(err.message || 'Could not load student data. Check your connection and try again.')
+    }
     setCompletionsLoading(false)
   }
 
@@ -389,6 +400,11 @@ export default function ClassroomDetail() {
               <div className={styles.loading}>
                 <div className={styles.spinner} />
                 <span>Loading student data...</span>
+              </div>
+            ) : completionsError ? (
+              <div className={styles.emptyState} role="alert">
+                <p>{completionsError}</p>
+                <button className={styles.back} onClick={loadCompletions}>Try again</button>
               </div>
             ) : !completionsData || completionsData.students.length === 0 ? (
               <p className={styles.emptyState}>No students yet. Share the join code to get started.</p>
