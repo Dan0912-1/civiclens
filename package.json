@@ -29,6 +29,7 @@
     "@fontsource/playfair-display": "^5.2.8",
     "@fontsource/source-sans-3": "^5.2.9",
     "@fontsource/source-serif-4": "^5.2.9",
+    "@resvg/resvg-js": "^2.6.2",
     "@sentry/node": "^10.49.0",
     "@sentry/react": "^10.47.0",
     "@supabase/supabase-js": "^2.100.1",
