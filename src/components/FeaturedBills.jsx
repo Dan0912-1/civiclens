@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getApiBase } from '../lib/api'
+import { billHref } from '../lib/billUrl'
 import styles from './FeaturedBills.module.css'
 
 /**
@@ -122,7 +123,7 @@ export default function FeaturedBills() {
   function openBill(row) {
     const b = row.bill_data || {}
     if (!b.type || !b.number) return
-    navigate(`/bill/${b.congress || 0}/${b.type.toLowerCase()}/${b.number}`, {
+    navigate(billHref(b), {
       state: { bill: b, skipPersonalization: true },
     })
   }

@@ -24,6 +24,7 @@ import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
 import { registerSitemapRoutes } from './sitemap.js'
 import { registerBillRenderRoutes } from './billRenderer.js'
+import { resolveStateBillRow, slugifySession } from './stateBills.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -1083,6 +1084,7 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
         searchTerm: matchedTopic,
         legiscan_bill_id: row.legiscan_bill_id || null,
         state: row.jurisdiction,
+        session: row.session || null, // needed to build the clean /states/ URL
         isStateBill: isState,
         statusStage: row.status_stage || 'introduced',
         _isDiscovery: isDiscovery,
@@ -1404,6 +1406,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
                 searchTerm: (row.topics || [])[0] || '',
                 legiscan_bill_id: row.legiscan_bill_id || null,
                 state: row.jurisdiction,
+                session: row.session || null, // needed to build the clean /states/ URL
                 isStateBill: isState,
                 statusStage: row.status_stage || 'introduced',
                 _localText: row.full_text || null,
@@ -1850,6 +1853,97 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
       console.error('Bill detail fetch error:', err.message)
       res.status(500).json({ error: 'Failed to fetch bill detail' })
     }
+  }
+})
+
+// State bills resolve from the path alone via /api/state-bill/:state/:type/:number
+// (+ ?session= to disambiguate numbers that repeat across sessions). The clean
+// /states/... URL and its bot renderer both call this, and it is the make-or-break
+// for SEO: a COLD load with no ?legiscan_id must still return real content.
+//
+// We resolve from OUR bills table first, so rows without a legiscan_bill_id (or
+// when LegiScan is unreachable) still return a useful payload (title, summary,
+// status, latest action). When a legiscan_bill_id exists we enrich with the full
+// detail (sponsors, progress, history), best-effort.
+app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, res) => {
+  const { state, type, number } = req.params
+  const sessionSlug = req.query.session || ''
+
+  if (!/^[a-z]{2}$/i.test(state) || !/^[a-z]+$/i.test(type) || !/^\d+$/.test(number)) {
+    return res.status(404).json({ error: 'Bill not found' })
+  }
+
+  const cacheKey = `state-bill-${state.toLowerCase()}-${type.toLowerCase()}-${number}-${slugifySession(sessionSlug)}`
+  const cached = getCache(cacheKey)
+  if (cached) return res.json(cached)
+
+  if (!supabase) return res.status(503).json({ error: 'Storage unavailable' })
+
+  try {
+    const row = await resolveStateBillRow(supabase, { state, type, number, sessionSlug })
+    if (!row) return res.status(404).json({ error: 'Bill not found' })
+
+    // Floor payload built straight from our DB row — always renders content.
+    const bill = {
+      congress: 0,
+      type: row.bill_type,
+      number: row.bill_number,
+      title: row.title || '',
+      description: row.description || '',
+      originChamber: row.origin_chamber || originChamberFromType(row.bill_type),
+      latestAction: { text: row.latest_action || '', actionDate: row.latest_action_date || '' },
+      url: row.url || '',
+      sponsors: [],
+      cosponsors: { count: 0 },
+      policyArea: { name: '' },
+      introducedDate: row.latest_action_date || '',
+      committees: { count: 0 },
+      state: row.jurisdiction,
+      session: row.session,
+      legiscan_bill_id: row.legiscan_bill_id || null,
+      isStateBill: true,
+      history: [],
+      progress: [],
+      statusStage: row.status_stage || 'introduced',
+    }
+
+    // Best-effort enrichment with the full LegiScan detail (cached). Never let a
+    // LegiScan hiccup turn into an empty page — the floor payload already renders.
+    if (row.legiscan_bill_id && LEGISCAN_KEY) {
+      try {
+        const data = await cachedGetBill(row.legiscan_bill_id)
+        const b = data.bill || {}
+        Object.assign(bill, {
+          title: b.title || bill.title,
+          description: b.description || bill.description,
+          latestAction: {
+            text: b.status_desc || b.last_action || bill.latestAction.text,
+            actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate,
+          },
+          url: b.url || bill.url,
+          sponsors: (b.sponsors || []).map(s => ({
+            firstName: s.first_name || s.name?.split(' ')[0] || '',
+            lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
+            party: s.party || '',
+            state: s.state || '',
+          })),
+          cosponsors: { count: Math.max(0, (b.sponsors || []).length - 1) },
+          policyArea: { name: b.subjects?.[0]?.subject_name || '' },
+          introducedDate: b.status_date || bill.introducedDate,
+          committees: { count: (b.committee || []).length },
+          ...transformBillTimeline(b),
+        })
+      } catch (err) {
+        console.error('[state-bill] enrich error:', err.message)
+      }
+    }
+
+    const result = { bill }
+    setCache(cacheKey, result)
+    res.json(result)
+  } catch (err) {
+    console.error('[state-bill] error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch bill detail' })
   }
 })
 
