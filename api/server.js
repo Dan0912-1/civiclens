@@ -24,6 +24,7 @@ import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
 import { registerSitemapRoutes } from './sitemap.js'
 import { registerBillRenderRoutes } from './billRenderer.js'
+import { registerBillOgImageRoutes } from './billOgImage.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -1128,6 +1129,11 @@ registerSitemapRoutes(app, { supabase, getCache, setCache })
 // JSON-LD, and the official summary. A Vercel rewrite routes bot user-agents
 // for /bill/* here; humans stay on the static SPA untouched.
 registerBillRenderRoutes(app, { supabase, getCache, setCache })
+
+// ─── SEO: per-bill Open Graph share-card images ─────────────────────────────
+// Serves /og/bill/* as a branded 1200x630 PNG so shared bill links unfurl
+// visually. The bot-rendered pages above reference this as og:image.
+registerBillOgImageRoutes(app, { supabase, getCache, setCache })
 
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
