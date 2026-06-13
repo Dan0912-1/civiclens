@@ -12,6 +12,7 @@
 // safe to emit. (A cleaner state-bill URL contract is a follow-up.)
 
 import { SITE_URL } from './seoConfig.js'
+import { TOPIC_SLUGS } from './topics.js'
 
 const BILLS_PER_SITEMAP = 10000          // well under the 50k-URL / 50MB per-file cap
 const DB_PAGE = 1000                     // Supabase returns ~1k rows/request; page through
@@ -124,6 +125,7 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
         let body = `<?xml version="1.0" encoding="UTF-8"?>\n`
         body += `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
         body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/static.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
+        body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/topics.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
         for (let i = 1; i <= pages; i++) {
           body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/bills-${i}.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
         }
@@ -147,6 +149,18 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
       body += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
       for (const r of STATIC_ROUTES) {
         body += urlTag(`${SITE_URL}${r.path}`, null, r.changefreq, r.priority)
+      }
+      body += `</urlset>\n`
+      return sendXml(res, body)
+    }
+
+    if (file === 'topics.xml') {
+      let body = `<?xml version="1.0" encoding="UTF-8"?>\n`
+      body += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
+      // The topics index hub first, then one URL per topic landing page.
+      body += urlTag(`${SITE_URL}/topics`, null, 'weekly', '0.8')
+      for (const slug of TOPIC_SLUGS) {
+        body += urlTag(`${SITE_URL}/topics/${slug}`, null, 'daily', '0.7')
       }
       body += `</urlset>\n`
       return sendXml(res, body)

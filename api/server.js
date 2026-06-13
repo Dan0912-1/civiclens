@@ -24,6 +24,7 @@ import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
 import { registerSitemapRoutes } from './sitemap.js'
 import { registerBillRenderRoutes } from './billRenderer.js'
+import { registerTopicRoutes } from './topics.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -1128,6 +1129,13 @@ registerSitemapRoutes(app, { supabase, getCache, setCache })
 // JSON-LD, and the official summary. A Vercel rewrite routes bot user-agents
 // for /bill/* here; humans stay on the static SPA untouched.
 registerBillRenderRoutes(app, { supabase, getCache, setCache })
+
+// ─── SEO: programmatic topic landing pages ──────────────────────────────────
+// Exposes /api/topics(/:slug) for the SPA to cold-load topic hubs, plus a
+// bot-only /render/topic/:slug with per-topic meta + JSON-LD + a crawlable bill
+// list. A Vercel rewrite routes bot user-agents for /topics/* to the renderer;
+// humans get the SPA via the catch-all. Topic URLs are also in the sitemap.
+registerTopicRoutes(app, { supabase, getCache, setCache })
 
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
