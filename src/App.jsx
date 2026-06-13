@@ -318,6 +318,7 @@ export default function App() {
           <Route path="/topics"    element={<TopicsIndex />} />
           <Route path="/topics/:slug" element={<TopicPage />} />
           <Route path="/bill/:congress/:type/:number" element={<BillDetail />} />
+          <Route path="/states/:state/:session/:type/:number" element={<BillDetail />} />
           <Route path="/about"     element={<About />} />
           <Route path="/contact"   element={<Contact />} />
           <Route path="/support"   element={<Contact />} />
