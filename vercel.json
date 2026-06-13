@@ -50,6 +50,10 @@
         }
       ],
       "destination": "https://civiclens-production-07ed.up.railway.app/render/bill/:congress/:type/:number"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
