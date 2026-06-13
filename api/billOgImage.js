@@ -34,11 +34,12 @@ const FONT_FILES = ['PlayfairDisplay-Bold.ttf', 'SourceSans3-Regular.ttf', 'Sour
 
 const OG_TTL = 1000 * 60 * 60 * 24 // 24h — bill metadata changes slowly
 
-// Design-system palette (see CLAUDE.md / src/index.css).
-const NAVY = '#0d1b2a'
-const NAVY_DEEP = '#0A1929'
-const AMBER = '#e8a020'
-const CREAM = '#f8f4ed'
+// Design-system palette — the live "Institutional High-Trust" tokens from
+// src/index.css (Oxford Blue / Brass / Parchment), not the stale doc values.
+const NAVY = '#0A1929'      // Oxford Blue — primary ink / card background
+const NAVY_TOP = '#1E2A38'  // Federal Slate — subtle top of the background gradient
+const AMBER = '#A47E3B'     // Brass — restrained accent
+const CREAM = '#F5F2EC'     // Parchment — primary text
 
 const OG_TYPE_LABELS = {
   hr: 'H.R.', s: 'S.',
@@ -153,8 +154,8 @@ function buildCardSvg({ congress, type, number, bill, validShape }) {
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${NAVY}"/>
-      <stop offset="1" stop-color="${NAVY_DEEP}"/>
+      <stop offset="0" stop-color="${NAVY_TOP}"/>
+      <stop offset="1" stop-color="${NAVY}"/>
     </linearGradient>
     <radialGradient id="glow" cx="0.82" cy="0.08" r="0.7">
       <stop offset="0" stop-color="${AMBER}" stop-opacity="0.16"/>
