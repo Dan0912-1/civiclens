@@ -31,6 +31,14 @@
     {
       "source": "/api/:path*",
       "destination": "https://civiclens-production-07ed.up.railway.app/api/:path*"
+    },
+    {
+      "source": "/sitemap.xml",
+      "destination": "https://civiclens-production-07ed.up.railway.app/sitemap.xml"
+    },
+    {
+      "source": "/sitemaps/:path*",
+      "destination": "https://civiclens-production-07ed.up.railway.app/sitemaps/:path*"
     }
   ]
 }

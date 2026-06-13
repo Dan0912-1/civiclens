@@ -22,6 +22,7 @@ import { runDailySync, runBackfill, fetchBillText, backfillStateTexts, refreshHo
 import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
+import { registerSitemapRoutes } from './sitemap.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -1114,6 +1115,12 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
+
+// ─── SEO: dynamic XML sitemaps ──────────────────────────────────────────────
+// Exposes /sitemap.xml (index) + /sitemaps/*.xml so crawlers discover every
+// federal bill page. Vercel rewrites capitolkey.org/sitemap.xml here; the old
+// static public/sitemap.xml (8 URLs) is removed so this wins.
+registerSitemapRoutes(app, { supabase, getCache, setCache })
 
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
