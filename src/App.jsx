@@ -24,6 +24,8 @@ const Bookmarks = lazy(() => import('./pages/Bookmarks.jsx'))
 const Privacy = lazy(() => import('./pages/Privacy.jsx'))
 const Terms = lazy(() => import('./pages/Terms.jsx'))
 const Search = lazy(() => import('./pages/Search.jsx'))
+const TopicPage = lazy(() => import('./pages/TopicPage.jsx'))
+const TopicsIndex = lazy(() => import('./pages/TopicsIndex.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
@@ -54,6 +56,7 @@ const PAGE_TITLES = {
   '/profile': 'Set Up Your Feed | CapitolKey',
   '/results': 'Your Legislation | CapitolKey',
   '/search': 'Search Bills | CapitolKey',
+  '/topics': 'Browse Bills by Topic | CapitolKey',
   '/about': 'About | CapitolKey',
   '/contact': 'Contact | CapitolKey',
   '/support': 'Contact | CapitolKey',
@@ -312,6 +315,8 @@ export default function App() {
           <Route path="/profile"   element={<Profile />} />
           <Route path="/results"   element={<Results />} />
           <Route path="/search"    element={<Search />} />
+          <Route path="/topics"    element={<TopicsIndex />} />
+          <Route path="/topics/:slug" element={<TopicPage />} />
           <Route path="/bill/:congress/:type/:number" element={<BillDetail />} />
           <Route path="/states/:state/:session/:type/:number" element={<BillDetail />} />
           <Route path="/about"     element={<About />} />
