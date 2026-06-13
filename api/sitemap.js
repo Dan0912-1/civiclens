@@ -11,7 +11,8 @@
 // soft-404 and hurt us. Federal bills resolve from the path alone, so they are
 // safe to emit. (A cleaner state-bill URL contract is a follow-up.)
 
-const SITE_URL = 'https://capitolkey.org'
+import { SITE_URL } from './seoConfig.js'
+
 const BILLS_PER_SITEMAP = 10000          // well under the 50k-URL / 50MB per-file cap
 const DB_PAGE = 1000                     // Supabase returns ~1k rows/request; page through
 const SITEMAP_TTL = 1000 * 60 * 60 * 6   // 6h — the bill catalog changes slowly

@@ -39,6 +39,17 @@
     {
       "source": "/sitemaps/:path*",
       "destination": "https://civiclens-production-07ed.up.railway.app/sitemaps/:path*"
+    },
+    {
+      "source": "/bill/:congress/:type/:number",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(googlebot|google-inspectiontool|bingbot|slurp|duckduckbot|baiduspider|yandex|sogou|exabot|applebot|facebookexternalhit|facebot|twitterbot|linkedinbot|embedly|pinterest|slackbot|slack-imgproxy|redditbot|whatsapp|telegrambot|discordbot|skypeuripreview|vkshare|flipboard|tumblr|bitlybot|nuzzel|w3c_validator|bot|crawler|spider|crawling).*"
+        }
+      ],
+      "destination": "https://civiclens-production-07ed.up.railway.app/render/bill/:congress/:type/:number"
     }
   ]
 }

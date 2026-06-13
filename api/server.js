@@ -23,6 +23,7 @@ import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
 import { registerSitemapRoutes } from './sitemap.js'
+import { registerBillRenderRoutes } from './billRenderer.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -1121,6 +1122,12 @@ app.get('/api/health', (req, res) => {
 // federal bill page. Vercel rewrites capitolkey.org/sitemap.xml here; the old
 // static public/sitemap.xml (8 URLs) is removed so this wins.
 registerSitemapRoutes(app, { supabase, getCache, setCache })
+
+// ─── SEO: dynamic rendering for crawlers + social unfurlers ─────────────────
+// Serves bots (only) a server-rendered /render/bill/* page with per-bill meta,
+// JSON-LD, and the official summary. A Vercel rewrite routes bot user-agents
+// for /bill/* here; humans stay on the static SPA untouched.
+registerBillRenderRoutes(app, { supabase, getCache, setCache })
 
 // ─── App version check (force-update mechanism) ─────────────────────────────
 // Native apps check this on launch to see if they need to update.
