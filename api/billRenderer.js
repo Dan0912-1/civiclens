@@ -86,7 +86,7 @@ function renderBillHtml({ congress, type, number, bill }) {
     ? clamp(summary, 155)
     : `${label}${ordinal ? `, ${ordinal},` : ''} explained in plain language: what it does, where it stands, and how it could affect you. Nonpartisan, built for students.`
 
-  const ogImage = `${SITE_URL}/og-image.png`
+  const ogImage = `${SITE_URL}/og/bill/${congress}/${lcType}/${number}`
 
   const legislation = {
     '@type': 'Legislation',
