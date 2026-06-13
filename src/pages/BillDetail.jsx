@@ -8,6 +8,7 @@ import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
+import { billHref } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillDetail.module.css'
 
@@ -40,7 +41,18 @@ const TAG_COLORS = {
 }
 
 export default function BillDetail() {
-  const { congress, type, number } = useParams()
+  // This component backs two routes:
+  //   federal  /bill/:congress/:type/:number
+  //   state    /states/:state/:session/:type/:number   (params.state is set)
+  const params = useParams()
+  const isStateRoute = Boolean(params.state)
+  const state = params.state || null
+  const session = params.session || null
+  const type = params.type
+  const number = params.number
+  // State routes have no congress; use a stable synthetic so the
+  // makeCongressBillId-based identity checks and effect deps still line up.
+  const congress = params.congress ?? '0'
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useAuth()
@@ -101,7 +113,7 @@ export default function BillDetail() {
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [congress, type, number])
+  }, [congress, type, number, state, session])
 
   // Track view_detail interaction once we have analysis (for topic_tag)
   useEffect(() => {
@@ -268,12 +280,19 @@ export default function BillDetail() {
     async function run() {
       setLoading(true)
       try {
-        const legiscanId = passedBill?.legiscan_bill_id
-          || new URLSearchParams(window.location.search).get('legiscan_id')
-          || ''
-        const url = legiscanId
-          ? `${API_BASE}/api/bill/${congress}/${type}/${number}?legiscan_id=${legiscanId}`
-          : `${API_BASE}/api/bill/${congress}/${type}/${number}`
+        let url
+        if (isStateRoute) {
+          // State bills resolve from the path alone (no legiscan_id needed).
+          url = `${API_BASE}/api/state-bill/${state}/${type}/${number}`
+            + (session ? `?session=${encodeURIComponent(session)}` : '')
+        } else {
+          const legiscanId = passedBill?.legiscan_bill_id
+            || new URLSearchParams(window.location.search).get('legiscan_id')
+            || ''
+          url = legiscanId
+            ? `${API_BASE}/api/bill/${congress}/${type}/${number}?legiscan_id=${legiscanId}`
+            : `${API_BASE}/api/bill/${congress}/${type}/${number}`
+        }
         const resp = await fetch(url)
         if (cancelled) return
         if (resp.ok) {
@@ -292,6 +311,7 @@ export default function BillDetail() {
               url: data.bill.url,
               legiscan_bill_id: data.bill.legiscan_bill_id,
               state: data.bill.state,
+              session: data.bill.session,
               isStateBill: data.bill.state && data.bill.state !== 'US',
             })
           }
@@ -307,7 +327,7 @@ export default function BillDetail() {
     run()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [congress, type, number])
+  }, [congress, type, number, state, session])
 
   // Re-fetch personalization once bill data loads. Same cancellation pattern
   // so a pending Bill A request can't overwrite Bill B's analysis after
@@ -775,7 +795,9 @@ export default function BillDetail() {
               onClick={async () => {
                 const WEB_ORIGIN = 'https://capitolkey.org'
                 const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
-                const shareUrl = `${origin}/bill/${congress}/${type.toLowerCase()}/${number}`
+                // Clean canonical URL: /states/... for state bills, /bill/... for federal.
+                const shareSource = bill || { type, number, congress, state, session, isStateBill: isStateRoute }
+                const shareUrl = `${origin}${billHref(shareSource, { canonical: true })}`
                 const text = `${displayTitle}: ${analysis?.headline || ''}\n${shareUrl}`
                 if (navigator.share) {
                   try { await navigator.share({ title: displayTitle, text, url: shareUrl }) } catch {}

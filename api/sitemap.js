@@ -6,12 +6,15 @@
 // client-rendered summary indexed. That turns our ~15k-page federal catalog into
 // a compounding organic-acquisition surface instead of an invisible one.
 //
-// State bills are intentionally excluded for now: their detail route needs a
-// ?legiscan_id query param to resolve, so a bare /bill/0/<type>/<number> would
-// soft-404 and hurt us. Federal bills resolve from the path alone, so they are
-// safe to emit. (A cleaner state-bill URL contract is a follow-up.)
+// State bills are now included too. They used to be excluded because their
+// detail route needed a ?legiscan_id query param to resolve, so a bare URL would
+// soft-404. That blocker is fixed: state bills have a clean, path-resolvable URL
+// (/states/:state/:session/:type/:number — see api/stateBills.js) backed by a
+// table lookup, so they are safe to emit. This roughly multiplies the indexable
+// surface (federal ~13k, state ~215k). NH is excluded (it blocks scraping).
 
 import { SITE_URL } from './seoConfig.js'
+import { stateBillPath, EXCLUDED_SITEMAP_JURISDICTIONS } from './stateBills.js'
 
 const BILLS_PER_SITEMAP = 10000          // well under the 50k-URL / 50MB per-file cap
 const DB_PAGE = 1000                     // Supabase returns ~1k rows/request; page through
@@ -97,6 +100,42 @@ async function fetchFederalBillChunk(supabase, offset, limit) {
   return rows
 }
 
+// State-bill sitemap pool: every non-federal jurisdiction we don't exclude,
+// with a title (the floor for a meaningful render). Count and chunk MUST apply
+// the identical filter or offset pagination drifts. Returns the chained query so
+// callers add their own count/order/range.
+function stateBillsFilter(query) {
+  let q = query.neq('jurisdiction', 'US').not('title', 'is', null)
+  for (const j of EXCLUDED_SITEMAP_JURISDICTIONS) q = q.neq('jurisdiction', j)
+  return q
+}
+
+async function countStateBills(supabase) {
+  const { count, error } = await stateBillsFilter(
+    supabase.from('bills').select('id', { count: 'exact', head: true })
+  )
+  if (error) throw error
+  return count || 0
+}
+
+// Page the DB in 1k batches, ordered by the stable PK so offsets are consistent
+// across requests within a cache window.
+async function fetchStateBillChunk(supabase, offset, limit) {
+  const rows = []
+  while (rows.length < limit) {
+    const from = offset + rows.length
+    const to = from + Math.min(DB_PAGE, limit - rows.length) - 1
+    const { data, error } = await stateBillsFilter(
+      supabase.from('bills').select('jurisdiction, session, bill_type, bill_number, latest_action_date, synced_at')
+    ).order('id', { ascending: true }).range(from, to)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    rows.push(...data)
+    if (data.length < (to - from + 1)) break // ran out of rows
+  }
+  return rows
+}
+
 function lastmodFor(row) {
   if (row.latest_action_date) return String(row.latest_action_date).slice(0, 10)
   if (row.synced_at) return String(row.synced_at).slice(0, 10)
@@ -115,17 +154,24 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
       let xml = getCache('sitemap-index')
       if (!xml) {
         let billCount = 0
+        let stateBillCount = 0
         if (supabase) {
           try { billCount = await countFederalBills(supabase) }
-          catch (e) { console.error('[sitemap] count error:', e.message) }
+          catch (e) { console.error('[sitemap] federal count error:', e.message) }
+          try { stateBillCount = await countStateBills(supabase) }
+          catch (e) { console.error('[sitemap] state count error:', e.message) }
         }
         const pages = billCount > 0 ? Math.ceil(billCount / BILLS_PER_SITEMAP) : 0
+        const statePages = stateBillCount > 0 ? Math.ceil(stateBillCount / BILLS_PER_SITEMAP) : 0
         const now = new Date().toISOString()
         let body = `<?xml version="1.0" encoding="UTF-8"?>\n`
         body += `<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
         body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/static.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
         for (let i = 1; i <= pages; i++) {
           body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/bills-${i}.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
+        }
+        for (let i = 1; i <= statePages; i++) {
+          body += `  <sitemap>\n    <loc>${SITE_URL}/sitemaps/state-${i}.xml</loc>\n    <lastmod>${now}</lastmod>\n  </sitemap>\n`
         }
         body += `</sitemapindex>\n`
         xml = body
@@ -138,7 +184,7 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
     }
   })
 
-  // ── Sub-sitemaps: static.xml and bills-<n>.xml ──
+  // ── Sub-sitemaps: static.xml, bills-<n>.xml (federal), state-<n>.xml (state) ──
   app.get('/sitemaps/:file', async (req, res) => {
     const file = req.params.file
 
@@ -152,24 +198,32 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
       return sendXml(res, body)
     }
 
-    const m = /^bills-(\d+)\.xml$/.exec(file)
-    if (!m) return res.status(404).type('text/plain').send('not found')
-    const page = parseInt(m[1], 10)
+    // Federal (bills-<n>) and state (state-<n>) chunks share one code path; they
+    // differ only in which rows they pull and how each row maps to a path.
+    const federalMatch = /^bills-(\d+)\.xml$/.exec(file)
+    const stateMatch = /^state-(\d+)\.xml$/.exec(file)
+    if (!federalMatch && !stateMatch) {
+      return res.status(404).type('text/plain').send('not found')
+    }
+    const isState = Boolean(stateMatch)
+    const page = parseInt((federalMatch || stateMatch)[1], 10)
     if (!Number.isInteger(page) || page < 1) {
       return res.status(404).type('text/plain').send('not found')
     }
 
     try {
-      const cacheKey = `sitemap-bills-${page}`
+      const cacheKey = isState ? `sitemap-state-${page}` : `sitemap-bills-${page}`
       let xml = getCache(cacheKey)
       if (!xml) {
         if (!supabase) return res.status(503).type('text/plain').send('storage unavailable')
         const offset = (page - 1) * BILLS_PER_SITEMAP
-        const rows = await fetchFederalBillChunk(supabase, offset, BILLS_PER_SITEMAP)
+        const rows = isState
+          ? await fetchStateBillChunk(supabase, offset, BILLS_PER_SITEMAP)
+          : await fetchFederalBillChunk(supabase, offset, BILLS_PER_SITEMAP)
         let body = `<?xml version="1.0" encoding="UTF-8"?>\n`
         body += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n`
         for (const row of rows) {
-          const path = federalBillPath(row.congress_bill_id)
+          const path = isState ? stateBillPath(row) : federalBillPath(row.congress_bill_id)
           if (!path) continue
           body += urlTag(`${SITE_URL}${path}`, lastmodFor(row), 'weekly', '0.6')
         }
@@ -179,7 +233,7 @@ export function registerSitemapRoutes(app, { supabase, getCache, setCache }) {
       }
       sendXml(res, xml)
     } catch (e) {
-      console.error(`[sitemap] bills page ${page} error:`, e.message)
+      console.error(`[sitemap] ${isState ? 'state' : 'bills'} page ${page} error:`, e.message)
       res.status(500).type('text/plain').send('sitemap error')
     }
   })

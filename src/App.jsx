@@ -313,6 +313,7 @@ export default function App() {
           <Route path="/results"   element={<Results />} />
           <Route path="/search"    element={<Search />} />
           <Route path="/bill/:congress/:type/:number" element={<BillDetail />} />
+          <Route path="/states/:state/:session/:type/:number" element={<BillDetail />} />
           <Route path="/about"     element={<About />} />
           <Route path="/contact"   element={<Contact />} />
           <Route path="/support"   element={<Contact />} />

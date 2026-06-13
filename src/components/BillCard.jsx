@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
+import { billHref } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillCard.module.css'
 
@@ -50,9 +51,10 @@ const WEB_ORIGIN = 'https://capitolkey.org'
 
 function shareBill(bill, analysis) {
   const text = `${bill.title}: ${analysis?.headline || ''}`
-  // Always use the production web URL so shared links work for recipients
+  // Always use the production web URL so shared links work for recipients.
+  // billHref emits the clean /states/... canonical for state bills, /bill/... for federal.
   const origin = window.location.origin.startsWith('capacitor://') ? WEB_ORIGIN : window.location.origin
-  const url = `${origin}/bill/${bill.congress}/${bill.type.toLowerCase()}/${bill.number}`
+  const url = `${origin}${billHref(bill, { canonical: true })}`
   if (navigator.share) {
     navigator.share({ title: bill.title, text, url }).catch(() => {})
   } else {
@@ -129,10 +131,9 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
   }
 
   function openDetail() {
-    const legiscanParam = bill.legiscan_bill_id ? `?legiscan_id=${bill.legiscan_bill_id}` : ''
-    navigate(`/bill/${bill.congress || 0}/${bill.type.toLowerCase()}/${bill.number}${legiscanParam}`, {
-      state: { bill, analysis }
-    })
+    // billHref → clean /states/... for state bills; /bill/...?legiscan_id= for
+    // federal (and sessionless state bills) so the detail page resolves as before.
+    navigate(billHref(bill), { state: { bill, analysis } })
   }
 
   return (
