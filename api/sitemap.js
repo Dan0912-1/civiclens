@@ -69,12 +69,23 @@ function sendXml(res, body) {
   res.send(body)
 }
 
-async function countFederalBills(supabase) {
-  const { count, error } = await supabase
-    .from('bills')
-    .select('congress_bill_id', { count: 'exact', head: true })
+// Federal sitemap pool: US bills with a parseable congress id, gated to the
+// curated feed_eligible "hot pool" (ranker-promoted, full_text present — see
+// billRanker.js). Advertising only these keeps the sitemap to bills that render
+// as real content and that Google will actually index, instead of every thin
+// stub that just lands in "Crawled, currently not indexed". Count and chunk MUST
+// share this filter or offset pagination drifts.
+function federalBillsFilter(query) {
+  return query
     .eq('jurisdiction', 'US')
     .not('congress_bill_id', 'is', null)
+    .eq('feed_eligible', true)
+}
+
+async function countFederalBills(supabase) {
+  const { count, error } = await federalBillsFilter(
+    supabase.from('bills').select('congress_bill_id', { count: 'exact', head: true })
+  )
   if (error) throw error
   return count || 0
 }
@@ -86,13 +97,9 @@ async function fetchFederalBillChunk(supabase, offset, limit) {
   while (rows.length < limit) {
     const from = offset + rows.length
     const to = from + Math.min(DB_PAGE, limit - rows.length) - 1
-    const { data, error } = await supabase
-      .from('bills')
-      .select('congress_bill_id, latest_action_date, synced_at')
-      .eq('jurisdiction', 'US')
-      .not('congress_bill_id', 'is', null)
-      .order('congress_bill_id', { ascending: true })
-      .range(from, to)
+    const { data, error } = await federalBillsFilter(
+      supabase.from('bills').select('congress_bill_id, latest_action_date, synced_at')
+    ).order('congress_bill_id', { ascending: true }).range(from, to)
     if (error) throw error
     if (!data || data.length === 0) break
     rows.push(...data)
@@ -101,12 +108,17 @@ async function fetchFederalBillChunk(supabase, offset, limit) {
   return rows
 }
 
-// State-bill sitemap pool: every non-federal jurisdiction we don't exclude,
-// with a title (the floor for a meaningful render). Count and chunk MUST apply
-// the identical filter or offset pagination drifts. Returns the chained query so
-// callers add their own count/order/range.
+// State-bill sitemap pool: non-federal jurisdictions we don't exclude, gated to
+// the curated feed_eligible "hot pool" (ranker-promoted, full_text present — see
+// billRanker.js). This drops ~215k thin stubs that would only land in "Crawled,
+// currently not indexed" and dilute crawl budget, leaving the ~13k state bills
+// that render as real content. As the ranker promotes bills heating up during a
+// session, they enter the sitemap automatically and cool ones drop out, so the
+// advertised surface tracks quality instead of raw catalog size. Count and chunk
+// MUST apply the identical filter or offset pagination drifts. Returns the
+// chained query so callers add their own count/order/range.
 function stateBillsFilter(query) {
-  let q = query.neq('jurisdiction', 'US').not('title', 'is', null)
+  let q = query.neq('jurisdiction', 'US').not('title', 'is', null).eq('feed_eligible', true)
   for (const j of EXCLUDED_SITEMAP_JURISDICTIONS) q = q.neq('jurisdiction', j)
   return q
 }
