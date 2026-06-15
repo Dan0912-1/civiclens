@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>CapitolKey for Educators — One-Pager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --navy: #0A1929;
+    --navy-light: #1E2A38;
+    --brass: #A47E3B;
+    --brass-dark: #8A6830;
+    --cream: #F5F2EC;
+    --cream-dark: #ECE8DE;
+    --white: #FFFFFF;
+    --ink: #0A1929;
+    --ink-2: #3A4654;
+    --muted: #6B7583;
+    --border: #D8D4CA;
+    --senate-bg: #DFE3EB;
+    --senate: #1A3557;
+    --house-bg: #EDE0DE;
+    --house: #6B1F1F;
+    --forest: #1F4D3A;
+    --display: 'Playfair Display', Georgia, serif;
+    --body: 'Source Sans 3', system-ui, sans-serif;
+    --serif: 'Source Serif 4', Georgia, serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--cream-dark);
+    font-family: var(--body);
+    color: var(--ink);
+    line-height: 1.5;
+    padding: 24px 16px 64px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Screen-only toolbar */
+  .toolbar {
+    max-width: 8.5in;
+    margin: 0 auto 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+  }
+  .printBtn {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--navy);
+    color: var(--white);
+    border: 1px solid var(--navy);
+    padding: 10px 18px;
+    border-radius: 1px;
+    cursor: pointer;
+  }
+  .printBtn:hover { background: var(--navy-light); }
+
+  /* The sheet — sized to one US Letter page */
+  .sheet {
+    width: 8.5in;
+    min-height: 11in;
+    margin: 0 auto;
+    background: var(--white);
+    border: 1px solid var(--border);
+    box-shadow: 0 4px 24px rgba(10,25,41,0.12);
+    padding: 0.5in 0.55in;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Masthead ── */
+  .masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 2px solid var(--navy);
+    padding-bottom: 7px;
+  }
+  .brand { font-family: var(--display); font-size: 1.7rem; font-weight: 800; color: var(--navy); letter-spacing: -0.02em; }
+  .brand .key { color: var(--brass); }
+  .masthead .right { text-align: right; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--brass-dark);
+  }
+  .url { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-2); font-weight: 600; }
+
+  /* ── Lead ── */
+  .lead {
+    font-family: var(--display);
+    font-size: 1.34rem;
+    line-height: 1.28;
+    color: var(--navy);
+    letter-spacing: -0.015em;
+    margin: 13px 0 5px;
+  }
+  .lead u { text-decoration-color: var(--brass); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+  .subLead {
+    font-family: var(--serif);
+    font-size: 0.87rem;
+    color: var(--ink-2);
+    line-height: 1.5;
+    max-width: 7in;
+  }
+
+  .sectionLabel {
+    font-family: var(--mono);
+    font-size: 0.64rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brass-dark);
+    margin: 9px 0 6px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Why grid ── */
+  .why {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 22px;
+  }
+  .why .item { break-inside: avoid; }
+  .why .n { font-family: var(--mono); font-size: 0.66rem; font-weight: 600; color: var(--brass-dark); letter-spacing: 0.1em; }
+  .why h3 { font-family: var(--display); font-size: 1rem; color: var(--navy); margin: 1px 0 2px; }
+  .why p { font-family: var(--serif); font-size: 0.79rem; color: var(--ink-2); line-height: 1.4; }
+
+  /* ── Steps ── */
+  .steps { display: flex; gap: 10px; }
+  .step {
+    flex: 1;
+    background: var(--cream);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--navy);
+    border-radius: 1px;
+    padding: 8px 11px;
+  }
+  .step .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px;
+    background: var(--navy); color: var(--white);
+    font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
+    border-radius: 1px; margin-bottom: 6px;
+  }
+  .step h4 { font-family: var(--display); font-size: 0.92rem; color: var(--navy); margin-bottom: 2px; }
+  .step p { font-family: var(--serif); font-size: 0.78rem; color: var(--ink-2); line-height: 1.4; }
+
+  /* ── Sample bill card ── */
+  .sample {
+    border: 1px solid var(--border);
+    border-radius: 1px;
+    padding: 9px 14px;
+    position: relative;
+  }
+  .sample::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--brass); }
+  .sample .tags { display: flex; gap: 6px; margin-bottom: 5px; }
+  .pill {
+    font-family: var(--mono); font-size: 0.6rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 2px 7px; border-radius: 1px; border: 1px solid currentColor;
+  }
+  .pill.edu { color: var(--senate); }
+  .pill.house { color: var(--house); }
+  .sample .title { font-family: var(--display); font-size: 1rem; color: var(--navy); margin-bottom: 6px; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .split div { padding: 6px 9px; border-radius: 1px; font-family: var(--serif); font-size: 0.76rem; color: var(--ink-2); line-height: 1.35; }
+  .split .pass { background: var(--senate-bg); border-left: 2px solid var(--forest); }
+  .split .fail { background: var(--house-bg); border-left: 2px solid var(--house); }
+  .split .lbl { display: block; font-family: var(--mono); font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); margin-bottom: 2px; }
+
+  /* ── Use cases ── */
+  .uses { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 1px; padding: 4px 10px; background: var(--cream);
+  }
+
+  /* ── Footer band ── */
+  .foot {
+    margin-top: auto;
+    background: var(--navy);
+    color: var(--white);
+    border-radius: 1px;
+    padding: 11px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+  }
+  .foot .cta { font-family: var(--display); font-size: 1.05rem; }
+  .foot .cta strong { color: var(--brass); }
+  .foot .links { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em; color: rgba(255,255,255,0.8); text-align: right; line-height: 1.7; }
+  .fine {
+    font-family: var(--serif); font-size: 0.7rem; color: var(--muted);
+    text-align: center; margin-top: 7px; line-height: 1.35;
+  }
+
+  /* ── Print ── */
+  @media print {
+    @page { size: letter; margin: 0; }
+    body { background: var(--white); padding: 0; }
+    .toolbar { display: none; }
+    .sheet {
+      width: 100%; min-height: 100vh; margin: 0;
+      border: none; box-shadow: none;
+      padding: 0.45in 0.55in;
+    }
+    .foot, .step .num, .masthead, .split .pass, .split .fail, .sample::before, .step, .chip, .sample {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  }
+</style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <button class="printBtn" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+
+  <div class="sheet">
+
+    <header class="masthead">
+      <div class="brand">Capitol<span class="key">Key</span></div>
+      <div class="right">
+        <div class="eyebrow">For Educators</div>
+        <div class="url">capitolkey.org/educators</div>
+      </div>
+    </header>
+
+    <p class="lead">
+      Real bills moving through Congress and your state legislature,
+      <u>explained in plain language</u> your students can finish in minutes.
+    </p>
+    <p class="subLead">
+      CapitolKey is a strictly nonpartisan civic education tool for high school
+      classrooms. It is free for teachers and students, and students join your
+      class with a code in about thirty seconds. No accounts, no installs.
+    </p>
+
+    <div class="sectionLabel">Why it works in class</div>
+    <div class="why">
+      <div class="item">
+        <span class="n">01</span>
+        <h3>Strictly nonpartisan</h3>
+        <p>Explains what a bill does and who it affects. It never argues for or against a bill, party, or position. Safe to assign in any classroom.</p>
+      </div>
+      <div class="item">
+        <span class="n">02</span>
+        <h3>Plain language, real bills</h3>
+        <p>Current legislation rewritten at a high-school reading level, with a clear "if it passes" and "if it fails" breakdown.</p>
+      </div>
+      <div class="item">
+        <span class="n">03</span>
+        <h3>No student accounts</h3>
+        <p>Students join with a class code. No emails, no passwords, no app to install. Runs in any browser or on a Chromebook.</p>
+      </div>
+      <div class="item">
+        <span class="n">04</span>
+        <h3>Built-in engagement tracking</h3>
+        <p>Assign a bill with a due date, see who finished and how long they spent, and export results to CSV for your gradebook.</p>
+      </div>
+    </div>
+
+    <div class="sectionLabel">What your students see</div>
+    <div class="sample">
+      <div class="tags">
+        <span class="pill edu">Education</span>
+        <span class="pill house">House</span>
+      </div>
+      <div class="title">H.R. 2847: Student Loan Refinancing Act</div>
+      <div class="split">
+        <div class="pass"><span class="lbl">If it passes</span>Eligible borrowers can refinance federal loans to a lower 4.5% rate, cutting monthly payments.</div>
+        <div class="fail"><span class="lbl">If it fails</span>Current interest rates stay in place and repayment terms do not change.</div>
+      </div>
+    </div>
+
+    <div class="sectionLabel">Set it up in five minutes</div>
+    <div class="steps">
+      <div class="step">
+        <span class="num">1</span>
+        <h4>Create a class</h4>
+        <p>Free. You get a join code to share with your students.</p>
+      </div>
+      <div class="step">
+        <span class="num">2</span>
+        <h4>Assign a bill</h4>
+        <p>Pick legislation or let students explore by topic. Add instructions and a due date.</p>
+      </div>
+      <div class="step">
+        <span class="num">3</span>
+        <h4>Track and export</h4>
+        <p>See completions on your dashboard and export to your gradebook.</p>
+      </div>
+    </div>
+
+    <div class="sectionLabel">Drop it into what you already teach</div>
+    <div class="uses">
+      <span class="chip">Bell-ringers &amp; do-nows</span>
+      <span class="chip">Current-events Fridays</span>
+      <span class="chip">Debate &amp; seminar prep</span>
+      <span class="chip">Research projects</span>
+      <span class="chip">Sub plans</span>
+      <span class="chip">Civics &amp; government</span>
+    </div>
+
+    <div class="foot">
+      <div class="cta">Get started free at <strong>capitolkey.org/educators</strong></div>
+      <div class="links">
+        Questions: capitolkey.org/contact<br />
+        Free for teachers &amp; students
+      </div>
+    </div>
+
+    <p class="fine">
+      Built by a high school student who serves on his town's Board of Education,
+      on the belief that every student deserves the same clear civic information
+      that policy professionals have. Sourced from official Congressional and
+      state legislative records.
+    </p>
+
+  </div>
+
+</body>
+</html>

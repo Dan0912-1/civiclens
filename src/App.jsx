@@ -29,6 +29,7 @@ const TopicsIndex = lazy(() => import('./pages/TopicsIndex.jsx'))
 const Contact = lazy(() => import('./pages/Contact.jsx'))
 const Settings = lazy(() => import('./pages/Settings.jsx'))
 const Admin = lazy(() => import('./pages/Admin.jsx'))
+const Educators = lazy(() => import('./pages/Educators.jsx'))
 const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
 const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
 const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
@@ -65,6 +66,7 @@ const PAGE_TITLES = {
   '/terms': 'Terms of Service | CapitolKey',
   '/settings': 'Settings | CapitolKey',
   '/admin': 'Admin | CapitolKey',
+  '/educators': 'For Teachers | CapitolKey',
   '/classroom': 'Classrooms | CapitolKey',
   '/classroom/join': 'Join Classroom | CapitolKey',
 }
@@ -344,7 +346,7 @@ export default function App() {
           <Route path="/terms"     element={<Terms />} />
           <Route path="/settings"  element={<Settings />} />
           <Route path="/admin"          element={<Admin />} />
-          <Route path="/educators" element={<Navigate to="/classroom" replace />} />
+          <Route path="/educators" element={<Educators />} />
           <Route path="/classroom"       element={<TeacherDashboard />} />
           <Route path="/classroom/join"  element={<JoinClassroom />} />
           <Route path="/classroom/join/:code" element={<JoinClassroom />} />

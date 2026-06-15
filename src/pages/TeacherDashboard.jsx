@@ -1,23 +1,65 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getJoinedClassrooms } from '../lib/classroom'
 import CreateClassroomModal from '../components/CreateClassroomModal.jsx'
+import AuthModal from '../components/AuthModal.jsx'
 import styles from './TeacherDashboard.module.css'
 
 export default function TeacherDashboard() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { user } = useAuth()
   const [classrooms, setClassrooms] = useState([])
   const [anonClassrooms, setAnonClassrooms] = useState([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  const [showAuth, setShowAuth] = useState(false)
+  // Set when a "create a class" action is taken while logged out, so we can
+  // open the create modal automatically once sign-in completes.
+  const [pendingCreate, setPendingCreate] = useState(false)
   const [codeCopied, setCodeCopied] = useState(null)
 
   useEffect(() => {
     loadClassrooms()
   }, [user])
+
+  // Honor ?create=1 (used by the /educators landing CTA). Logged-in teachers
+  // jump straight into the create-class modal; logged-out teachers get the
+  // sign-in modal first, then land in create via the pendingCreate effect.
+  // Strip the param afterward so a refresh doesn't reopen the modal.
+  useEffect(() => {
+    if (searchParams.get('create') !== '1') return
+    if (user) {
+      setShowCreate(true)
+    } else {
+      setPendingCreate(true)
+      setShowAuth(true)
+    }
+    const next = new URLSearchParams(searchParams)
+    next.delete('create')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, user, setSearchParams])
+
+  // Once a logged-out teacher signs in via the "create a class" path, open the
+  // create modal so the action they intended completes without an extra click.
+  useEffect(() => {
+    if (user && pendingCreate) {
+      setPendingCreate(false)
+      setShowAuth(false)
+      setShowCreate(true)
+    }
+  }, [user, pendingCreate])
+
+  function startCreate() {
+    if (user) {
+      setShowCreate(true)
+    } else {
+      setPendingCreate(true)
+      setShowAuth(true)
+    }
+  }
 
   async function loadClassrooms() {
     setLoading(true)
@@ -75,11 +117,9 @@ export default function TeacherDashboard() {
         <div className={styles.header}>
           <h1>Classrooms</h1>
           <div className={styles.actions}>
-            {user && (
-              <button className={styles.btnPrimary} onClick={() => setShowCreate(true)}>
-                Create Class
-              </button>
-            )}
+            <button className={styles.btnPrimary} onClick={startCreate}>
+              {user ? 'Create Class' : 'Sign in to create'}
+            </button>
             <button className={styles.btnSecondary} onClick={() => navigate('/classroom/join')}>
               Join a Class
             </button>
@@ -89,8 +129,11 @@ export default function TeacherDashboard() {
         {!hasAnything && (
           <div className={styles.empty}>
             <h2>Welcome to Classrooms</h2>
-            <p>Join a class with a code from your teacher to see assigned bills. Teachers can sign in to create classes and track engagement.</p>
+            <p>Teachers: create a class in about two minutes and share the join code with your students. Students: join a class with the code from your teacher to see assigned bills.</p>
             <div className={styles.emptyActions}>
+              <button className={styles.btnPrimary} onClick={startCreate}>
+                {user ? 'Create a class' : 'Sign in to create a class'}
+              </button>
               <button className={styles.btnSecondary} onClick={() => navigate('/classroom/join')}>
                 Join with Code
               </button>
@@ -187,6 +230,11 @@ export default function TeacherDashboard() {
           onCreated={handleCreated}
         />
       )}
+
+      <AuthModal
+        isOpen={showAuth}
+        onClose={() => { setShowAuth(false); setPendingCreate(false) }}
+      />
     </main>
   )
 }
