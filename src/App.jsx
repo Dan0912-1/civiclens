@@ -96,10 +96,27 @@ export default function App() {
   // Scroll to top on route change
   useEffect(() => { window.scrollTo(0, 0) }, [pathname])
 
-  // Dynamic page title per route
+  // Per-route document title + self-referencing canonical.
+  //
+  // index.html ships a hardcoded homepage canonical. Without this, every
+  // client-rendered route (/about, /search, /topics, ...) keeps that tag and
+  // tells Google "my canonical is the homepage", so Search Console drops them as
+  // "Alternate page with proper canonical tag" instead of indexing them.
+  // Googlebot executes JS, so rewriting the tag here fixes the signal. We pin the
+  // apex origin (not window.location.origin) so the www/preview/capacitor hosts
+  // all consolidate onto https://capitolkey.org. Route components that need a
+  // more specific canonical (e.g. TopicPage) may still override it.
   useEffect(() => {
     const base = pathname.split('/').slice(0, 2).join('/')
     document.title = PAGE_TITLES[pathname] || PAGE_TITLES[base] || 'CapitolKey'
+
+    let link = document.head.querySelector('link[rel="canonical"]')
+    if (!link) {
+      link = document.createElement('link')
+      link.setAttribute('rel', 'canonical')
+      document.head.appendChild(link)
+    }
+    link.setAttribute('href', `https://capitolkey.org${pathname}`)
   }, [pathname])
 
   // Hide splash screen with a brief branded moment + smooth haptic wave
