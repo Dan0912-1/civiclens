@@ -146,6 +146,19 @@ function validatePersonalizeShape(parsed) {
     .slice(0, 5)
   parsed.civic_actions = actions
 
+  // Guarantee every civic_action carries a working URL. gpt-oss (and qwen
+  // before it) occasionally drops the link on one action despite the prompt
+  // rule, so backfill the find-your-representative page. Keeps total <= 500.
+  const FALLBACK_ACTION_SUFFIX =
+    'Find and contact your U.S. representative: https://www.house.gov/representatives/find-your-representative'
+  for (const a of parsed.civic_actions) {
+    if (!/https?:\/\//i.test(a.how)) {
+      const room = 500 - FALLBACK_ACTION_SUFFIX.length - 1
+      const base = a.how ? a.how.slice(0, Math.max(0, room)).trimEnd() + ' ' : ''
+      a.how = base + FALLBACK_ACTION_SUFFIX
+    }
+  }
+
   return parsed
 }
 
@@ -401,12 +414,13 @@ async function callGroqOnce({ system, userPrompt, maxTokens = 700, temperature =
     },
     signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
-      model: 'qwen/qwen3-32b',
-      max_tokens: Math.max(maxTokens, 1024), // Qwen needs more room
+      model: 'openai/gpt-oss-120b',
+      max_tokens: Math.max(maxTokens, 1024), // headroom for gpt-oss reasoning + JSON
       temperature,
+      reasoning_effort: 'low', // fast path; gpt-oss ignores Qwen's /no_think switch
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: userPrompt + '\n\n/no_think' }
+        { role: 'user', content: userPrompt }
       ]
     })
   })

@@ -4,7 +4,7 @@
  * for a small batch of trending + student-relevant federal bills, and store
  * them in bill_explainers so topic/bill pages and the sitemap can surface them.
  *
- * Reuses the app's LLM path: Groq Qwen3-32B primary, Claude Haiku 4.5 fallback
+ * Reuses the app's LLM path: Groq gpt-oss-120b primary, Claude Haiku 4.5 fallback
  * (same models as api/server.js callLLM). No new provider is introduced.
  *
  * SAFE TO RE-RUN. Idempotent:
@@ -40,7 +40,7 @@ const CANDIDATE_POOL = 400         // top feed-eligible federal bills to conside
 const TREND_DAYS = 14              // interaction window for the trending signal
 const TREND_WEIGHT = 5             // each recent interaction ~ +5 priority points
 const SOURCE_MAX_CHARS = 4000      // cap source text sent to the model
-const MODEL_GROQ = 'qwen/qwen3-32b'
+const MODEL_GROQ = 'openai/gpt-oss-120b'
 const MODEL_HAIKU = 'claude-haiku-4-5-20251001'
 
 // ─── CLI args ────────────────────────────────────────────────────────────────
@@ -150,9 +150,10 @@ async function callGroq(system, user, maxTokens = 700) {
       model: MODEL_GROQ,
       max_tokens: Math.max(maxTokens, 1024),
       temperature: 0.3,
+      reasoning_effort: 'low', // gpt-oss reasoning channel; ignores Qwen's /no_think
       messages: [
         { role: 'system', content: system },
-        { role: 'user', content: user + '\n\n/no_think' },
+        { role: 'user', content: user },
       ],
     }),
   })
