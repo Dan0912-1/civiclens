@@ -3,8 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getJoinedClassrooms } from '../lib/classroom'
+import { getGoogleStatus, getGoogleConnectUrl, disconnectGoogle, googleErrorMessage } from '../lib/googleClassroom'
 import CreateClassroomModal from '../components/CreateClassroomModal.jsx'
+import { Capacitor } from '@capacitor/core'
+import { Browser } from '@capacitor/browser'
+import { App } from '@capacitor/app'
 import styles from './TeacherDashboard.module.css'
+
+const isNative = Capacitor.getPlatform() !== 'web'
 
 export default function TeacherDashboard() {
   const navigate = useNavigate()
@@ -14,6 +20,9 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [codeCopied, setCodeCopied] = useState(null)
+  const [googleStatus, setGoogleStatus] = useState(null)
+  const [googleBusy, setGoogleBusy] = useState(false)
+  const [googleNotice, setGoogleNotice] = useState(null)
 
   useEffect(() => {
     loadClassrooms()
@@ -38,6 +47,92 @@ export default function TeacherDashboard() {
       } catch {}
     }
     setLoading(false)
+  }
+
+  // ─── Google Classroom connection ───────────────────────────────────────────
+  // Status for logged-in users (teachers connect; students just won't bother).
+  useEffect(() => {
+    if (!user) { setGoogleStatus(null); return }
+    refreshGoogleStatus()
+  }, [user])
+
+  // Surface the OAuth return on web (?google=connected | ?google=error&reason=).
+  // Native is handled by the deep-link listener below.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const g = params.get('google')
+    if (!g) return
+    if (g === 'connected') setGoogleNotice({ type: 'success', msg: 'Google Classroom connected.' })
+    else setGoogleNotice({ type: 'error', msg: googleErrorMessage(params.get('reason')) })
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [])
+
+  // Native: catch the custom-scheme deep link after the in-app browser flow.
+  useEffect(() => {
+    if (!isNative) return
+    let handle
+    App.addListener('appUrlOpen', async (event) => {
+      const url = event?.url || ''
+      if (!url.includes('google-connected')) return
+      try { await Browser.close() } catch {}
+      const params = new URLSearchParams(url.split('?')[1] || '')
+      const g = params.get('google')
+      if (g === 'connected') setGoogleNotice({ type: 'success', msg: 'Google Classroom connected.' })
+      else setGoogleNotice({ type: 'error', msg: googleErrorMessage(params.get('reason')) })
+      refreshGoogleStatus()
+    }).then(h => { handle = h })
+    return () => { handle?.remove() }
+  }, [])
+
+  async function refreshGoogleStatus() {
+    try {
+      const session = await getSessionSafe()
+      const token = session?.access_token
+      if (!token) return
+      setGoogleStatus(await getGoogleStatus(token))
+    } catch {}
+  }
+
+  async function handleConnectGoogle() {
+    setGoogleBusy(true)
+    setGoogleNotice(null)
+    try {
+      const session = await getSessionSafe()
+      const token = session?.access_token
+      if (!token) {
+        setGoogleNotice({ type: 'error', msg: 'Please sign in first.' })
+        setGoogleBusy(false)
+        return
+      }
+      const url = await getGoogleConnectUrl(token, { platform: isNative ? 'native' : 'web', returnTo: '/classroom' })
+      if (isNative) {
+        await Browser.open({ url })
+        setGoogleBusy(false) // deep-link listener finishes the flow
+      } else {
+        window.location.href = url // full navigation to Google consent
+      }
+    } catch (err) {
+      setGoogleNotice({ type: 'error', msg: err.message || 'Could not start Google connect.' })
+      setGoogleBusy(false)
+    }
+  }
+
+  async function handleDisconnectGoogle() {
+    if (!window.confirm('Disconnect Google Classroom? Assignments already pushed stay in Google Classroom, but CapitolKey can no longer send grades.')) return
+    setGoogleBusy(true)
+    try {
+      const session = await getSessionSafe()
+      const token = session?.access_token
+      if (token) {
+        await disconnectGoogle(token)
+        setGoogleNotice({ type: 'success', msg: 'Google Classroom disconnected.' })
+      }
+      await refreshGoogleStatus()
+    } catch (err) {
+      setGoogleNotice({ type: 'error', msg: err.message || 'Could not disconnect.' })
+    } finally {
+      setGoogleBusy(false)
+    }
   }
 
   function handleCreated() {
@@ -72,6 +167,12 @@ export default function TeacherDashboard() {
     <main className={styles.page}>
       <div className={styles.container}>
 
+        {googleNotice && (
+          <div className={`${styles.notice} ${googleNotice.type === 'success' ? styles.noticeSuccess : styles.noticeError}`}>
+            {googleNotice.msg}
+          </div>
+        )}
+
         <div className={styles.header}>
           <h1>Classrooms</h1>
           <div className={styles.actions}>
@@ -85,6 +186,42 @@ export default function TeacherDashboard() {
             </button>
           </div>
         </div>
+
+        {user && googleStatus?.configured && (
+          <div className={styles.googleCard}>
+            <div className={styles.googleInfo}>
+              <span className={styles.googleTitle}>Google Classroom</span>
+              {googleStatus.connected ? (
+                <span className={styles.googleMeta}>
+                  Connected{googleStatus.email ? ` as ${googleStatus.email}` : ''}.
+                  {googleStatus.needsReconsent ? ' Reconnect to finish enabling grade passback.' : ''}
+                </span>
+              ) : (
+                <span className={styles.googleMeta}>
+                  Push CapitolKey bills into your classes as graded assignments.
+                </span>
+              )}
+            </div>
+            <div className={styles.googleActions}>
+              {googleStatus.connected ? (
+                <>
+                  {googleStatus.needsReconsent && (
+                    <button className={styles.btnPrimary} disabled={googleBusy} onClick={handleConnectGoogle}>
+                      Reconnect
+                    </button>
+                  )}
+                  <button className={styles.googleDisconnect} disabled={googleBusy} onClick={handleDisconnectGoogle}>
+                    Disconnect
+                  </button>
+                </>
+              ) : (
+                <button className={styles.btnPrimary} disabled={googleBusy} onClick={handleConnectGoogle}>
+                  {googleBusy ? 'Connecting...' : 'Connect Google Classroom'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {!hasAnything && (
           <div className={styles.empty}>
