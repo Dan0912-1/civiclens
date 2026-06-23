@@ -236,9 +236,98 @@
   to { transform: rotate(360deg); }
 }
 
+/* ─── Google Classroom connection ─────────────────────────────────────────── */
+.googleCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 1px;
+  padding: 16px 20px;
+  margin-bottom: var(--space-xl);
+  flex-wrap: wrap;
+}
+
+.googleInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.googleTitle {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--navy);
+}
+
+.googleMeta {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+.googleActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.googleDisconnect {
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  transition: color 0.15s;
+}
+
+.googleDisconnect:hover { color: var(--house); }
+
+.btnPrimary:disabled,
+.googleDisconnect:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.notice {
+  padding: 10px 16px;
+  border-radius: 1px;
+  margin-bottom: var(--space-md);
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.noticeSuccess {
+  background: var(--senate-bg);
+  color: var(--senate-text);
+  border: 1px solid var(--senate);
+}
+
+.noticeError {
+  background: var(--house-bg);
+  color: var(--house-text);
+  border: 1px solid var(--house);
+}
+
 @media (max-width: 640px) {
   .page { padding: var(--space-lg) var(--space-md); }
   .header { flex-direction: column; }
   .grid { grid-template-columns: 1fr; }
   .emptyActions { flex-direction: column; }
+  .googleCard { flex-direction: column; align-items: stretch; }
+  .googleActions { justify-content: flex-end; }
 }

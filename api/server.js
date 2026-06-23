@@ -27,6 +27,17 @@ import { registerBillRenderRoutes } from './billRenderer.js'
 import { registerTopicRoutes } from './topics.js'
 import { resolveStateBillRow, slugifySession } from './stateBills.js'
 import { registerBillOgImageRoutes } from './billOgImage.js'
+import {
+  googleConfigured,
+  buildConsentUrl,
+  exchangeCodeForTokens,
+  signState,
+  verifyState,
+  encryptSecret,
+  decryptSecret,
+  revokeRefreshToken,
+  hasRequiredScopes,
+} from './googleClassroom.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -6268,6 +6279,143 @@ app.get('/api/classroom/:id/export', classroomLimiter, async (req, res) => {
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
     console.error('[classroom] export error:', err.message)
     res.status(500).json({ error: 'Failed to export' })
+  }
+})
+
+// ─── Google Classroom integration ────────────────────────────────────────────
+// Dedicated server-side OAuth (access_type=offline) so we hold a refresh token
+// per teacher for asynchronous grade passback. Tokens are encrypted at rest in
+// google_oauth_tokens; all crypto + OAuth lives in api/googleClassroom.js.
+
+// Public limiter for the OAuth callback (Google redirects here with no auth
+// header). Default key generator is IP-based and IPv6-safe.
+const googleOAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please slow down.' },
+})
+
+// Where to send the browser after the OAuth callback. On native we deep-link
+// back into the app via the custom scheme; on web we bounce to the frontend
+// origin. `query` carries google=connected | google=error&reason=...
+function buildGoogleAppRedirect(platform, returnTo, query) {
+  const path = (typeof returnTo === 'string' && returnTo.startsWith('/') && !returnTo.startsWith('//'))
+    ? returnTo : '/classroom'
+  if (platform === 'native') {
+    return `com.danieljacius.capitolkey://google-connected?${query}&returnTo=${encodeURIComponent(path)}`
+  }
+  const base = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
+  const sep = path.includes('?') ? '&' : '?'
+  return `${base}${path}${sep}${query}`
+}
+
+// Step 1: teacher clicks "Connect Google Classroom". Returns the Google consent
+// URL; the frontend navigates there (web) or opens it in the in-app browser
+// (native). The initiating user's id is bound into a signed, 10-min `state` so
+// the callback (which has no auth header) can attribute the token safely.
+app.get('/api/google/oauth/start', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!googleConfigured()) return res.status(503).json({ error: 'Google Classroom is not configured' })
+    const platform = req.query.platform === 'native' ? 'native' : 'web'
+    let returnTo = typeof req.query.returnTo === 'string' ? req.query.returnTo : '/classroom'
+    if (!returnTo.startsWith('/') || returnTo.startsWith('//')) returnTo = '/classroom'
+    const state = signState({
+      uid: user.id,
+      platform,
+      returnTo,
+      nonce: crypto.randomBytes(8).toString('hex'),
+      exp: Math.floor(Date.now() / 1000) + 600,
+    })
+    res.json({ url: buildConsentUrl(state) })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[google] oauth start error:', err.message)
+    res.status(500).json({ error: 'Failed to start Google connect' })
+  }
+})
+
+// Step 2: Google redirects here with ?code & ?state. Exchange the code, store
+// the encrypted refresh token, and redirect back into the app. Always redirects
+// (never returns JSON) so the teacher lands somewhere usable on success or error.
+app.get('/api/google/oauth/callback', googleOAuthLimiter, async (req, res) => {
+  const fail = (reason, platform = 'web', returnTo = '/classroom') =>
+    res.redirect(buildGoogleAppRedirect(platform, returnTo, `google=error&reason=${encodeURIComponent(reason)}`))
+  try {
+    if (!googleConfigured() || !supabase) return fail('not_configured')
+    const { code, state, error: oauthError } = req.query
+    const payload = verifyState(typeof state === 'string' ? state : '')
+    if (!payload) return fail('bad_state')
+    if (oauthError) return fail(String(oauthError), payload.platform, payload.returnTo)
+    if (!code || typeof code !== 'string') return fail('no_code', payload.platform, payload.returnTo)
+
+    const tokens = await exchangeCodeForTokens(code)
+    // prompt=consent should always yield a refresh token; if Google withheld it
+    // (rare), there's nothing to persist for offline passback.
+    if (!tokens.refreshToken) return fail('no_refresh_token', payload.platform, payload.returnTo)
+
+    const { error: upErr } = await supabase.from('google_oauth_tokens').upsert({
+      user_id: payload.uid,
+      google_email: tokens.email,
+      refresh_token_enc: encryptSecret(tokens.refreshToken),
+      access_token_enc: tokens.accessToken ? encryptSecret(tokens.accessToken) : null,
+      access_token_expires_at: tokens.expiryDate,
+      scopes: tokens.scope,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id' })
+    if (upErr) {
+      console.error('[google] token upsert error:', upErr.message)
+      return fail('store_failed', payload.platform, payload.returnTo)
+    }
+
+    res.redirect(buildGoogleAppRedirect(payload.platform, payload.returnTo, 'google=connected'))
+  } catch (err) {
+    console.error('[google] oauth callback error:', err.message)
+    return fail('exception')
+  }
+})
+
+// Is the current teacher connected? Drives the dashboard UI.
+app.get('/api/google/status', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!googleConfigured() || !supabase) return res.json({ connected: false, configured: false })
+    const { data: row } = await supabase.from('google_oauth_tokens')
+      .select('google_email, scopes, connected_at').eq('user_id', user.id).maybeSingle()
+    if (!row) return res.json({ connected: false, configured: true })
+    res.json({
+      connected: true,
+      configured: true,
+      email: row.google_email || null,
+      connectedAt: row.connected_at,
+      // If a scope was added since they connected, the UI prompts a reconnect.
+      needsReconsent: !hasRequiredScopes(row.scopes),
+    })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[google] status error:', err.message)
+    res.status(500).json({ error: 'Failed to check Google status' })
+  }
+})
+
+// Revoke at Google (best-effort) and delete the stored token.
+app.post('/api/google/disconnect', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { data: row } = await supabase.from('google_oauth_tokens')
+      .select('refresh_token_enc').eq('user_id', user.id).maybeSingle()
+    if (row?.refresh_token_enc) {
+      try { await revokeRefreshToken(decryptSecret(row.refresh_token_enc)) } catch { /* revoke is best-effort */ }
+    }
+    await supabase.from('google_oauth_tokens').delete().eq('user_id', user.id)
+    res.json({ disconnected: true })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[google] disconnect error:', err.message)
+    res.status(500).json({ error: 'Failed to disconnect Google' })
   }
 })
 

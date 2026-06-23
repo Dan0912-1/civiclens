@@ -1,0 +1,18 @@
+# Vercel only builds the Vite frontend (see vercel.json: framework=vite,
+# buildCommand=vite build, output=dist). Everything dynamic — /api/*, sitemaps,
+# bot prerender, OG images — is proxied to the Railway backend via rewrites, so
+# Vercel never needs these directories.
+#
+# Critically, Vercel's zero-config Serverless Functions feature auto-bundles any
+# root-level `api/` directory as functions, regardless of framework. Those
+# functions are dead here (the rewrites shadow them), and bundling api/server.js
+# pulls heavy backend deps (googleapis, etc.) into a function that can exceed
+# Vercel's size limit and fail the deploy. Excluding api/ stops that.
+#
+# NOTE: do NOT ignore scripts/ — npm's postinstall runs scripts/patch-apple-signin.sh
+# during Vercel's install step.
+
+api
+supabase
+ios
+android
