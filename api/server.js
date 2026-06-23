@@ -1835,29 +1835,72 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
       res.status(500).json({ error: 'Failed to fetch bill detail' })
     }
   } else {
-    // Fallback: try to search LegiScan for this bill by number
+    // Deep-link / crawler path: NO ?legiscan_id (Google results, shared URLs,
+    // the human counterpart of the bot prerender). Resolve from OUR bills table
+    // first so a cold load always returns real content — mirrors /api/state-bill
+    // and the bot prerender's lookupFederalBill (billRenderer.js). The federal
+    // sitemap is built from this same table (feed_eligible + congress_bill_id
+    // present), so every indexed URL resolves here.
+    //
+    // The old path searched LegiScan live by bill number and soft-404'd on a
+    // format mismatch (our "HCONRES73" vs LegiScan's "HCR73"), so EVERY
+    // Google-indexed federal bill page 404'd on click even though the bot
+    // prerender rendered it fine — impressions with nothing behind them.
     const cacheKey = `bill-${congress}-${type}-${number}`
     const cached = getCache(cacheKey)
     if (cached) return res.json(cached)
 
+    if (!supabase) return res.status(503).json({ error: 'Storage unavailable' })
+
     try {
-      const billNumber = `${type.toUpperCase()}${number}`
-      const data = await cachedLegiscanSearch('US', billNumber)
-      const results = data.searchresult ? Object.values(data.searchresult).filter(r => r.bill_id) : []
-      const match = results.find(r => r.bill_number === billNumber)
-      if (match) {
-        const detailData = await cachedGetBill(match.bill_id)
-        const b = detailData.bill
-        const result = {
-          bill: {
-            congress: currentFederalCongress(),
-            type,
-            number: parseInt(number, 10),
-            title: b.title,
-            description: b.description || '',
-            originChamber: originChamberFromType(type),
-            latestAction: { text: b.status_desc || b.last_action || '', actionDate: b.status_date || '' },
-            url: b.url || '',
+      const congressBillId = `${congress}-${String(type).toLowerCase()}-${number}`
+      const { data: row, error } = await supabase
+        .from('bills')
+        .select('congress_bill_id, bill_type, bill_number, title, description, crs_summary, origin_chamber, latest_action, latest_action_date, url, status_stage, legiscan_bill_id')
+        .eq('congress_bill_id', congressBillId)
+        .maybeSingle()
+      if (error) {
+        console.error('[bill] federal lookup error:', error.message)
+        return res.status(500).json({ error: 'Failed to fetch bill detail' })
+      }
+      if (!row) return res.status(404).json({ error: 'Bill not found' })
+
+      // Floor payload built straight from our DB row — always renders content.
+      const bill = {
+        congress: parseInt(congress, 10) || currentFederalCongress(),
+        type,
+        number: parseInt(number, 10),
+        title: row.title || '',
+        description: row.crs_summary || row.description || '',
+        originChamber: row.origin_chamber || originChamberFromType(type),
+        latestAction: { text: row.latest_action || '', actionDate: row.latest_action_date || '' },
+        url: row.url || '',
+        sponsors: [],
+        cosponsors: { count: 0 },
+        policyArea: { name: '' },
+        introducedDate: row.latest_action_date || '',
+        committees: { count: 0 },
+        state: 'US',
+        legiscan_bill_id: row.legiscan_bill_id || null,
+        history: [],
+        progress: [],
+        statusStage: row.status_stage || 'introduced',
+      }
+
+      // Best-effort enrichment with the full LegiScan detail (cached). Never let
+      // a LegiScan hiccup turn into an empty page — the floor payload renders.
+      if (row.legiscan_bill_id && LEGISCAN_KEY) {
+        try {
+          const data = await cachedGetBill(row.legiscan_bill_id)
+          const b = data.bill || {}
+          Object.assign(bill, {
+            title: b.title || bill.title,
+            description: b.description || bill.description,
+            latestAction: {
+              text: b.status_desc || b.last_action || bill.latestAction.text,
+              actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate,
+            },
+            url: b.url || bill.url,
             sponsors: (b.sponsors || []).map(s => ({
               firstName: s.first_name || s.name?.split(' ')[0] || '',
               lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
@@ -1866,17 +1909,18 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
             })),
             cosponsors: { count: Math.max(0, (b.sponsors || []).length - 1) },
             policyArea: { name: b.subjects?.[0]?.subject_name || '' },
-            introducedDate: b.status_date || '',
+            introducedDate: b.status_date || bill.introducedDate,
             committees: { count: (b.committee || []).length },
-            legiscan_bill_id: b.bill_id,
             ...transformBillTimeline(b),
-          },
+          })
+        } catch (err) {
+          console.error('[bill] enrich error:', err.message)
         }
-        setCache(cacheKey, result)
-        res.json(result)
-      } else {
-        res.status(404).json({ error: 'Bill not found' })
       }
+
+      const result = { bill }
+      setCache(cacheKey, result)
+      res.json(result)
     } catch (err) {
       console.error('Bill detail fetch error:', err.message)
       res.status(500).json({ error: 'Failed to fetch bill detail' })
