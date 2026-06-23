@@ -5,6 +5,7 @@ import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { initAnalytics } from './lib/analytics'
 import App from './App.jsx'
 
 // Self-hosted fonts (latin subsets), replacing the render-blocking Google
@@ -47,6 +48,9 @@ if (sentryDsn) {
     })
     .catch(() => {})
 }
+
+// Google Analytics 4 — no-ops off the live web host (see src/lib/analytics.js).
+initAnalytics()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
