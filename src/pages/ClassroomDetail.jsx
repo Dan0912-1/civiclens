@@ -9,6 +9,7 @@ import {
   updateClassroom, leaveClassroom
 } from '../lib/classroom'
 import AssignBillModal from '../components/AssignBillModal.jsx'
+import { syncGoogleGrades } from '../lib/googleClassroom'
 import styles from './ClassroomDetail.module.css'
 
 export default function ClassroomDetail() {
@@ -22,6 +23,7 @@ export default function ClassroomDetail() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('assignments')
   const [showAssign, setShowAssign] = useState(false)
+  const [syncingId, setSyncingId] = useState(null)
   const [codeCopied, setCodeCopied] = useState(false)
   const [token, setToken] = useState(null)
   const [loadError, setLoadError] = useState(null)
@@ -119,6 +121,22 @@ export default function ClassroomDetail() {
     } catch (err) {
       setAssignments(previous)
       showToast(err?.message || 'Could not remove assignment', 'error')
+    }
+  }
+
+  // Re-push grades for everyone who completed a Google-linked assignment.
+  async function handleSyncGrades(assignmentId) {
+    setSyncingId(assignmentId)
+    try {
+      const t = await getToken()
+      if (!t) { showToast('Please sign in again', 'error'); return }
+      const res = await syncGoogleGrades(t, assignmentId)
+      const pending = res.failed ? `, ${res.failed} pending` : ''
+      showToast(`Synced ${res.graded} grade${res.graded === 1 ? '' : 's'} to Google Classroom${pending}`)
+    } catch (err) {
+      showToast(err.message || 'Could not sync grades', 'error')
+    } finally {
+      setSyncingId(null)
     }
   }
 
@@ -350,6 +368,7 @@ export default function ClassroomDetail() {
                         </span>
                         {(a.bill_data?.title || a.bill_id).slice(0, 100)}
                       </button>
+                      {a.google_coursework_id && <span className={styles.googleBadge}>Google Classroom</span>}
                       {a.completed && <span className={styles.completedBadge}>Completed</span>}
                     </div>
 
@@ -374,6 +393,25 @@ export default function ClassroomDetail() {
                           onClick={() => handleRemoveAssignment(a.id)}
                         >
                           Remove
+                        </button>
+                      )}
+                      {a.google_alternate_link && (
+                        <a
+                          className={styles.googleLink}
+                          href={a.google_alternate_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Open in Classroom
+                        </a>
+                      )}
+                      {isTeacher && a.google_coursework_id && (
+                        <button
+                          className={styles.syncBtn}
+                          disabled={syncingId === a.id}
+                          onClick={() => handleSyncGrades(a.id)}
+                        >
+                          {syncingId === a.id ? 'Syncing...' : 'Sync grades'}
                         </button>
                       )}
                     </div>

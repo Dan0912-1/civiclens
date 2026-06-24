@@ -37,6 +37,8 @@ import {
   decryptSecret,
   revokeRefreshToken,
   hasRequiredScopes,
+  getClassroomClient,
+  buildBillUrl,
 } from './googleClassroom.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
@@ -5895,7 +5897,7 @@ app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => 
   try {
     const user = await requireClassroomMember(req, req.params.id)
     const { data: assignments } = await supabase.from('classroom_assignments')
-      .select('id, bill_id, bill_data, instructions, due_date, created_at')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at, google_coursework_id, google_alternate_link')
       .eq('classroom_id', req.params.id)
       .order('created_at', { ascending: false })
       .limit(500)
@@ -6416,6 +6418,271 @@ app.post('/api/google/disconnect', classroomLimiter, async (req, res) => {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     console.error('[google] disconnect error:', err.message)
     res.status(500).json({ error: 'Failed to disconnect Google' })
+  }
+})
+
+// ─── Google Classroom: assign + grade passback (Phase 2/3) ───────────────────
+
+// True for Google API errors that mean the teacher must reconnect (revoked /
+// expired refresh token).
+function isGoogleAuthError(err) {
+  const m = String(err?.message || '')
+  return m.includes('invalid_grant') || m.includes('invalid_token')
+    || err?.response?.status === 401 || err?.code === 401
+}
+
+// Load a teacher's stored Google connection and return an authed Classroom
+// client + the row. Throws 'GoogleNotConnected' if they haven't connected.
+async function loadGoogleClientForUser(userId) {
+  if (!supabase) throw new Error('Service unavailable')
+  const { data: row } = await supabase.from('google_oauth_tokens')
+    .select('refresh_token_enc, google_email').eq('user_id', userId).maybeSingle()
+  if (!row?.refresh_token_enc) throw new Error('GoogleNotConnected')
+  return { classroom: getClassroomClient(decryptSecret(row.refresh_token_enc)), row }
+}
+
+// Grade one student's submission for a Google-linked assignment. Best-effort,
+// never throws. Classroom accepts an email as `userId`; we fall back to scanning
+// submissions + resolving emails (classroom.profile.emails) if that misses.
+async function passbackGrade(teacherRefreshToken, assignment, studentEmail) {
+  try {
+    const classroom = getClassroomClient(teacherRefreshToken)
+    const courseId = assignment.google_course_id
+    const courseWorkId = assignment.google_coursework_id
+    const points = assignment.google_max_points || 100
+    let sub = null
+    try {
+      const list = await classroom.courses.courseWork.studentSubmissions.list({ courseId, courseWorkId, userId: studentEmail })
+      sub = (list.data.studentSubmissions || [])[0] || null
+    } catch { /* fall through */ }
+    if (!sub) {
+      try {
+        const all = await classroom.courses.courseWork.studentSubmissions.list({ courseId, courseWorkId, pageSize: 200 })
+        for (const s of (all.data.studentSubmissions || [])) {
+          try {
+            const prof = await classroom.userProfiles.get({ userId: s.userId })
+            if ((prof.data.emailAddress || '').toLowerCase() === studentEmail.toLowerCase()) { sub = s; break }
+          } catch { /* skip */ }
+        }
+      } catch { /* give up */ }
+    }
+    if (!sub) return { graded: false, reason: 'no_submission' }
+    await classroom.courses.courseWork.studentSubmissions.patch({
+      courseId, courseWorkId, id: sub.id, updateMask: 'assignedGrade,draftGrade',
+      requestBody: { assignedGrade: points, draftGrade: points },
+    })
+    try {
+      await classroom.courses.courseWork.studentSubmissions.return({ courseId, courseWorkId, id: sub.id, requestBody: {} })
+    } catch { /* already returned / not returnable — grade still set */ }
+    return { graded: true, points }
+  } catch (e) {
+    return { graded: false, reason: isGoogleAuthError(e) ? 'reconnect' : 'error' }
+  }
+}
+
+// List the teacher's active Google courses (for the assign picker).
+app.get('/api/google/courses', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!googleConfigured()) return res.status(503).json({ error: 'Google Classroom is not configured' })
+    let classroom
+    try { ({ classroom } = await loadGoogleClientForUser(user.id)) }
+    catch (e) {
+      if (e.message === 'GoogleNotConnected') return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
+      throw e
+    }
+    const out = await classroom.courses.list({ teacherId: 'me', courseStates: ['ACTIVE'], pageSize: 100 })
+    const courses = (out.data.courses || []).map(c => ({ id: c.id, name: c.name, section: c.section || '' }))
+    res.json({ courses })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (isGoogleAuthError(err)) return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+    console.error('[google] courses error:', err.message)
+    res.status(500).json({ error: 'Failed to list Google courses' })
+  }
+})
+
+// Push a bill into a Google course as coursework (DRAFT by default). Lazily
+// finds/creates the CapitolKey classroom backing the course + a linked
+// classroom_assignment, then creates the Google courseWork with a Link to the bill.
+app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!googleConfigured() || !supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { courseId, courseName, billId, billData, instructions, dueDate, maxPoints, publish } = req.body || {}
+    if (!courseId || typeof courseId !== 'string') return res.status(400).json({ error: 'courseId is required' })
+    if (!billId || typeof billId !== 'string' || billId.length > 80) return res.status(400).json({ error: 'Valid billId is required' })
+    let classroomId = req.body.classroomId || null
+
+    // Resolve / lazily create the CapitolKey classroom backing this Google course.
+    if (classroomId) {
+      await requireClassroomTeacher(req, classroomId)
+    } else {
+      const { data: existing } = await supabase.from('classrooms')
+        .select('id').eq('owner_id', user.id).eq('google_course_id', courseId).maybeSingle()
+      if (existing) {
+        classroomId = existing.id
+      } else {
+        let join_code
+        for (let i = 0; i < 5; i++) {
+          join_code = generateJoinCode()
+          const { data: dup } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+          if (!dup) break
+          if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code — please retry' })
+        }
+        const { data: created, error: cErr } = await supabase.from('classrooms')
+          .insert({ owner_id: user.id, name: (courseName || 'Google Classroom').slice(0, 100), join_code, google_course_id: courseId, google_course_name: courseName || null })
+          .select('id').single()
+        if (cErr) throw cErr
+        classroomId = created.id
+        await supabase.from('classroom_members').insert({ classroom_id: classroomId, user_id: user.id, role: 'teacher' })
+      }
+    }
+    await supabase.from('classrooms').update({ google_course_id: courseId, google_course_name: courseName || null }).eq('id', classroomId)
+
+    // Create or reuse the CapitolKey assignment (dedupe by classroom+bill).
+    let assignment
+    const { data: existingA } = await supabase.from('classroom_assignments')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at, google_coursework_id, google_alternate_link')
+      .eq('classroom_id', classroomId).eq('bill_id', billId).maybeSingle()
+    if (existingA?.google_coursework_id) {
+      return res.json({ assignment: existingA, alternateLink: existingA.google_alternate_link, classroomId, alreadyPushed: true })
+    }
+    if (existingA) {
+      assignment = existingA
+    } else {
+      const row = { classroom_id: classroomId, bill_id: billId, bill_data: billData || {}, assigned_by: user.id }
+      if (instructions && typeof instructions === 'string') row.instructions = instructions.slice(0, 500)
+      if (dueDate) row.due_date = dueDate
+      const { data: created, error: aErr } = await supabase.from('classroom_assignments')
+        .insert(row).select('id, bill_id, bill_data, instructions, due_date, created_at').single()
+      if (aErr) throw aErr
+      assignment = created
+      pinBillForAssignment(billId, billData).catch(e => console.error('[google coursework] pin error:', e.message))
+    }
+
+    // Create the Google coursework with a Link material back to the bill.
+    let classroom
+    try { ({ classroom } = await loadGoogleClientForUser(user.id)) }
+    catch (e) {
+      if (e.message === 'GoogleNotConnected') return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
+      throw e
+    }
+    const url = buildBillUrl(billData, assignment.id)
+    const points = Number.isFinite(maxPoints) ? Math.max(0, Math.min(1000, Math.round(maxPoints))) : 100
+    const body = {
+      title: (billData?.title || billId).slice(0, 3000),
+      description: (instructions || '').slice(0, 30000) || undefined,
+      materials: [{ link: { url } }],
+      workType: 'ASSIGNMENT',
+      state: publish ? 'PUBLISHED' : 'DRAFT',
+      maxPoints: points,
+    }
+    if (dueDate) {
+      const [y, m, d] = String(dueDate).split('-').map(Number)
+      if (y && m && d) { body.dueDate = { year: y, month: m, day: d }; body.dueTime = { hours: 23, minutes: 59 } }
+    }
+    let cw
+    try {
+      cw = await classroom.courses.courseWork.create({ courseId, requestBody: body })
+    } catch (e) {
+      if (isGoogleAuthError(e)) return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      console.error('[google] coursework create error:', e.message)
+      return res.status(502).json({ error: 'Google rejected the assignment. Make sure the course is active and you teach it.' })
+    }
+
+    const { data: updated } = await supabase.from('classroom_assignments')
+      .update({ google_course_id: courseId, google_coursework_id: cw.data.id, google_alternate_link: cw.data.alternateLink || null, google_max_points: points })
+      .eq('id', assignment.id)
+      .select('id, bill_id, bill_data, instructions, due_date, created_at, google_course_id, google_coursework_id, google_alternate_link, google_max_points').single()
+
+    res.json({ assignment: updated || assignment, alternateLink: cw.data.alternateLink || null, classroomId, state: body.state })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[google] coursework error:', err.message)
+    res.status(500).json({ error: 'Failed to push to Google Classroom' })
+  }
+})
+
+// Student submits a Google-linked assignment for credit. Auto-joins them to the
+// backing classroom (they arrived via the Classroom link, not a join code),
+// records completion, and pushes the grade back to Google (best-effort).
+app.post('/api/google/coursework/:assignmentId/complete', classroomLimiter, async (req, res) => {
+  try {
+    const user = await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id, classroom_id, assigned_by, google_course_id, google_coursework_id, google_max_points')
+      .eq('id', req.params.assignmentId).maybeSingle()
+    if (!assignment || !assignment.google_coursework_id) return res.status(404).json({ error: 'Assignment not found' })
+
+    const { data: existingMember } = await supabase.from('classroom_members')
+      .select('id').eq('classroom_id', assignment.classroom_id).eq('user_id', user.id).maybeSingle()
+    if (!existingMember) {
+      await supabase.from('classroom_members').insert({ classroom_id: assignment.classroom_id, user_id: user.id, role: 'student' })
+    }
+
+    let timeSpent = null
+    if (typeof req.body.timeSpentSec === 'number') timeSpent = Math.min(3600, Math.round(req.body.timeSpentSec / 30) * 30)
+    await supabase.from('assignment_completions').upsert({
+      assignment_id: assignment.id, user_id: user.id, time_spent_sec: timeSpent, completed_at: new Date().toISOString(),
+    }, { onConflict: 'assignment_id,user_id' })
+
+    let graded = { graded: false, reason: 'no_teacher_token' }
+    const { data: teacherTok } = await supabase.from('google_oauth_tokens').select('refresh_token_enc').eq('user_id', assignment.assigned_by).maybeSingle()
+    if (teacherTok?.refresh_token_enc && user.email) {
+      graded = await passbackGrade(decryptSecret(teacherTok.refresh_token_enc), assignment, user.email)
+      if (graded.graded) {
+        await supabase.from('assignment_completions')
+          .update({ google_grade_sent_at: new Date().toISOString(), google_assigned_grade: graded.points })
+          .eq('assignment_id', assignment.id).eq('user_id', user.id)
+      }
+    }
+    res.json({ completed: true, graded: graded.graded, gradeReason: graded.graded ? undefined : graded.reason })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    console.error('[google] complete error:', err.message)
+    res.status(500).json({ error: 'Failed to submit for credit' })
+  }
+})
+
+// Teacher re-pushes grades for every completer of a Google-linked assignment.
+app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, async (req, res) => {
+  try {
+    await requireAuth(req)
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id, classroom_id, assigned_by, google_course_id, google_coursework_id, google_max_points')
+      .eq('id', req.params.assignmentId).maybeSingle()
+    if (!assignment || !assignment.google_coursework_id) return res.status(404).json({ error: 'Assignment not found' })
+    await requireClassroomTeacher(req, assignment.classroom_id)
+
+    const { data: teacherTok } = await supabase.from('google_oauth_tokens').select('refresh_token_enc').eq('user_id', assignment.assigned_by).maybeSingle()
+    if (!teacherTok?.refresh_token_enc) return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
+    const refresh = decryptSecret(teacherTok.refresh_token_enc)
+
+    const { data: completions } = await supabase.from('assignment_completions')
+      .select('user_id').eq('assignment_id', assignment.id).not('user_id', 'is', null)
+    let graded = 0, skipped = 0, failed = 0
+    for (const c of (completions || [])) {
+      let email = null
+      try { const u = await supabase.auth.admin.getUserById(c.user_id); email = u.data.user?.email || null } catch { /* skip */ }
+      if (!email) { skipped++; continue }
+      const r = await passbackGrade(refresh, assignment, email)
+      if (r.graded) {
+        graded++
+        await supabase.from('assignment_completions')
+          .update({ google_grade_sent_at: new Date().toISOString(), google_assigned_grade: r.points })
+          .eq('assignment_id', assignment.id).eq('user_id', c.user_id)
+      } else { failed++ }
+    }
+    res.json({ graded, skipped, failed, total: (completions || []).length })
+  } catch (err) {
+    if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
+    if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
+    console.error('[google] sync-grades error:', err.message)
+    res.status(500).json({ error: 'Failed to sync grades' })
   }
 })
 

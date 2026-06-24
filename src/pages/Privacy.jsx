@@ -7,7 +7,7 @@ export default function Privacy() {
 
         <div className={styles.hero}>
           <h1>Privacy Policy</h1>
-          <p>Last updated: April 16, 2026</p>
+          <p>Last updated: June 23, 2026</p>
         </div>
 
         <div className={styles.section}>
@@ -61,6 +61,7 @@ export default function Privacy() {
             <li><strong>Anthropic Claude AI</strong>: backup AI provider for bill explanations</li>
             <li><strong>LegiScan</strong>: provides federal and state legislation data</li>
             <li><strong>Google OAuth / Apple Sign-In</strong>: optional account authentication</li>
+            <li><strong>Google Classroom API</strong>: optional; lets teachers assign bills and send grades back (see "Google Classroom integration" below)</li>
             <li><strong>Firebase Cloud Messaging</strong>: push notifications on mobile (if enabled)</li>
             <li><strong>Resend</strong>: email notifications (if enabled)</li>
           </ul>
@@ -111,6 +112,46 @@ export default function Privacy() {
               with AI providers.
             </p>
           </div>
+        </div>
+
+        <div className={styles.section}>
+          <h2>Google Classroom integration</h2>
+          <p>
+            Teachers can optionally connect their Google account to assign
+            CapitolKey bills as Google Classroom coursework and have completion
+            grades sent back to Google Classroom. This is used only when a teacher
+            chooses to connect.
+          </p>
+          <p>
+            When a teacher connects, CapitolKey requests permission to view their
+            Google Classroom classes, create coursework in classes they teach, and
+            read and write grades on that coursework. We store an encrypted Google
+            refresh token so grades can post back when the teacher is not actively
+            using the app. We do not store the contents of your Google Classroom,
+            your roster, or your students' work. We read a student's submission
+            only to write back the grade for a CapitolKey assignment.
+          </p>
+          <p>
+            When a student opens a CapitolKey assignment from Google Classroom and
+            signs in with Google, we use their Google email address only to match
+            their submission in the assigned course so the grade posts to the
+            correct student.
+          </p>
+          <p>
+            A teacher can disconnect Google Classroom at any time from the
+            Classrooms page, which revokes our access and deletes the stored token.
+            Coursework already created in Google Classroom stays in Google
+            Classroom and is managed there.
+          </p>
+          <p>
+            CapitolKey's use and transfer of information received from Google APIs
+            adheres to the{' '}
+            <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>
+              Google API Services User Data Policy
+            </a>, including the Limited Use requirements. We do not use Google
+            Classroom data for advertising, do not sell it, and do not transfer or
+            use it to build advertising profiles.
+          </p>
         </div>
 
         <div className={styles.section}>

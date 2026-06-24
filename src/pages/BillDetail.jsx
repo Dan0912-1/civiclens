@@ -7,6 +7,8 @@ import { trackInteraction } from '../lib/interactions'
 import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
+import { completeGoogleAssignment } from '../lib/googleClassroom'
+import GoogleAssignModal from '../components/GoogleAssignModal.jsx'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
 import { billHref } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
@@ -55,7 +57,7 @@ export default function BillDetail() {
   const congress = params.congress ?? '0'
   const navigate = useNavigate()
   const location = useLocation()
-  const { user } = useAuth()
+  const { user, signInWithGoogle } = useAuth()
   const { showToast } = useToast()
   const trackedRef = useRef(false)
 
@@ -69,6 +71,8 @@ export default function BillDetail() {
   const assignmentId = location.state?.assignment || searchParams.get('assignment') || null
   const assignmentClassroomId = location.state?.classroom || searchParams.get('classroom') || null
   const assignmentInstructions = location.state?.assignmentInstructions || ''
+  // Google Classroom student flow: the Classroom Link points here with ?gcr=<assignmentId>.
+  const gcrAssignmentId = searchParams.get('gcr') || null
 
   const [bill, setBill] = useState(passedBill)
   const [analysis, setAnalysis] = useState(passedAnalysis)
@@ -88,6 +92,9 @@ export default function BillDetail() {
   const [assignClassrooms, setAssignClassrooms] = useState([])
   const [assignLoading, setAssignLoading] = useState(false)
   const assignRef = useRef(null)
+  const [showGoogleAssign, setShowGoogleAssign] = useState(false)
+  const [gcrCompleted, setGcrCompleted] = useState(false)
+  const [gcrBusy, setGcrBusy] = useState(false)
   const [fullText, setFullText] = useState(null) // { text, wordCount, version }
   const [fullTextLoading, setFullTextLoading] = useState(false)
   const [fullTextUnavailable, setFullTextUnavailable] = useState(false)
@@ -156,6 +163,13 @@ export default function BillDetail() {
     assignmentTimerRef.current = Date.now()
     return () => { assignmentTimerRef.current = null }
   }, [assignmentId, assignmentClassroomId])
+
+  // Same time-on-task timer for the Google Classroom (?gcr=) flow.
+  useEffect(() => {
+    if (!gcrAssignmentId) return
+    assignmentTimerRef.current = Date.now()
+    return () => { assignmentTimerRef.current = null }
+  }, [gcrAssignmentId])
 
   // Close assign dropdown on outside click
   useEffect(() => {
@@ -268,6 +282,36 @@ export default function BillDetail() {
       showToast(err.message || 'Could not mark assignment done', 'error')
     } finally {
       setMarkCompleteBusy(false)
+    }
+  }
+
+  // Student arrived from a Google Classroom assignment link and isn't signed in
+  // yet. Stash where they are so we can bring them back after the one-tap Google
+  // sign-in (which redirects to the app root).
+  async function handleGoogleSignInForCredit() {
+    try { sessionStorage.setItem('ck_return_to', location.pathname + location.search) } catch {}
+    await signInWithGoogle()
+  }
+
+  async function handleGcrComplete() {
+    if (!gcrAssignmentId || gcrBusy || gcrCompleted) return
+    setGcrBusy(true)
+    try {
+      const session = await getSessionSafe()
+      const token = session?.access_token
+      if (!token) { showToast('Please sign in first', 'error'); setGcrBusy(false); return }
+      const elapsed = assignmentTimerRef.current
+        ? Math.round((Date.now() - assignmentTimerRef.current) / 1000)
+        : null
+      const res = await completeGoogleAssignment(token, gcrAssignmentId, elapsed)
+      setGcrCompleted(true)
+      showToast(res.graded
+        ? 'Submitted! Your grade is in Google Classroom.'
+        : 'Marked complete. Your grade will sync shortly.')
+    } catch (err) {
+      showToast(err.message || 'Could not submit for credit', 'error')
+    } finally {
+      setGcrBusy(false)
     }
   }
 
@@ -488,6 +532,48 @@ export default function BillDetail() {
         <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
           ← Back to results
         </button>
+
+        {gcrAssignmentId && (
+          <div className={styles.assignmentBanner}>
+            <div className={styles.assignmentBannerMain}>
+              <span className={styles.assignmentBannerText}>
+                {gcrCompleted
+                  ? '✓ Submitted for credit in Google Classroom'
+                  : user
+                    ? 'This is your Google Classroom assignment. Read the bill, then submit for credit.'
+                    : 'This is your Google Classroom assignment. Sign in with your school Google account to get credit.'}
+              </span>
+              {!gcrCompleted && (user ? (
+                <button
+                  className={styles.markCompleteBtn}
+                  onClick={handleGcrComplete}
+                  disabled={gcrBusy}
+                  aria-busy={gcrBusy || undefined}
+                >
+                  {gcrBusy ? 'Submitting...' : 'Submit for credit'}
+                </button>
+              ) : (
+                <button className={styles.markCompleteBtn} onClick={handleGoogleSignInForCredit}>
+                  Sign in with Google
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {showGoogleAssign && bill && (
+          <GoogleAssignModal
+            bill={{
+              ...bill,
+              type: bill.type ?? type,
+              number: bill.number ?? number,
+              congress: bill.congress ?? (isStateRoute ? undefined : congress),
+              state: bill.state ?? (isStateRoute ? state : undefined),
+              session: bill.session ?? session,
+            }}
+            onClose={() => setShowGoogleAssign(false)}
+          />
+        )}
 
         {assignmentId && (
           <div className={styles.assignmentBanner}>
@@ -822,11 +908,15 @@ export default function BillDetail() {
                 </button>
                 {assignOpen && (
                   <div className={styles.assignDropdown}>
+                    <button
+                      className={styles.assignItem}
+                      onClick={() => { setAssignOpen(false); setShowGoogleAssign(true) }}
+                    >
+                      Assign in Google Classroom
+                    </button>
                     {assignLoading ? (
-                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>Loading...</div>
-                    ) : assignClassrooms.length === 0 ? (
-                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>No classrooms found</div>
-                    ) : (
+                      <div className={styles.assignItem} style={{ color: 'var(--text-muted)' }}>Loading your classes...</div>
+                    ) : assignClassrooms.length > 0 && (
                       assignClassrooms.map(c => (
                         <button
                           key={c.id}

@@ -13,6 +13,7 @@
 
 import crypto from 'crypto'
 import { google } from 'googleapis'
+import { billHref } from '../src/lib/billUrl.js'
 
 const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
 const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
@@ -149,6 +150,23 @@ export function getAuthedClient(refreshToken) {
   const client = makeOAuthClient()
   client.setCredentials({ refresh_token: refreshToken })
   return client
+}
+
+// A Google Classroom API client authed as the given teacher (Phase 2/3).
+// googleapis auto-refreshes the access token from the refresh token per call.
+export function getClassroomClient(refreshToken) {
+  return google.classroom({ version: 'v1', auth: getAuthedClient(refreshToken) })
+}
+
+// Absolute URL to a bill on the live site, used as the Google Classroom Link
+// material. Carries ?gcr=<assignmentId> so the student page knows it's a Google
+// assignment and can attribute completion + grade passback. Uses the SAME
+// billHref the frontend uses so the link resolves identically.
+const APP_BASE = (process.env.FRONTEND_URL || 'https://capitolkey.org').replace(/\/$/, '')
+export function buildBillUrl(billData, gcr) {
+  const path = billHref(billData || {}, { canonical: true })
+  const sep = path.includes('?') ? '&' : '?'
+  return `${APP_BASE}${path}${sep}gcr=${encodeURIComponent(gcr)}`
 }
 
 export async function revokeRefreshToken(refreshToken) {

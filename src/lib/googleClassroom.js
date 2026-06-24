@@ -56,6 +56,62 @@ export async function disconnectGoogle(token) {
   return true
 }
 
+// ─── Phase 2/3: assign + grade passback ──────────────────────────────────────
+
+// The teacher's active Google courses (for the assign picker). Throws with
+// err.code='not_connected' or 'reconnect' so the caller can prompt appropriately.
+export async function listGoogleCourses(token) {
+  const resp = await fetch(`${API}/api/google/courses`, {
+    headers: await authHeaders(token),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) { const e = new Error(data.error || 'Failed to load courses'); e.code = data.code; throw e }
+  return data.courses || []
+}
+
+// Push a bill into a Google course. payload: { courseId, courseName, billId,
+// billData, instructions?, dueDate?, maxPoints?, publish, classroomId? }.
+// Returns { assignment, alternateLink, classroomId, state, alreadyPushed? }.
+export async function createGoogleCoursework(token, payload) {
+  const resp = await fetch(`${API}/api/google/coursework`, {
+    method: 'POST',
+    headers: await authHeaders(token),
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(20000),
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) { const e = new Error(data.error || 'Failed to push to Google Classroom'); e.code = data.code; throw e }
+  return data
+}
+
+// Student submits a Google-linked assignment for credit. Returns
+// { completed, graded, gradeReason? }.
+export async function completeGoogleAssignment(token, assignmentId, timeSpentSec) {
+  const resp = await fetch(`${API}/api/google/coursework/${assignmentId}/complete`, {
+    method: 'POST',
+    headers: await authHeaders(token),
+    body: JSON.stringify({ timeSpentSec }),
+    signal: AbortSignal.timeout(20000),
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.error || 'Could not submit for credit')
+  return data
+}
+
+// Teacher re-pushes grades for everyone who completed. Returns
+// { graded, skipped, failed, total }.
+export async function syncGoogleGrades(token, assignmentId) {
+  const resp = await fetch(`${API}/api/google/coursework/${assignmentId}/sync-grades`, {
+    method: 'POST',
+    headers: await authHeaders(token),
+    signal: AbortSignal.timeout(30000),
+  })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(data.error || 'Could not sync grades')
+  return data
+}
+
 // Maps a callback ?reason= code to friendly copy.
 export function googleErrorMessage(reason) {
   switch (reason) {
