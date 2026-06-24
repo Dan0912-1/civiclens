@@ -6509,7 +6509,7 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
     if (!googleConfigured() || !supabase) return res.status(503).json({ error: 'Service unavailable' })
-    const { courseId, courseName, billId, billData, instructions, dueDate, maxPoints, publish } = req.body || {}
+    const { courseId, courseName, billId, billData, instructions, dueDate, dueDateTime, maxPoints, publish } = req.body || {}
     if (!courseId || typeof courseId !== 'string') return res.status(400).json({ error: 'courseId is required' })
     if (!billId || typeof billId !== 'string' || billId.length > 80) return res.status(400).json({ error: 'Valid billId is required' })
     let classroomId = req.body.classroomId || null
@@ -6578,7 +6578,17 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
       state: publish ? 'PUBLISHED' : 'DRAFT',
       maxPoints: points,
     }
-    if (dueDate) {
+    // Google stores due date + time in UTC. The frontend sends an absolute UTC
+    // timestamp (dueDateTime) derived from the teacher's local datetime picker,
+    // so Google shows the right local time to every viewer. Fall back to a
+    // date-only value (end of day) for older payloads.
+    if (dueDateTime) {
+      const dt = new Date(dueDateTime)
+      if (!isNaN(dt.getTime())) {
+        body.dueDate = { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() }
+        body.dueTime = { hours: dt.getUTCHours(), minutes: dt.getUTCMinutes() }
+      }
+    } else if (dueDate) {
       const [y, m, d] = String(dueDate).split('-').map(Number)
       if (y && m && d) { body.dueDate = { year: y, month: m, day: d }; body.dueTime = { hours: 23, minutes: 59 } }
     }

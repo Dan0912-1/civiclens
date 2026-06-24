@@ -12,7 +12,7 @@ export default function GoogleAssignModal({ bill, onClose }) {
   const [publish, setPublish] = useState(false) // default: Save as draft
   const [points, setPoints] = useState(100)
   const [instructions, setInstructions] = useState('')
-  const [dueDate, setDueDate] = useState('')
+  const [dueAt, setDueAt] = useState('') // local "YYYY-MM-DDTHH:MM"
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -63,13 +63,21 @@ export default function GoogleAssignModal({ bill, onClose }) {
       const token = session?.access_token
       if (!token) { setError('Please sign in again.'); setBusy(false); return }
       const course = (courses || []).find(c => c.id === courseId)
+      // Convert the teacher's local datetime to a UTC timestamp for Google;
+      // keep the local date for the CapitolKey assignment row.
+      let dueDate, dueDateTime
+      if (dueAt) {
+        const d = new Date(dueAt)
+        if (!isNaN(d.getTime())) { dueDate = dueAt.slice(0, 10); dueDateTime = d.toISOString() }
+      }
       const res = await createGoogleCoursework(token, {
         courseId,
         courseName: course?.name || '',
         billId: makeBillId(bill),
         billData: billData(),
         instructions: instructions.trim() || undefined,
-        dueDate: dueDate || undefined,
+        dueDate,
+        dueDateTime,
         maxPoints: Number(points) || 100,
         publish,
       })
@@ -133,8 +141,8 @@ export default function GoogleAssignModal({ bill, onClose }) {
 
             <div className={styles.row}>
               <div className={styles.col}>
-                <label className={styles.label}>Due date (optional)</label>
-                <input type="date" className={styles.input} value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                <label className={styles.label}>Due (optional)</label>
+                <input type="datetime-local" className={styles.input} value={dueAt} onChange={e => setDueAt(e.target.value)} />
               </div>
               <div className={styles.col}>
                 <label className={styles.label}>Points</label>
