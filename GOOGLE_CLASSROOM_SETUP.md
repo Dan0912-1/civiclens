@@ -16,10 +16,9 @@ refresh token per teacher** in the `google_oauth_tokens` table.
 | --- | --- |
 | `openid`, `userinfo.email` | Record which Google account the teacher connected. |
 | `classroom.courses.readonly` | List the teacher's classes so they can pick one. |
-| `classroom.coursework.students` | Create assignments and write grades (sensitive). |
-| `classroom.profile.emails` | Resolve a Google submission's user to an email so it matches the CapitolKey student who completed. |
+| `classroom.coursework.students` | Create assignments and write grades (sensitive). Grade passback matches the student by their verified Google email, so no roster/profile scope is needed. |
 
-`classroom.coursework.students` and `classroom.profile.emails` are **sensitive**,
+`classroom.coursework.students` is **sensitive**,
 so the app needs Google OAuth verification before public launch. In **Testing**
 publishing mode you can add up to 100 test users and call the real API
 immediately with no verification, so we ship to test teachers now and submit for
@@ -34,12 +33,11 @@ All in [console.cloud.google.com](https://console.cloud.google.com).
 3. **OAuth consent screen** — choose **External**, keep it in **Testing** (do not publish yet).
    - App name: `CapitolKey`; support email: yours; developer contact: yours.
    - App domain `capitolkey.org`; Privacy policy `https://capitolkey.org/privacy`; Terms `https://capitolkey.org/terms`.
-4. **Scopes** — add exactly these five:
+4. **Scopes** — add exactly these four:
    - `openid`
    - `https://www.googleapis.com/auth/userinfo.email`
    - `https://www.googleapis.com/auth/classroom.courses.readonly`
    - `https://www.googleapis.com/auth/classroom.coursework.students`
-   - `https://www.googleapis.com/auth/classroom.profile.emails`
 5. **Test users** — add up to 100. **Add your Google account and the test
    teacher's exact Google address**, or they cannot connect.
 6. **OAuth client** — Credentials → Create Credentials → OAuth client ID → **Web

@@ -22,25 +22,23 @@ const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
 const REDIRECT_URI = process.env.GOOGLE_OAUTH_REDIRECT_URI
   || 'http://localhost:3001/api/google/oauth/callback'
 
-// The five scopes approved in the architecture. courses.readonly lists the
-// teacher's classes; coursework.students creates assignments + does grade
-// passback (sensitive); profile.emails resolves a Google submission's userId to
-// an email so we can match it to the CapitolKey student who completed.
+// The scopes we request. courses.readonly lists the teacher's classes;
+// coursework.students creates assignments + does grade passback (sensitive).
+// Grade passback matches the student by passing their verified Google email as
+// the studentSubmissions `userId` filter, so no roster/profile scope is needed.
 export const GOOGLE_SCOPES = [
   'openid',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/classroom.courses.readonly',
   'https://www.googleapis.com/auth/classroom.coursework.students',
-  'https://www.googleapis.com/auth/classroom.profile.emails',
 ]
 
 // The classroom scopes that actually gate functionality. openid/email echo back
-// in inconsistent forms, so we only enforce these three when checking for a
+// in inconsistent forms, so we only enforce these two when checking for a
 // re-consent need.
 const REQUIRED_CLASSROOM_SCOPES = [
   'https://www.googleapis.com/auth/classroom.courses.readonly',
   'https://www.googleapis.com/auth/classroom.coursework.students',
-  'https://www.googleapis.com/auth/classroom.profile.emails',
 ]
 
 // ─── Encryption key (AES-256-GCM) ────────────────────────────────────────────
