@@ -95,6 +95,8 @@ export default function BillDetail() {
   const [showGoogleAssign, setShowGoogleAssign] = useState(false)
   const [gcrCompleted, setGcrCompleted] = useState(false)
   const [gcrBusy, setGcrBusy] = useState(false)
+  const [gcrError, setGcrError] = useState(false)
+  const gcrAutoRef = useRef(false)
   const [fullText, setFullText] = useState(null) // { text, wordCount, version }
   const [fullTextLoading, setFullTextLoading] = useState(false)
   const [fullTextUnavailable, setFullTextUnavailable] = useState(false)
@@ -170,6 +172,18 @@ export default function BillDetail() {
     assignmentTimerRef.current = Date.now()
     return () => { assignmentTimerRef.current = null }
   }, [gcrAssignmentId])
+
+  // Auto-submit a Google Classroom assignment for credit once the student has
+  // received the bill (their personalization loaded, or the page settled with no
+  // profile). No "I'm done" click required — fires once per visit.
+  useEffect(() => {
+    if (!gcrAssignmentId || !user || gcrCompleted || gcrBusy || gcrAutoRef.current) return
+    const received = analysis || (!loading && (personalizationError || noProfile))
+    if (!received) return
+    gcrAutoRef.current = true
+    handleGcrComplete()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gcrAssignmentId, user, analysis, loading, personalizationError, noProfile, gcrCompleted])
 
   // Close assign dropdown on outside click
   useEffect(() => {
@@ -296,6 +310,7 @@ export default function BillDetail() {
   async function handleGcrComplete() {
     if (!gcrAssignmentId || gcrBusy || gcrCompleted) return
     setGcrBusy(true)
+    setGcrError(false)
     try {
       const session = await getSessionSafe()
       const token = session?.access_token
@@ -309,6 +324,7 @@ export default function BillDetail() {
         ? 'Submitted! Your grade is in Google Classroom.'
         : 'Marked complete. Your grade will sync shortly.')
     } catch (err) {
+      setGcrError(true)
       showToast(err.message || 'Could not submit for credit', 'error')
     } finally {
       setGcrBusy(false)
@@ -539,11 +555,19 @@ export default function BillDetail() {
               <span className={styles.assignmentBannerText}>
                 {gcrCompleted
                   ? '✓ Submitted for credit in Google Classroom'
-                  : user
-                    ? 'This is your Google Classroom assignment. Read the bill, then submit for credit.'
-                    : 'This is your Google Classroom assignment. Sign in with your school Google account to get credit.'}
+                  : !user
+                    ? 'This is your Google Classroom assignment. Sign in with your school Google account to get credit.'
+                    : gcrError
+                      ? 'We could not submit your credit automatically.'
+                      : gcrBusy
+                        ? 'Submitting for credit...'
+                        : 'This is your Google Classroom assignment. We submit it for credit automatically as you read.'}
               </span>
-              {!gcrCompleted && (user ? (
+              {!gcrCompleted && (!user ? (
+                <button className={styles.markCompleteBtn} onClick={handleGoogleSignInForCredit}>
+                  Sign in with Google
+                </button>
+              ) : gcrError ? (
                 <button
                   className={styles.markCompleteBtn}
                   onClick={handleGcrComplete}
@@ -552,11 +576,7 @@ export default function BillDetail() {
                 >
                   {gcrBusy ? 'Submitting...' : 'Submit for credit'}
                 </button>
-              ) : (
-                <button className={styles.markCompleteBtn} onClick={handleGoogleSignInForCredit}>
-                  Sign in with Google
-                </button>
-              ))}
+              ) : null)}
             </div>
           </div>
         )}
