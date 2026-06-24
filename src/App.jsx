@@ -148,16 +148,21 @@ export default function App() {
 
       const delay = ms => new Promise(r => setTimeout(r, ms))
       const tap = async (style) => {
-        if (Haptics && !cancelled) await Haptics.impact({ style })
+        if (Haptics && !cancelled) await Haptics.impact({ style }).catch(() => {})
       }
 
-      // Quick haptic wave: build → peak → release
-      await tap(ImpactStyle.Light);  await delay(30)
-      await tap(ImpactStyle.Medium); await delay(25)
-      await tap(ImpactStyle.Heavy);  await delay(25)
-      await tap(ImpactStyle.Heavy);  await delay(25)
-      await tap(ImpactStyle.Medium); await delay(30)
-      await tap(ImpactStyle.Light)
+      // Quick haptic wave: build → peak → release. Skip entirely when the
+      // haptics import failed (web, or a stale chunk after redeploy) —
+      // ImpactStyle is undefined there and ImpactStyle.Light throws before
+      // tap() can guard it, surfacing as an unhandled rejection.
+      if (ImpactStyle) {
+        await tap(ImpactStyle.Light);  await delay(30)
+        await tap(ImpactStyle.Medium); await delay(25)
+        await tap(ImpactStyle.Heavy);  await delay(25)
+        await tap(ImpactStyle.Heavy);  await delay(25)
+        await tap(ImpactStyle.Medium); await delay(30)
+        await tap(ImpactStyle.Light)
+      }
 
       if (!cancelled) {
         try {
