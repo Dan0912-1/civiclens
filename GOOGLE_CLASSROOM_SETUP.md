@@ -16,13 +16,12 @@ refresh token per teacher** in the `google_oauth_tokens` table.
 | --- | --- |
 | `openid`, `userinfo.email` | Record which Google account the teacher connected. |
 | `classroom.courses.readonly` | List the teacher's classes so they can pick one. |
-| `classroom.coursework.students` | Create assignments and write grades (sensitive). Grade passback matches the student by their verified Google email, so no roster/profile scope is needed. |
+| `classroom.coursework.students` | Create assignments and write grades. Grade passback matches the student by their verified Google email, so no roster/profile scope is needed. |
 
-`classroom.coursework.students` is **sensitive**,
-so the app needs Google OAuth verification before public launch. In **Testing**
-publishing mode you can add up to 100 test users and call the real API
-immediately with no verification, so we ship to test teachers now and submit for
-verification in parallel.
+Google currently classifies all of these as **non-sensitive** (confirmed in the
+project's Data Access screen and Verification Center). Because the app requests no
+sensitive or restricted scopes, **no Google OAuth verification is required and
+users see no "unverified app" warning.** See `GOOGLE_VERIFICATION.md`.
 
 ## Phase 0: Google Cloud Console checklist (do this once)
 
@@ -78,8 +77,10 @@ bookkeeping); each is a separate file in `supabase/`.
 | GET | `/api/google/status` | teacher JWT | `{ connected, configured, email, needsReconsent }`. |
 | POST | `/api/google/disconnect` | teacher JWT | Revokes at Google and deletes the stored token. |
 
-## Phase 4: verification (later, in parallel)
+## Verification
 
-Before public launch, submit the sensitive scopes for Google verification:
-consent-screen copy, per-scope justification, a Limited Use disclosure in the
-privacy policy, and a demo video. Tracked separately; it does not block testing.
+**Not required.** The app requests only non-sensitive scopes, so Google does not
+require OAuth verification and shows no warning. The consent screen + privacy
+policy are configured anyway (including a Limited Use disclosure). If a sensitive
+or restricted scope is ever added (e.g. `classroom.rosters.readonly`),
+verification would then be needed — see `GOOGLE_VERIFICATION.md`.
