@@ -96,6 +96,22 @@ export default function App() {
   // Scroll to top on route change
   useEffect(() => { window.scrollTo(0, 0) }, [pathname])
 
+  // After OAuth sign-in, return to where the user started (e.g. a student who
+  // tapped "Sign in with Google" on a Google Classroom assignment). The OAuth
+  // flow redirects to the app root, so we stash the origin URL and restore it
+  // once the session lands.
+  useEffect(() => {
+    if (!user) return
+    let target
+    try { target = sessionStorage.getItem('ck_return_to') } catch { /* ignore */ }
+    if (!target) return
+    try { sessionStorage.removeItem('ck_return_to') } catch { /* ignore */ }
+    if (target.startsWith('/') && target !== pathname + window.location.search) {
+      navigate(target, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user])
+
   // Per-route document title + self-referencing canonical.
   //
   // index.html ships a hardcoded homepage canonical. Without this, every

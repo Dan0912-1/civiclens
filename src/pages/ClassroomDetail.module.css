@@ -227,6 +227,19 @@
   white-space: nowrap;
 }
 
+.googleBadge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--amber-dark);
+  background: rgba(164, 126, 59, 0.12);
+  padding: 3px 8px;
+  border-radius: 1px;
+  white-space: nowrap;
+}
+
 .assignmentInstructions {
   font-size: 0.85rem;
   color: var(--text-secondary);
@@ -262,6 +275,30 @@
 }
 
 .removeBtn:hover { text-decoration: underline; }
+
+.googleLink {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--amber-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.googleLink:hover { text-decoration: underline; }
+
+.syncBtn {
+  font-size: 0.68rem;
+  color: var(--navy);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.syncBtn:hover { text-decoration: underline; }
+.syncBtn:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
 
 .progressBar {
   height: 4px;
