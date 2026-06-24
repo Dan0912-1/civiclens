@@ -6442,8 +6442,8 @@ async function loadGoogleClientForUser(userId) {
 }
 
 // Grade one student's submission for a Google-linked assignment. Best-effort,
-// never throws. Classroom accepts an email as `userId`; we fall back to scanning
-// submissions + resolving emails (classroom.profile.emails) if that misses.
+// never throws. Classroom's studentSubmissions.list accepts the student's email
+// as the `userId` filter, so we match the submission without any roster scope.
 async function passbackGrade(teacherRefreshToken, assignment, studentEmail) {
   try {
     const classroom = getClassroomClient(teacherRefreshToken)
@@ -6454,17 +6454,8 @@ async function passbackGrade(teacherRefreshToken, assignment, studentEmail) {
     try {
       const list = await classroom.courses.courseWork.studentSubmissions.list({ courseId, courseWorkId, userId: studentEmail })
       sub = (list.data.studentSubmissions || [])[0] || null
-    } catch { /* fall through */ }
-    if (!sub) {
-      try {
-        const all = await classroom.courses.courseWork.studentSubmissions.list({ courseId, courseWorkId, pageSize: 200 })
-        for (const s of (all.data.studentSubmissions || [])) {
-          try {
-            const prof = await classroom.userProfiles.get({ userId: s.userId })
-            if ((prof.data.emailAddress || '').toLowerCase() === studentEmail.toLowerCase()) { sub = s; break }
-          } catch { /* skip */ }
-        }
-      } catch { /* give up */ }
+    } catch (e) {
+      if (isGoogleAuthError(e)) return { graded: false, reason: 'reconnect' }
     }
     if (!sub) return { graded: false, reason: 'no_submission' }
     await classroom.courses.courseWork.studentSubmissions.patch({
