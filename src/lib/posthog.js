@@ -21,10 +21,13 @@
 //        - we pass only a Supabase user UUID (pseudonymous) plus non-PII bill
 //          ids and topic tags as properties — never names, emails, or the
 //          onboarding profile (state, age, interests).
-//   5. Same-origin proxy. api_host is the relative '/ingest' path that Vercel
-//      reverse-proxies to PostHog (see vercel.json). Requests stay first-party,
-//      which dodges ad blockers AND means the strict CSP needs no new
-//      connect-src origin ('self' already covers it).
+//   5. Direct host. api_host points straight at PostHog US (us.i.posthog.com);
+//      index.html's CSP allows *.posthog.com / *.i.posthog.com in script-src
+//      (remote config + recorder assets) and connect-src (event capture). We
+//      originally proxied this same-origin via a Vercel /ingest rewrite, but
+//      Vercel did not forward POST to the event endpoint — trailing-slash paths
+//      like /ingest/e/ fell through to the SPA index.html and 405'd every
+//      event — so we send directly instead.
 
 const TRACKED_HOSTS = new Set(['capitolkey.org', 'www.capitolkey.org'])
 
@@ -44,9 +47,9 @@ export function initPostHog() {
   import('posthog-js')
     .then(({ default: posthog }) => {
       posthog.init(key, {
-        // Same-origin reverse proxy (vercel.json). Override only to bypass it,
-        // which also requires adding the PostHog origin to the CSP connect-src.
-        api_host: import.meta.env.VITE_POSTHOG_HOST || '/ingest',
+        // Direct to PostHog US ingestion. VITE_POSTHOG_HOST can override (e.g.
+        // a working same-origin proxy); the CSP already allows the PostHog hosts.
+        api_host: import.meta.env.VITE_POSTHOG_HOST || 'https://us.i.posthog.com',
         ui_host: 'https://us.posthog.com',
         person_profiles: 'identified_only',
         autocapture: false,

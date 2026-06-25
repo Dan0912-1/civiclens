@@ -35,8 +35,11 @@
          googletagmanager.com is allowed in script-src so the GA4 gtag.js loader
          (injected by src/lib/analytics.js) can run; google-analytics.com +
          googletagmanager.com in connect-src let it send collect/config beacons.
-         No 'unsafe-inline' is needed because the loader lives in bundled JS. -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.googletagmanager.com; connect-src 'self' https://*.supabase.co https://*.capitolkey.org https://*.railway.app https://*.sentry.io https://*.vercel.app https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; frame-src 'none'; base-uri 'self'; form-action 'self';" />
+         No 'unsafe-inline' is needed because the loader lives in bundled JS.
+         PostHog product analytics (src/lib/posthog.js) sends directly to
+         us.i.posthog.com, so *.posthog.com / *.i.posthog.com are allowed in
+         script-src (remote config + recorder assets) and connect-src (events). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.googletagmanager.com https://*.posthog.com https://*.i.posthog.com; connect-src 'self' https://*.supabase.co https://*.capitolkey.org https://*.railway.app https://*.sentry.io https://*.vercel.app https://www.googletagmanager.com https://*.google-analytics.com https://*.analytics.google.com https://*.posthog.com https://*.i.posthog.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; frame-src 'none'; base-uri 'self'; form-action 'self';" />
 
     <!-- Warm DNS+TCP+TLS to the two origins every session hits first: the
          bill feed API and Supabase auth. Saves ~100-300ms on the first data
