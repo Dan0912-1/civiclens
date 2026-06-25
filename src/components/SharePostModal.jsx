@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { getApiBase } from '../lib/api'
 import { stripBillForPersonalize } from '../lib/billId'
+import { haptic } from '../lib/haptics'
 import styles from './SharePostModal.module.css'
 
 const PLATFORMS = [
@@ -10,12 +11,6 @@ const PLATFORMS = [
   { id: 'threads',   label: 'Threads',   maxLen: 480 },
   { id: 'tiktok',    label: 'TikTok',    maxLen: 300 },
 ]
-
-function haptic(style = 'Light') {
-  import('@capacitor/haptics')
-    .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
-    .catch(() => {})
-}
 
 export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
   const [platform, setPlatform] = useState('instagram')
