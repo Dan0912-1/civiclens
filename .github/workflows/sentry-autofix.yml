@@ -1,0 +1,198 @@
+name: Sentry auto-fix
+
+# Polls Sentry for newly-seen, unresolved issues and opens ONE draft PR per issue
+# that fixes the root cause. Runs entirely in GitHub's cloud (laptop-independent)
+# and on the Claude Max subscription via CLAUDE_CODE_OAUTH_TOKEN, so it does not
+# burn extra Anthropic API credits.
+#
+# Activate by setting repo variable AUTOFIX_ENABLED=true (see docs/sentry-autofix.md).
+# Until then, scheduled runs no-op green and only workflow_dispatch runs.
+
+on:
+  schedule:
+    # Hourly at :23 UTC. Dial down to e.g. '23 */3 * * *' to cut Actions minutes.
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_per_run:
+        description: 'Max issues to fix this run'
+        required: false
+        default: '3'
+
+# Default-deny; the fix job opts into the writes it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: sentry-autofix
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  SENTRY_HOST: ${{ vars.SENTRY_HOST || 'https://sentry.io' }}
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Cheap, deterministic, no-LLM scan. Queries Sentry, dedups against existing
+  # autofix PRs/branches, and emits a JSON work-list for the matrix below.
+  # ──────────────────────────────────────────────────────────────────────────
+  scan:
+    name: Scan Sentry
+    if: ${{ vars.AUTOFIX_ENABLED == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      result: ${{ steps.scan.outputs.result }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - id: scan
+        name: Scan for new issues
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECTS: ${{ secrets.SENTRY_PROJECTS }}
+          AUTOFIX_QUERY: ${{ vars.AUTOFIX_QUERY }}
+          AUTOFIX_FIRST_SEEN_WINDOW: ${{ vars.AUTOFIX_FIRST_SEEN_WINDOW || '14d' }}
+          AUTOFIX_MAX_PER_RUN: ${{ github.event.inputs.max_per_run || vars.AUTOFIX_MAX_PER_RUN || '3' }}
+          # A PAT (if provided) sees all PRs for dedup; falls back to the run token.
+          GH_TOKEN: ${{ secrets.AUTOFIX_GH_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          result="$(node scripts/sentry-autofix.mjs scan)"
+          {
+            echo "result<<SENTRY_EOF"
+            echo "$result"
+            echo "SENTRY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # One isolated job per issue. Claude reads the Sentry context, fixes the root
+  # cause, and self-verifies with `npm run verify` (the exact CI gate). Then
+  # create-pull-request packages the diff into a single DRAFT PR. Never merges.
+  # ──────────────────────────────────────────────────────────────────────────
+  fix:
+    name: Fix ${{ matrix.issue.shortId }}
+    needs: scan
+    if: ${{ needs.scan.result == 'success' && fromJSON(needs.scan.outputs.result).count > 0 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # serialize PR creation; avoid concurrent pushes / rate limits
+      matrix:
+        issue: ${{ fromJSON(needs.scan.outputs.result).issues }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AUTOFIX_GH_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # --ignore-scripts skips the iOS postinstall patch so it can't add stray
+      # native-file diffs to the PR. vite build + backend smoke don't need it.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Claude — fix the root cause
+        uses: anthropics/claude-code-action@v1
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_HOST: ${{ env.SENTRY_HOST }}
+          RUNNER_TEMP: ${{ runner.temp }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: |
+            --allowedTools Bash,Edit,Read,Write,Grep,Glob
+            --model claude-sonnet-4-6
+            --max-turns 40
+          prompt: |
+            You are an automated fix agent for the CapitolKey repo (product name CapitolKey;
+            the folder is "civiclens"). Fix exactly ONE Sentry issue, then STOP. Do not commit,
+            push, create branches, or open PRs — a later workflow step packages your changes
+            into a draft pull request. Just leave your edits in the working tree.
+
+            Sentry issue id: ${{ matrix.issue.id }}
+            Sentry short id: ${{ matrix.issue.shortId }}
+
+            Steps:
+            1. Run `node scripts/sentry-autofix.mjs context ${{ matrix.issue.id }}` and read the
+               output: exception, in-app stack frames, culprit, request, tags, breadcrumbs.
+               SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_HOST are already in the environment.
+            2. Read CLAUDE.md for conventions. From the stack trace, find the root cause in the
+               codebase and read the relevant files (src/ for frontend, api/ for backend).
+            3. Implement the MINIMAL, correct fix for the ROOT CAUSE, matching the surrounding
+               code style. Do NOT silence the error (no empty catch, no deleting the Sentry
+               call) just to stop the report. Do NOT touch .env files, secrets, or unrelated code.
+            4. Verify with `npm run verify` (runs check:backend, check:dupes, smoke:backend, and
+               the vite build — the exact CI gate). Iterate until it passes.
+            5. Write the PR title to "$RUNNER_TEMP/autofix-title.txt" (one line, format:
+               `fix(sentry): <concise summary> [${{ matrix.issue.shortId }}]`) and the PR body to
+               "$RUNNER_TEMP/autofix-body.md". The body must include: the Sentry permalink, a
+               short root-cause explanation, what you changed and why, and the `npm run verify`
+               result. End the body with this exact line:
+               "Automated by the Sentry auto-fix workflow. Do not merge until CI is green and a human has reviewed."
+            6. Do NOT use em dashes anywhere in the title or body.
+
+            If there is NO safe automated fix (ambiguous, needs a product decision, cannot be
+            reproduced, or the cause is external/config): do NOT invent a risky change. Instead
+            write your diagnosis and recommended next step to `docs/autofix-notes/${{ matrix.issue.shortId }}.md`,
+            and set the title to `[needs-triage] sentry: <summary> [${{ matrix.issue.shortId }}]`.
+            This still produces a diff so the issue is registered and not retried.
+
+            Keep the change scoped to this one issue.
+
+      # Read Claude's title/body (with safe fallbacks) without committing them.
+      - id: meta
+        name: Collect PR metadata
+        run: |
+          set -euo pipefail
+          title="fix(sentry): ${{ matrix.issue.shortId }}"
+          if [ -s "${RUNNER_TEMP}/autofix-title.txt" ]; then
+            title="$(head -n1 "${RUNNER_TEMP}/autofix-title.txt" | cut -c1-200)"
+          fi
+          printf 'title=%s\n' "$title" >> "$GITHUB_OUTPUT"
+          if [ ! -s "${RUNNER_TEMP}/autofix-body.md" ]; then
+            printf 'Automated Sentry fix for %s.\n' "${{ matrix.issue.shortId }}" > "${RUNNER_TEMP}/autofix-body.md"
+          fi
+          # Fail clearly if Claude produced no diff at all (nothing to PR).
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "::warning::No changes produced for ${{ matrix.issue.shortId }}; skipping PR."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open draft PR
+        if: ${{ steps.meta.outputs.changed == 'true' }}
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # A PAT here is what makes CI (on: pull_request) actually run on the
+          # autofix PR. With the default github.token, GitHub suppresses that.
+          token: ${{ secrets.AUTOFIX_GH_TOKEN || github.token }}
+          branch: ${{ matrix.issue.branch }}
+          base: main
+          draft: true
+          title: ${{ steps.meta.outputs.title }}
+          body-path: ${{ runner.temp }}/autofix-body.md
+          commit-message: ${{ steps.meta.outputs.title }}
+          labels: sentry-autofix
+          delete-branch: false
+          author: capitolkey-autofix <autofix@users.noreply.github.com>
+          committer: capitolkey-autofix <autofix@users.noreply.github.com>
