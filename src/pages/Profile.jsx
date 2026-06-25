@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { loadProfile, saveProfile } from '../lib/userProfile'
+import { phCapture } from '../lib/posthog'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Profile.module.css'
 
@@ -259,6 +260,8 @@ export default function Profile() {
       // to have, not required to proceed.
       sessionStorage.setItem('civicProfile', JSON.stringify(profile))
       if (user) saveProfile(user.id, profile)
+      // Funnel step: onboarding complete. Counts only, no profile contents.
+      phCapture('profile_completed', { interest_count: profile.interests.length, has_account: !!user })
       navigate(returnTo || '/results', returnState ? { state: returnState } : undefined)
     }
   }

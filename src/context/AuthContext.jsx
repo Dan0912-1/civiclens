@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase, getSessionSafe, withAuthTimeout, broadcastAuthChange, onAuthBroadcast } from '../lib/supabase'
 import { saveProfile, loadProfile } from '../lib/userProfile'
 import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
+import { phIdentify, phReset, phCapture } from '../lib/posthog'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
@@ -93,6 +94,18 @@ export function AuthProvider({ children }) {
       setLoading(false)
       cleanOAuthParams()
 
+      // PostHog: link events to the signed-in user (pseudonymous Supabase UUID)
+      // and clear that link on sign-out. identify is idempotent, so re-firing
+      // on token refresh is harmless; signed_in is gated to the actual event.
+      if (session?.user) {
+        phIdentify(session.user.id)
+        if (event === 'SIGNED_IN') {
+          phCapture('signed_in', { method: session.user.app_metadata?.provider || 'email' })
+        }
+      } else if (event === 'SIGNED_OUT') {
+        phReset()
+      }
+
       // Tell other tabs so they reload and pick up the new session (or the
       // absence of one). SIGNED_IN and SIGNED_OUT are the auth changes other
       // tabs care about; TOKEN_REFRESHED happens on every tick and shouldn't
@@ -176,6 +189,7 @@ export function AuthProvider({ children }) {
         sessionStorage.removeItem('ck_joined_classrooms')
         localStorage.removeItem('ck_offline_queue')
         resetPushState()
+        phReset()
         return
       }
       if (msg.event === 'SIGNED_IN') {

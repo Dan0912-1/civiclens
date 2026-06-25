@@ -7,7 +7,7 @@ export default function Privacy() {
 
         <div className={styles.hero}>
           <h1>Privacy Policy</h1>
-          <p>Last updated: June 23, 2026</p>
+          <p>Last updated: June 24, 2026</p>
         </div>
 
         <div className={styles.section}>
@@ -45,7 +45,8 @@ export default function Privacy() {
             third party for marketing or advertising purposes. Your profile data
             is sent to our AI providers (Groq and Anthropic) solely for generating
             personalized bill explanations. Your data is anonymized before
-            processing. No name, email, or account ID is included. No other
+            processing. No name, email, or account ID is included. Aside from
+            the anonymous product-analytics events described below, no other
             third party receives your data.
           </p>
         </div>
@@ -64,6 +65,7 @@ export default function Privacy() {
             <li><strong>Google Classroom API</strong>: optional; lets teachers assign bills and send grades back (see "Google Classroom integration" below)</li>
             <li><strong>Firebase Cloud Messaging</strong>: push notifications on mobile (if enabled)</li>
             <li><strong>Resend</strong>: email notifications (if enabled)</li>
+            <li><strong>PostHog</strong>: product analytics on the website (which features get used, where people drop off). Receives anonymous usage events and, for signed-in users, a random account identifier. It never receives your name, email, or onboarding profile, and session recording is disabled.</li>
           </ul>
           <p>
             These services may process limited data as necessary to provide their

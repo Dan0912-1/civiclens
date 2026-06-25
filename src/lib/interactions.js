@@ -1,10 +1,17 @@
 import { getApiBase } from './api'
 import { enqueue } from './offlineQueue'
+import { phCapture } from './posthog'
 
 const STORAGE_KEY = 'civicInteractions'
 
 export function trackInteraction(userId, token, { billId, actionType, topicTag }) {
   const interaction = { billId, actionType, topicTag, timestamp: Date.now() }
+
+  // Mirror the interaction into PostHog (no-ops when PostHog is off). The
+  // actionType (view_detail | bookmark | expand_card | share | contact_rep)
+  // is the event name; bill id and topic tag are non-PII properties. Fires for
+  // anonymous users too — that is the point of the funnel.
+  phCapture(actionType, { bill_id: billId, topic_tag: topicTag })
 
   if (userId && token) {
     // Fire-and-forget POST to server
