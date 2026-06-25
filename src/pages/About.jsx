@@ -55,7 +55,7 @@ export default function About() {
                 badge: 'Data source'
               },
               {
-                name: 'Qwen (via Groq) + Claude fallback',
+                name: 'GPT-OSS (via Groq) + Claude fallback',
                 desc: 'AI generates personalized plain-language explanations of each bill based on your profile. Prompted to be strictly nonpartisan.',
                 badge: 'Personalization'
               },

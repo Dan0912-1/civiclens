@@ -58,7 +58,7 @@ export default function Privacy() {
           </p>
           <ul style={{ color: 'var(--text-secondary)', lineHeight: 1.75, paddingLeft: '1.25rem', marginTop: '0.5rem' }}>
             <li><strong>Supabase</strong>: authentication, database, and user data storage (hosted on AWS)</li>
-            <li><strong>Groq (Qwen3-32B)</strong>: primary AI provider for personalized bill explanations (anonymized profile data only)</li>
+            <li><strong>Groq (GPT-OSS-120B)</strong>: primary AI provider for personalized bill explanations (anonymized profile data only)</li>
             <li><strong>Anthropic Claude AI</strong>: backup AI provider for bill explanations</li>
             <li><strong>LegiScan</strong>: provides federal and state legislation data</li>
             <li><strong>Google OAuth / Apple Sign-In</strong>: optional account authentication</li>
