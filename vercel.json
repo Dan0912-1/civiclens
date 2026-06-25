@@ -33,14 +33,6 @@
       "destination": "https://civiclens-production-07ed.up.railway.app/api/:path*"
     },
     {
-      "source": "/ingest/static/:path*",
-      "destination": "https://us-assets.i.posthog.com/static/:path*"
-    },
-    {
-      "source": "/ingest/:path*",
-      "destination": "https://us.i.posthog.com/:path*"
-    },
-    {
       "source": "/sitemap.xml",
       "destination": "https://civiclens-production-07ed.up.railway.app/sitemap.xml"
     },
