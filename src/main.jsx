@@ -6,6 +6,7 @@ import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { initAnalytics } from './lib/analytics'
+import { initPostHog } from './lib/posthog'
 import App from './App.jsx'
 
 // Self-hosted fonts (latin subsets), replacing the render-blocking Google
@@ -89,6 +90,10 @@ if (sentryDsn) {
 
 // Google Analytics 4 — no-ops off the live web host (see src/lib/analytics.js).
 initAnalytics()
+
+// PostHog product analytics — dormant until VITE_POSTHOG_KEY is set, and like
+// GA4 no-ops off the live web host (see src/lib/posthog.js).
+initPostHog()
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

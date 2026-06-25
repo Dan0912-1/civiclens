@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
+import { phCapture } from '../lib/posthog'
 import { initPushNotifications } from '../lib/pushNotifications'
 import PushPrompt from '../components/PushPrompt.jsx'
 import { supabase, getSessionSafe } from '../lib/supabase'
@@ -264,6 +265,8 @@ export default function Results() {
         okFirst.forEach(id => next.add(id))
         return next
       })
+      // Funnel step: AI personalization delivered (fires once per wave).
+      phCapture('bills_personalized', { count: okFirst.size })
     }
 
     // Client-side retry pass for any bills that failed (server already retries 4x;
