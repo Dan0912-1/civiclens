@@ -5,13 +5,8 @@ import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
 import { billHref } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
+import { haptic } from '../lib/haptics'
 import styles from './BillCard.module.css'
-
-function haptic(style = 'Light') {
-  import('@capacitor/haptics')
-    .then(({ Haptics, ImpactStyle }) => Haptics.impact({ style: ImpactStyle[style] }))
-    .catch(() => {})
-}
 
 const TAG_COLORS = {
   Education:    'blue',

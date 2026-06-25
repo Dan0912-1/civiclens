@@ -5,6 +5,7 @@ import { supabase, getSessionSafe } from './lib/supabase'
 import { initPushIfGranted, setPushNavigate } from './lib/pushNotifications'
 import { flush as flushOfflineQueue } from './lib/offlineQueue'
 import { getApiBase } from './lib/api'
+import { haptic, isNativePlatform } from './lib/haptics'
 import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
 import OfflineScreen from './components/OfflineScreen.jsx'
@@ -141,10 +142,16 @@ export default function App() {
     let cancelled = false
 
     async function splashSequence() {
+      // Haptics only exist on native. On web the Capacitor shim throws on
+      // Safari (no navigator.vibrate), so don't even load it off-native.
+      const native = await isNativePlatform()
+
       let Haptics, ImpactStyle
-      try {
-        ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
-      } catch { /* not native */ }
+      if (native) {
+        try {
+          ;({ Haptics, ImpactStyle } = await import('@capacitor/haptics'))
+        } catch { /* plugin missing */ }
+      }
 
       const delay = ms => new Promise(r => setTimeout(r, ms))
       const tap = async (style) => {
@@ -152,9 +159,9 @@ export default function App() {
       }
 
       // Quick haptic wave: build → peak → release. Skip entirely when the
-      // haptics import failed (web, or a stale chunk after redeploy) —
-      // ImpactStyle is undefined there and ImpactStyle.Light throws before
-      // tap() can guard it, surfacing as an unhandled rejection.
+      // haptics import failed or didn't run (web, or a stale chunk after
+      // redeploy) — ImpactStyle is undefined there and ImpactStyle.Light
+      // throws before tap() can guard it, surfacing as an unhandled rejection.
       if (ImpactStyle) {
         await tap(ImpactStyle.Light);  await delay(30)
         await tap(ImpactStyle.Medium); await delay(25)
@@ -206,11 +213,7 @@ export default function App() {
       const pullingDown = e.touches[0].clientY - startY > 40
       if (atTop && pullingDown) {
         fired = true
-        import('@capacitor/haptics')
-          .then(({ Haptics, ImpactStyle }) =>
-            Haptics.impact({ style: ImpactStyle.Light })
-          )
-          .catch(() => {})
+        haptic('Light')
       }
     }
 

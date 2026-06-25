@@ -26,6 +26,25 @@ import '@fontsource/ibm-plex-mono/latin-600.css'
 
 import './index.css'
 
+// A deploy rotates the hashed filenames of lazily-loaded route chunks. A tab
+// that loaded index.html before the deploy 404s on the old chunk names; our
+// Vercel SPA rewrite then serves index.html (text/html) in their place, and the
+// browser refuses to execute it — surfacing as "'text/html' is not a valid
+// JavaScript MIME type" / "Failed to fetch dynamically imported module". Vite
+// fires `vite:preloadError` for exactly this; reload once to pull the fresh
+// manifest. We DON'T preventDefault on a repeat within 10s, so a genuinely
+// broken deploy still throws through to the ErrorBoundary + Sentry instead of
+// reload-looping or silently resolving the lazy import to undefined.
+window.addEventListener('vite:preloadError', (event) => {
+  const KEY = 'ck-preload-reload-at'
+  let last = 0
+  try { last = Number(sessionStorage.getItem(KEY) || 0) } catch {}
+  if (Date.now() - last < 10000) return
+  event.preventDefault()
+  try { sessionStorage.setItem(KEY, String(Date.now())) } catch {}
+  window.location.reload()
+})
+
 // Sentry loads as an async chunk AFTER the app starts rendering — the SDK
 // plus tracing is ~40 KB gzip that used to parse and initialize before first
 // paint. Errors thrown in the brief window before init are dropped, which is
@@ -44,6 +63,25 @@ if (sentryDsn) {
         tracesSampleRate: 0.2,
         replaysSessionSampleRate: 0,
         replaysOnErrorSampleRate: 0, // disabled — error replays could capture student profile data
+        // Known-benign noise that isn't actionable per-event. Keep this list
+        // tight — anything here is invisible to us forever.
+        ignoreErrors: [
+          // Capacitor's web Haptics shim on Safari (no navigator.vibrate).
+          // Belt-and-suspenders behind the native gate in src/lib/haptics.js,
+          // for stale web bundles + older native builds still in the wild.
+          'Browser does not support the vibrate API',
+          // supabase-js coordinates token refresh across tabs via the Web Locks
+          // API. During a navigation/redirect (e.g. the /classroom OAuth bounce)
+          // a held lock gets stolen and the loser rejects — the session is fine.
+          /another request stole it/i,
+          "Lock broken by another request with the 'steal' option",
+          // Stale lazy-route chunks after a deploy. The vite:preloadError handler
+          // above reloads to recover; this filters variants that slip past it.
+          /Failed to fetch dynamically imported module/i,
+          /error loading dynamically imported module/i,
+          /Importing a module script failed/i,
+          "'text/html' is not a valid JavaScript MIME type",
+        ],
       })
     })
     .catch(() => {})
