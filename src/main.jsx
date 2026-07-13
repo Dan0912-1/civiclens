@@ -100,6 +100,11 @@ onIdle(() => {
             /error loading dynamically imported module/i,
             /Importing a module script failed/i,
             "'text/html' is not a valid JavaScript MIME type",
+            // The CSS-preload variant of the same stale-deploy class: a route
+            // chunk's hashed .css 404s after a deploy. vite:preloadError still
+            // fires for it (so the reload above recovers), but the message
+            // differs from the JS variants and was slipping past this filter.
+            /Unable to preload CSS for/i,
           ],
         })
       })
