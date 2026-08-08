@@ -100,6 +100,16 @@ onIdle(() => {
             /error loading dynamically imported module/i,
             /Importing a module script failed/i,
             "'text/html' is not a valid JavaScript MIME type",
+            // vite-plugin-pwa's generated registerSW.js calls
+            // navigator.serviceWorker.register() with no .catch(), so a failed
+            // registration surfaces as an unhandled rejection. This is Chrome's
+            // wording for a sw.js fetch that never completed (offline mid-load,
+            // connection reset, a blocking extension or proxy); the browser
+            // retries on the next navigation and there is nothing a user or we
+            // can do about it. Deliberately scoped to the fetch-failure variant:
+            // a genuinely broken sw.js reports a different message (a bad HTTP
+            // response code, or an unsupported MIME type) and still comes through.
+            /An unknown error occurred when fetching the script/i,
           ],
         })
       })

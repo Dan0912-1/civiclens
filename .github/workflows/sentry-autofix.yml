@@ -56,8 +56,14 @@ jobs:
         name: Scan for new issues
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
-          SENTRY_PROJECTS: ${{ secrets.SENTRY_PROJECTS }}
+          # Vars, NOT secrets. The scan's JSON output embeds the project slug and
+          # a permalink containing the org slug, and Actions silently drops any
+          # job output holding a registered secret value ("Skip output 'result'
+          # since it may contain secret"). That emptied needs.scan.outputs.result,
+          # so the fix job's `if` went false and every run reported success while
+          # fixing nothing. Neither slug is sensitive; both appear in Sentry URLs.
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECTS: ${{ vars.SENTRY_PROJECTS }}
           AUTOFIX_QUERY: ${{ vars.AUTOFIX_QUERY }}
           AUTOFIX_FIRST_SEEN_WINDOW: ${{ vars.AUTOFIX_FIRST_SEEN_WINDOW || '14d' }}
           AUTOFIX_MAX_PER_RUN: ${{ github.event.inputs.max_per_run || vars.AUTOFIX_MAX_PER_RUN || '3' }}
@@ -113,7 +119,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_HOST: ${{ env.SENTRY_HOST }}
           RUNNER_TEMP: ${{ runner.temp }}
         with:
