@@ -53,9 +53,15 @@ get a head start and the issue is not retried.
 | --- | --- | --- |
 | `CLAUDE_CODE_OAUTH_TOKEN` | yes | Run `claude setup-token` locally (uses your Max subscription). Paste the token. |
 | `SENTRY_AUTH_TOKEN` | yes | Sentry → Settings → Auth Tokens (or a Developer Settings → Internal Integration). Scopes: `event:read`, `project:read`. |
-| `SENTRY_ORG` | yes | Your org slug. It is in any Sentry URL: `sentry.io/organizations/<this>/...`. |
-| `SENTRY_PROJECTS` | yes | Comma-separated project slugs, e.g. `capitolkey-frontend,capitolkey-backend` (Project Settings → General → Name/slug). |
 | `AUTOFIX_GH_TOKEN` | recommended | A PAT (fine-grained: this repo, Contents + Pull requests = Read/Write). Without it the PRs still open, but **CI will not run on them** (GitHub suppresses workflow triggers on PRs opened by the default token). |
+
+> **`SENTRY_ORG` and `SENTRY_PROJECTS` belong in Variables, not Secrets** (see the
+> next table). They were secrets originally and it silently broke the whole
+> pipeline: the scan's JSON output embeds the project slug and an org-bearing
+> permalink, and Actions drops any job output containing a registered secret value
+> (`Skip output 'result' since it may contain secret`). `needs.scan.outputs.result`
+> arrived empty, the fix job's `if` went false, and the run reported **success**
+> having fixed nothing. Neither slug is sensitive; both are in every Sentry URL.
 
 > Prefer an API key over the subscription? Swap `claude_code_oauth_token` for
 > `anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}` in the workflow. That bills
@@ -65,6 +71,8 @@ get a head start and the issue is not retried.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `SENTRY_ORG` | (unset) | **Required.** Your org slug. It is in any Sentry URL: `sentry.io/organizations/<this>/...`. |
+| `SENTRY_PROJECTS` | (unset) | **Required.** Comma-separated project slugs, e.g. `capitolkey-frontend,capitolkey-backend` (Project Settings → General → Name/slug). |
 | `AUTOFIX_ENABLED` | (unset) | Set to `true` to turn the schedule on. Until then, scheduled runs no-op green. This is the on/off switch. |
 | `AUTOFIX_MAX_PER_RUN` | `3` | Max PRs opened per run (clamped 1..10). |
 | `AUTOFIX_FIRST_SEEN_WINDOW` | `14d` | How recent "new" means. |
