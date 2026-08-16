@@ -2208,6 +2208,10 @@ app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, r
 app.get('/api/representatives', billDetailLimiter, async (req, res) => {
   const state = String(req.query.state || '').toUpperCase()
   const chamber = String(req.query.chamber || 'house')
+  // Optional. A ZIP narrows the House to the student's own member; anything
+  // that isn't five digits is ignored rather than rejected, so a half-typed
+  // box just falls back to the state delegation.
+  const zip = /^\d{5}$/.test(String(req.query.zip || '')) ? String(req.query.zip) : ''
   // Deliberately NOT validated against US_STATES: that list omits NH because
   // its legislature blocks automated bill-text access, which has nothing to do
   // with whether NH has members of Congress. An unknown code just returns an
@@ -2216,9 +2220,10 @@ app.get('/api/representatives', billDetailLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Invalid state' })
   }
   try {
-    const payload = await representativesFor({ state, chamber })
+    const payload = await representativesFor({ state, chamber, zip })
     // Membership moves a handful of times a year; an hour of edge caching is
-    // free and this endpoint is hit on every panel open.
+    // free and this endpoint is hit on every panel open. Vary by the full
+    // query so a ZIP-narrowed answer can't be served to a different ZIP.
     res.set('Cache-Control', 'public, max-age=3600')
     res.json(payload)
   } catch (err) {

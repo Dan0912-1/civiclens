@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { getApiBase } from '../lib/api'
-import { readCachedProfile, resolveProfile } from '../lib/userProfile'
+import { readCachedProfile, cacheProfile, resolveProfile } from '../lib/userProfile'
 import { decidingChamber, repLookupUrl, STATE_LEGISLATOR_FINDER } from '../lib/billUrl'
 import styles from './RepsPanel.module.css'
 
@@ -54,6 +54,22 @@ const hasState = p => Boolean(p?.state)
 
 function cachedProfileState() {
   return (readCachedProfile()?.state || '').toUpperCase()
+}
+
+function cachedProfileZip() {
+  const z = String(readCachedProfile()?.zip || '')
+  return /^\d{5}$/.test(z) ? z : ''
+}
+
+// Remember the ZIP alongside the rest of the profile. Stored as five digits
+// and sent only to our own /api/representatives — it never leaves for a
+// third party, and it is the least precise thing that can answer the question
+// (a street address would resolve every ZIP, and we don't want one).
+function rememberZip(z) {
+  try {
+    const profile = readCachedProfile() || {}
+    cacheProfile({ ...profile, zip: z })
+  } catch { /* non-fatal — the ZIP still applies for this panel */ }
 }
 
 function MemberCard({ member }) {
@@ -126,6 +142,33 @@ function SponsorList({ sponsors }) {
   )
 }
 
+// The ZIP prompt. This replaces the old dead end — a list of every member in
+// the state and a link telling the student to go work it out on house.gov.
+function ZipPrompt({ draft, onDraft, onSubmit, label }) {
+  const valid = /^\d{5}$/.test(draft)
+  return (
+    <form
+      className={styles.zipRow}
+      onSubmit={e => { e.preventDefault(); if (valid) onSubmit(draft) }}
+    >
+      <input
+        className={styles.zipInput}
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        maxLength={5}
+        placeholder="ZIP code"
+        aria-label="Your ZIP code"
+        value={draft}
+        onChange={e => onDraft(e.target.value.replace(/\D/g, '').slice(0, 5))}
+      />
+      <button className={styles.zipBtn} type="submit" disabled={!valid}>
+        {label}
+      </button>
+    </form>
+  )
+}
+
 export default function RepsPanel({ bill, sponsors = [], onClose }) {
   const chamber = decidingChamber(bill || {})
   const isStateChamber = chamber === 'state-upper' || chamber === 'state-lower'
@@ -140,6 +183,12 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
   // someone who has a state on file.
   const [stateSettled, setStateSettled] = useState(() => Boolean(cachedProfileState()))
   const [loading, setLoading] = useState(!isStateChamber && Boolean(profileState))
+  // A ZIP is what turns "here are all 5 of your state's House members" into
+  // "here is yours". We ask for it here rather than in the profile flow so it
+  // is requested at the moment it buys the student something, and remember it
+  // on the profile so we only ask once.
+  const [zip, setZip] = useState(cachedProfileZip)
+  const [zipDraft, setZipDraft] = useState('')
 
   useEffect(() => {
     if (isStateChamber || stateSettled || authLoading) return
@@ -163,7 +212,8 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
     if (isStateChamber || !profileState) return
     let cancelled = false
     setLoading(true)
-    fetch(`${getApiBase()}/api/representatives?state=${profileState}&chamber=${chamber}`, {
+    const q = `state=${profileState}&chamber=${chamber}${zip ? `&zip=${zip}` : ''}`
+    fetch(`${getApiBase()}/api/representatives?${q}`, {
       signal: AbortSignal.timeout(10000),
     })
       .then(r => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
@@ -171,7 +221,7 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
       .catch(() => { if (!cancelled) setFailed(true) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [chamber, profileState, isStateChamber])
+  }, [chamber, profileState, isStateChamber, zip])
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose() }
@@ -186,11 +236,15 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
   const copy = CHAMBER_COPY[chamber] || CHAMBER_COPY.house
   const members = data?.members || []
   const finderUrl = data?.finderUrl || repLookupUrl(bill || {})
-  // "Your U.S. representative" is only true when the list is one person. For a
-  // multi-district state it's the delegation, and the heading has to say that.
-  const heading = !isStateChamber && members.length > 1 && !data?.exact
-    ? `${profileState}'s U.S. House delegation`
-    : copy.heading
+  // "Your U.S. representative" is only true when the list is one person. A ZIP
+  // that straddles districts narrows it to a handful — which is neither one
+  // person nor the whole delegation, so it gets its own heading rather than
+  // being mislabelled as either.
+  const heading = isStateChamber || members.length <= 1 || data?.exact
+    ? copy.heading
+    : data?.reason === 'zip_spans_districts'
+    ? `One of these ${members.length} is yours`
+    : `${profileState}'s U.S. House delegation`
 
   return (
     <div className={styles.overlay} onClick={onClose} role="presentation">
@@ -244,22 +298,47 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
               <p className={styles.note}>
                 {chamber === 'senate'
                   ? 'Senators represent the whole state, so both of these are yours.'
+                  : data.fromZip
+                  ? `Your ZIP is entirely inside District ${members[0].district}, so this is your representative.`
                   : `${profileState} elects one at-large representative, so this is yours.`}
+              </p>
+            ) : data.reason === 'zip_spans_districts' ? (
+              <p className={styles.note}>
+                ZIP {zip} straddles {members.length} districts — most of it is in
+                District {members[0].district}, but a street address is the only thing
+                that settles it. Your representative is one of these.
               </p>
             ) : (
               <p className={styles.note}>
-                {profileState} is split into {members.length} House districts. We know your
-                state but not your street address, so we can't tell which district you live
-                in — these are all {members.length}. Your ZIP code will identify yours on
-                house.gov.
+                {profileState} has {data.delegationSize} House districts and we don't know
+                which one you're in. Enter your ZIP and we'll name your representative.
               </p>
             )}
+
+            {!data.exact && data.reason !== 'zip_spans_districts' && (
+              <ZipPrompt
+                draft={zipDraft}
+                onDraft={setZipDraft}
+                onSubmit={z => { setZip(z); rememberZip(z) }}
+                label="Find mine"
+              />
+            )}
+
             <div className={styles.section}>
               {members.map(m => <MemberCard key={m.bioguideId || m.name} member={m} />)}
             </div>
+
+            {data.fromZip && (
+              <button
+                className={styles.zipReset}
+                onClick={() => { setZip(''); setZipDraft('') }}
+              >
+                Not your area? Use a different ZIP
+              </button>
+            )}
             {!data.exact && (
               <button className={styles.finderBtn} onClick={() => openExternal(finderUrl)}>
-                Find your exact district on house.gov →
+                Look it up by street address on house.gov →
               </button>
             )}
           </>

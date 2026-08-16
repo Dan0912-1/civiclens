@@ -167,3 +167,68 @@
   padding: var(--space-lg) 0;
   text-align: center;
 }
+
+/* ─── ZIP prompt ─── */
+/* The panel's whole job is to name a person. When the state alone can't, this
+   asks for the one extra digit-string that can, instead of sending the student
+   to a third-party finder and hoping they come back. */
+.zipRow {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+
+.zipInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 1px;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  background: var(--white);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+
+.zipInput:focus {
+  outline: 2px solid transparent;
+  border-color: var(--navy);
+  box-shadow: 0 0 0 1px var(--navy);
+}
+
+.zipBtn {
+  flex: 0 0 auto;
+  background: var(--navy);
+  color: var(--white);
+  padding: 11px 18px;
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.zipBtn:hover:not(:disabled) { background: #0a1520; }
+.zipBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.zipReset {
+  display: block;
+  margin: 0 0 var(--space-md);
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.zipReset:hover { color: var(--navy); }
