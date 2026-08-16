@@ -1,5 +1,15 @@
-// State legislative session status as of 2026-05-08.
-// Sources: NCSL 2026 calendar, MultiState, LegiScan, state legislative sites.
+// State legislative session status as of 2026-08-16.
+//
+// Adjournment dates come from the NCSL 2026 Legislative Session Calendar
+// (updated March 23, 2026); 2027 convene dates from MultiState's 2027 calendar,
+// with Florida (March 2) and North Carolina confirmed against primary reporting.
+// Where a secondary aggregator disagreed with NCSL, NCSL won — it was right and
+// the aggregator was wrong on AZ, GA, IA and VT.
+//
+// "*" states in the NCSL calendar (legislature meets throughout the year) are
+// recorded as yearRound rather than given an adjournment date: IL, MA, MI, NJ,
+// NY, OH, WI. Some of those have finished floor activity for 2026, but they can
+// act at any time, so showing no note beats asserting a session has ended.
 //
 // Update this file as sessions adjourn or convene. The data drives the State
 // tab on Results: states not "in_session" get a note instead of bills.
@@ -15,58 +25,60 @@
 // past scheduledAdjournment as adjourned regardless of the stored status, so
 // the table degrades into "we're not sure when they return" rather than into a
 // confident falsehood. Refresh DATA_AS_OF and the rows together.
-export const DATA_AS_OF = '2026-05-08'
+export const DATA_AS_OF = '2026-08-16'
 
 export const STATE_SESSIONS = {
-  AL: { status: 'adjourned', adjournedOn: '2026-04-09', nextConvenes: '2027-01' },
-  AK: { status: 'in_session', scheduledAdjournment: '2026-05-20' },
+  AL: { status: 'adjourned', adjournedOn: '2026-04-27', nextConvenes: '2027-02' },
+  AK: { status: 'adjourned', adjournedOn: '2026-05-20', nextConvenes: '2027-01' },
   AZ: { status: 'adjourned', adjournedOn: '2026-04-25', nextConvenes: '2027-01' },
-  AR: { status: 'adjourned', adjournedOn: '2026-04-29', nextConvenes: '2027-01', note: 'Fiscal session' },
+  AR: { status: 'adjourned', adjournedOn: '2026-05-07', nextConvenes: '2027-01', note: 'Fiscal session' },
   CA: { status: 'in_session', scheduledAdjournment: '2026-08-31' },
-  CO: { status: 'in_session', scheduledAdjournment: '2026-05-13' },
+  CO: { status: 'adjourned', adjournedOn: '2026-05-13', nextConvenes: '2027-01' },
   CT: { status: 'adjourned', adjournedOn: '2026-05-06', nextConvenes: '2027-01' },
-  DE: { status: 'in_session', scheduledAdjournment: '2026-06-30' },
-  FL: { status: 'adjourned', adjournedOn: '2026-03-13', nextConvenes: '2027-01' },
+  DE: { status: 'adjourned', adjournedOn: '2026-06-30', nextConvenes: '2027-01' },
+  FL: { status: 'adjourned', adjournedOn: '2026-03-13', nextConvenes: '2027-03' },
   GA: { status: 'adjourned', adjournedOn: '2026-04-06', nextConvenes: '2027-01' },
   HI: { status: 'adjourned', adjournedOn: '2026-05-08', nextConvenes: '2027-01' },
-  ID: { status: 'adjourned', adjournedOn: '2026-04-02', nextConvenes: '2027-01' },
-  IL: { status: 'in_session', scheduledAdjournment: '2026-05-31' },
-  IN: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },
+  ID: { status: 'adjourned', adjournedOn: '2026-04-10', nextConvenes: '2027-01' },
+  IL: { status: 'in_session', yearRound: true },
+  IN: { status: 'adjourned', adjournedOn: '2026-02-27', nextConvenes: '2027-01' },
   IA: { status: 'adjourned', adjournedOn: '2026-04-21', nextConvenes: '2027-01' },
-  KS: { status: 'adjourned', adjournedOn: '2026-04-11', nextConvenes: '2027-01' },
+  KS: { status: 'adjourned', adjournedOn: '2026-04-10', nextConvenes: '2027-01' },
   KY: { status: 'adjourned', adjournedOn: '2026-04-15', nextConvenes: '2027-01' },
-  LA: { status: 'in_session', scheduledAdjournment: '2026-06-01' },
-  ME: { status: 'adjourned', adjournedOn: '2026-04-29', nextConvenes: '2027-01' },
+  LA: { status: 'adjourned', adjournedOn: '2026-06-01', nextConvenes: '2027-04' },
+  ME: { status: 'adjourned', adjournedOn: '2026-04-15', nextConvenes: '2026-12' },
   MD: { status: 'adjourned', adjournedOn: '2026-04-13', nextConvenes: '2027-01' },
-  MA: { status: 'in_session', scheduledAdjournment: '2026-07-31', yearRound: true },
+  MA: { status: 'in_session', yearRound: true },
   MI: { status: 'in_session', yearRound: true },
-  MN: { status: 'in_session', scheduledAdjournment: '2026-05-18' },
+  MN: { status: 'adjourned', adjournedOn: '2026-05-18', nextConvenes: '2027-01' },
   MS: { status: 'adjourned', adjournedOn: '2026-04-05', nextConvenes: '2027-01' },
-  MO: { status: 'in_session', scheduledAdjournment: '2026-05-15' },
+  MO: { status: 'adjourned', adjournedOn: '2026-05-15', nextConvenes: '2027-01' },
   MT: { status: 'biennial_off_year', nextConvenes: '2027-01' },
   NE: { status: 'adjourned', adjournedOn: '2026-04-17', nextConvenes: '2027-01' },
   NV: { status: 'biennial_off_year', nextConvenes: '2027-02' },
-  NH: { status: 'in_session', scheduledAdjournment: '2026-06-30' },
+  NH: { status: 'adjourned', adjournedOn: '2026-06-30', nextConvenes: '2027-01' },
   NJ: { status: 'in_session', yearRound: true },
   NM: { status: 'adjourned', adjournedOn: '2026-02-19', nextConvenes: '2027-01' },
-  NY: { status: 'in_session', scheduledAdjournment: '2026-06-04', yearRound: true },
-  NC: { status: 'in_session', scheduledAdjournment: '2026-08-31', note: 'Short session' },
+  NY: { status: 'in_session', yearRound: true },
+  // Short session adjourned; a resolution set limited reconvening dates
+  // through December for budget/veto business only, not general bill filing.
+  NC: { status: 'adjourned', adjournedOn: '2026-07-31', nextConvenes: '2027-01', note: 'Short session' },
   ND: { status: 'biennial_off_year', nextConvenes: '2027-01' },
   OH: { status: 'in_session', yearRound: true },
-  OK: { status: 'in_session', scheduledAdjournment: '2026-05-29' },
-  OR: { status: 'adjourned', adjournedOn: '2026-03-06', nextConvenes: '2027-02' },
+  OK: { status: 'adjourned', adjournedOn: '2026-05-29', nextConvenes: '2027-02' },
+  OR: { status: 'adjourned', adjournedOn: '2026-03-06', nextConvenes: '2027-01' },
   PA: { status: 'in_session', scheduledAdjournment: '2026-11-30' },
-  RI: { status: 'in_session', scheduledAdjournment: '2026-06-30' },
-  SC: { status: 'in_session', scheduledAdjournment: '2026-05-07' },
+  RI: { status: 'adjourned', adjournedOn: '2026-06-30', nextConvenes: '2027-01' },
+  SC: { status: 'adjourned', adjournedOn: '2026-05-07', nextConvenes: '2027-01' },
   SD: { status: 'adjourned', adjournedOn: '2026-03-30', nextConvenes: '2027-01' },
-  TN: { status: 'adjourned', adjournedOn: '2026-04-23', nextConvenes: '2027-01' },
+  TN: { status: 'adjourned', adjournedOn: '2026-04-24', nextConvenes: '2027-01' },
   TX: { status: 'biennial_off_year', nextConvenes: '2027-01' },
   UT: { status: 'adjourned', adjournedOn: '2026-03-06', nextConvenes: '2027-01' },
   VT: { status: 'adjourned', adjournedOn: '2026-05-08', nextConvenes: '2027-01' },
   VA: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },
   WA: { status: 'adjourned', adjournedOn: '2026-03-12', nextConvenes: '2027-01' },
   WV: { status: 'adjourned', adjournedOn: '2026-03-14', nextConvenes: '2027-01' },
-  WI: { status: 'adjourned', adjournedOn: '2026-03-17', nextConvenes: '2027-01' },
+  WI: { status: 'in_session', yearRound: true },
   WY: { status: 'adjourned', adjournedOn: '2026-03-11', nextConvenes: '2027-01' },
 }
 
