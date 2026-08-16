@@ -10,7 +10,8 @@ import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } fro
 import { completeGoogleAssignment } from '../lib/googleClassroom'
 import GoogleAssignModal from '../components/GoogleAssignModal.jsx'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
-import { billHref, congressGovUrl } from '../lib/billUrl'
+import { billHref, congressGovUrl, congressGovTextUrl } from '../lib/billUrl'
+import RepsPanel from '../components/RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillDetail.module.css'
 
@@ -100,6 +101,7 @@ export default function BillDetail() {
   const [fullText, setFullText] = useState(null) // { text, wordCount, version }
   const [fullTextLoading, setFullTextLoading] = useState(false)
   const [fullTextUnavailable, setFullTextUnavailable] = useState(false)
+  const [repsOpen, setRepsOpen] = useState(false)
 
   // Reset per-bill state whenever the route params change so navigating from
   // Bill A → Bill B doesn't show stale A data for a frame.
@@ -118,6 +120,7 @@ export default function BillDetail() {
     setFullText(null)
     setFullTextLoading(false)
     setFullTextUnavailable(false)
+    setRepsOpen(false)
     // intentionally excluding passedBill/passedAnalysis — they're read as
     // initial snapshots, not reactive dependencies. Re-running on route
     // param change is what we want.
@@ -486,6 +489,29 @@ export default function BillDetail() {
 
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const displayTitle = bill?.title || detail?.title || `${type.toUpperCase()} ${number}`
+
+  // Sponsors. The API now returns a display-ready `name` plus the pieces that
+  // identify the seat, so the page no longer stitches a name out of
+  // firstName/lastName and renders "(D-)" when the source has no state on the
+  // record — or, on federal bills, shows nothing at all because we never asked
+  // Congress.gov for the sponsor in the first place.
+  const allSponsors = detail?.sponsors || []
+  const leadSponsors = allSponsors.filter(s => s.isPrimary)
+  // Older payloads had no isPrimary flag; treat the first entry as the lead.
+  const shownSponsors = leadSponsors.length ? leadSponsors : allSponsors.slice(0, 1)
+  const sponsorLine = shownSponsors.map(s => {
+    const name = s.name || `${s.firstName || ''} ${s.lastName || ''}`.trim()
+    if (!name) return ''
+    // A committee has no party or district. Federal districts are bare
+    // numbers and need the state to mean anything ("CO-3"); state districts
+    // already carry their own chamber prefix ("SD-005"), so they stand alone.
+    const district = /^\d+$/.test(String(s.district || ''))
+      ? [s.state, s.district].filter(Boolean).join('-')
+      : (s.district || s.state || '')
+    const seat = [s.party, district].filter(Boolean).join('-')
+    const title = s.role ? `${s.role}. ` : ''
+    return seat ? `${title}${name} (${seat})` : `${title}${name}`
+  }).filter(Boolean).join(', ')
   // Build a human-readable bill URL. LegiScan URLs (from passedBill/detail) are
   // already good. The fallback constructs a Congress.gov or LegiScan URL. Filter
   // out any API-style URLs (e.g. api.congress.gov) that aren't meant for users.
@@ -504,6 +530,17 @@ export default function BillDetail() {
       : congressGovUrl(congress, type, number)
         || `https://www.congress.gov/search?q=${encodeURIComponent(`${type.toUpperCase()} ${number}`)}`
   )
+
+  // Where "read the text" links go when we can't serve the text in-app. The
+  // bill's landing page is NOT that place: congress.gov opens on the Summary
+  // tab and LegiScan on an overview, leaving the student to spot a "Text" tab
+  // and click it a second time. The API hands us a URL that opens on the
+  // document itself — congress.gov's /text tab federally, and the state
+  // legislature's own copy of the bill for state bills.
+  const billTextUrl = detail?.textUrl
+    || (isStateRoute || passedBill?.isStateBill || bill?.isStateBill
+      ? billUrl
+      : congressGovTextUrl(congress, type, number) || billUrl)
 
   if (loading && !bill) {
     return (
@@ -832,14 +869,12 @@ export default function BillDetail() {
           <div className={styles.metaSection}>
             <h3 className={styles.metaHeading}>Bill details</h3>
             <div className={styles.metaGrid}>
-              {detail.sponsors?.length > 0 && (
+              {sponsorLine && (
                 <div className={styles.metaItem}>
-                  <span className={styles.metaLabel}>Sponsor</span>
-                  <span className={styles.metaValue}>
-                    {detail.sponsors.map(s =>
-                      `${s.firstName} ${s.lastName} (${s.party}-${s.state})`
-                    ).join(', ')}
+                  <span className={styles.metaLabel}>
+                    {leadSponsors.length > 1 ? 'Sponsors' : 'Sponsor'}
                   </span>
+                  <span className={styles.metaValue}>{sponsorLine}</span>
                 </div>
               )}
               {detail.cosponsors?.count > 0 && (
@@ -920,6 +955,12 @@ export default function BillDetail() {
             >
               {shareMsg || 'Share'}
             </button>
+            <button
+              className={styles.footerBtn}
+              onClick={() => setRepsOpen(true)}
+            >
+              Contact Lawmakers
+            </button>
             {user && (
               <div className={styles.assignWrapper} ref={assignRef}>
                 <button
@@ -995,7 +1036,7 @@ export default function BillDetail() {
                 <div className={styles.billTextBody}>{fullText.text}</div>
                 <p className={styles.billTextFooter}>
                   Cached from the authoritative source.{' '}
-                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billUrl) }}>
+                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billTextUrl) }}>
                     View original →
                   </a>
                 </p>
@@ -1006,7 +1047,7 @@ export default function BillDetail() {
                   Full text isn't available in-app for this bill yet.
                 </div>
                 <p className={styles.billTextFooter}>
-                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billUrl) }}>
+                  <a href="#" onClick={e => { e.preventDefault(); openInAppBrowser(billTextUrl) }}>
                     Read it on the original source →
                   </a>
                 </p>
@@ -1015,6 +1056,17 @@ export default function BillDetail() {
           </section>
         )}
       </div>
+
+      {/* Who votes on this bill, and how to reach them. The bill's own
+          sponsors are passed through because on a state bill they're the
+          named legislators a student can actually contact about it. */}
+      {repsOpen && (
+        <RepsPanel
+          bill={bill || detail || { type, number, congress, state, isStateBill: isStateRoute }}
+          sponsors={allSponsors}
+          onClose={() => setRepsOpen(false)}
+        />
+      )}
     </main>
   )
 }

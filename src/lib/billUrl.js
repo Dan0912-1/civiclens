@@ -40,24 +40,62 @@ export function congressGovUrl(congress, type, number) {
 }
 
 /**
- * Where to send a student who wants to contact the people voting on THIS bill.
- * State bills are decided by state legislators, so a federal member lookup is
- * the wrong destination for them.
+ * The congress.gov page that opens ON the bill's text.
+ *
+ * Without the /text segment congress.gov lands on the Summary tab and the
+ * student has to notice a row of tabs and click "Text" to reach the thing the
+ * button promised them.
  */
-export function repLookupUrl(bill, profileState = '') {
+export function congressGovTextUrl(congress, type, number) {
+  const page = congressGovUrl(congress, type, number)
+  return page ? `${page}/text` : null
+}
+
+// Official finders, used when we can't name a student's own lawmakers.
+export const HOUSE_FINDER = 'https://www.house.gov/representatives/find-your-representative'
+export const SENATE_FINDER = 'https://www.senate.gov/senators/senators-contact.htm'
+export const STATE_LEGISLATOR_FINDER = 'https://openstates.org/find_your_legislator/'
+
+/**
+ * Which body votes on this bill, in the vocabulary /api/representatives speaks.
+ *
+ * Chamber is the whole point: a Senate bill is decided by senators and a House
+ * bill by representatives, and the old lookup ignored the distinction — every
+ * bill sent the reader to one state-wide directory listing both. Mirrors
+ * decidingChamber in api/representatives.js; scripts/test-civic-links.mjs
+ * asserts the two agree (they can't share a module — .vercelignore keeps api/
+ * out of the frontend build).
+ */
+export function decidingChamber(bill) {
+  const type = String(bill?.type ?? bill?.bill_type ?? '').toLowerCase().replace(/\./g, '')
   if (isStateBill(bill ?? {})) {
-    // One finder that covers all 50 states.
-    return 'https://openstates.org/find_your_legislator/'
+    // State chambers are named inconsistently across the 50 states (Assembly,
+    // House of Delegates, General Assembly), so trust the origin chamber the
+    // data gives us before falling back to the bill-type prefix.
+    const origin = String(bill?.originChamber ?? '').toLowerCase()
+    if (origin.includes('senate')) return 'state-upper'
+    if (origin.includes('house') || origin.includes('assembly')) return 'state-lower'
+    return type.startsWith('s') ? 'state-upper' : 'state-lower'
   }
-  // For a federal bill the relevant state is the STUDENT's, not the bill's —
-  // and "US" is a jurisdiction, not a state, so it must never reach the path.
-  const billState = String(bill?.state ?? bill?.jurisdiction ?? '').toUpperCase()
-  const state = (billState && billState !== 'US' ? billState : String(profileState || '').toUpperCase())
-  // GovTrack lists both senators and every House member for a state on one
-  // page, which beats congress.gov's bare search form.
-  return /^[A-Z]{2}$/.test(state)
-    ? `https://www.govtrack.us/congress/members/${state}`
-    : 'https://www.congress.gov/members/find-your-member'
+  return type.startsWith('s') ? 'senate' : 'house'
+}
+
+/**
+ * The official finder for whichever chamber decides this bill. Used as the
+ * "look up your exact district" escape hatch in the representatives panel, and
+ * as the whole answer when we have no state to work from.
+ */
+export function repLookupUrl(bill) {
+  const chamber = decidingChamber(bill ?? {})
+  if (chamber === 'state-upper' || chamber === 'state-lower') {
+    // One finder that covers all 50 states.
+    return STATE_LEGISLATOR_FINDER
+  }
+  if (chamber === 'senate') return SENATE_FINDER
+  // House districts can't be derived from a state code — house.gov's finder
+  // resolves one from a ZIP (asking for ZIP+4 when the ZIP spans two
+  // districts), which is the piece we don't have.
+  return HOUSE_FINDER
 }
 
 export function slugifySession(session) {

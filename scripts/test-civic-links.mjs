@@ -12,9 +12,16 @@ import assert from 'node:assert/strict'
 import {
   sanitizeCivicActions,
   federalBillUrl,
+  federalBillTextUrl,
   contactUrlFor,
 } from '../api/civicLinks.js'
-import { congressGovUrl, repLookupUrl } from '../src/lib/billUrl.js'
+import { decidingChamber as apiDecidingChamber } from '../api/representatives.js'
+import {
+  congressGovUrl,
+  congressGovTextUrl,
+  repLookupUrl,
+  decidingChamber,
+} from '../src/lib/billUrl.js'
 
 let passed = 0
 function test(name, fn) {
@@ -158,7 +165,7 @@ test('orphaned path fragment after a rewritten URL is removed', () => {
   )
 })
 
-test('tidying leaves a normal single-link sentence untouched', () => {
+test('tidying leaves a normal single-link sentence intact around its URL', () => {
   const bill = { isStateBill: false, congress: 119, type: 'hr', number: 9544 }
   const parsed = {
     civic_actions: [
@@ -166,9 +173,37 @@ test('tidying leaves a normal single-link sentence untouched', () => {
     ],
   }
   sanitizeCivicActions(parsed, bill, null)
+  // The prose is untouched; the URL gains /text because this action sends the
+  // student to the words of the bill, and congress.gov opens on Summary.
   assert.equal(
     parsed.civic_actions[0].how,
-    'Read the full text of the bill at https://www.congress.gov/bill/119th-congress/house-bill/9544 today.'
+    'Read the full text of the bill at https://www.congress.gov/bill/119th-congress/house-bill/9544/text today.'
+  )
+})
+
+// ── the Text tab ──────────────────────────────────────────────────────────
+// "Read the full bill text" landing on a page with a Text tab the student has
+// to find and click is a promise the button didn't keep.
+test('federal text URLs open on the text itself', () => {
+  assert.equal(
+    federalBillTextUrl(119, 'hr', 5631),
+    'https://www.congress.gov/bill/119th-congress/house-bill/5631/text'
+  )
+  assert.equal(federalBillTextUrl(119, 'zz', 5631), null)
+  assert.equal(congressGovTextUrl(119, 's', 42), federalBillTextUrl(119, 's', 42))
+})
+
+test('a track-the-status action keeps the bill page, not the text tab', () => {
+  const bill = { isStateBill: false, congress: 119, type: 'hr', number: 9544 }
+  const parsed = {
+    civic_actions: [
+      { action: 'Track it', how: 'Follow the bill\u2019s progress at https://www.congress.gov/bill/119th-congress/house-bill/9544 each week.' },
+    ],
+  }
+  sanitizeCivicActions(parsed, bill, null)
+  assert.equal(
+    parsed.civic_actions[0].how,
+    'Follow the bill\u2019s progress at https://www.congress.gov/bill/119th-congress/house-bill/9544 each week.'
   )
 })
 
@@ -216,26 +251,63 @@ test('frontend and backend build identical federal bill URLs', () => {
   }
 })
 
-test('frontend rep lookup is jurisdiction-aware', () => {
+test('frontend rep lookup is jurisdiction- and chamber-aware', () => {
   // A state bill must never route to a federal member lookup.
   assert.equal(
-    repLookupUrl({ isStateBill: true, state: 'CT' }, 'CT'),
+    repLookupUrl({ isStateBill: true, state: 'CT' }),
     'https://openstates.org/find_your_legislator/'
   )
   assert.equal(
-    repLookupUrl({ jurisdiction: 'MD', bill_type: 'hb' }, 'CT'),
+    repLookupUrl({ jurisdiction: 'MD', bill_type: 'hb' }),
     'https://openstates.org/find_your_legislator/'
   )
-  // Federal bills use the student's own state.
+  // A Senate bill is decided by senators; the House finder is the wrong page.
   assert.equal(
-    repLookupUrl({ isStateBill: false, congress: 119, type: 'hr' }, 'CT'),
-    'https://www.govtrack.us/congress/members/CT'
+    repLookupUrl({ isStateBill: false, congress: 119, type: 's' }),
+    'https://www.senate.gov/senators/senators-contact.htm'
   )
-  // "US" is a jurisdiction, not a state — it must not reach the path.
   assert.equal(
-    repLookupUrl({ jurisdiction: 'US', type: 'hr' }, ''),
-    'https://www.congress.gov/members/find-your-member'
+    repLookupUrl({ isStateBill: false, congress: 119, type: 'hr' }),
+    'https://www.house.gov/representatives/find-your-representative'
   )
+  // "US" is a jurisdiction, not a state — it must not make this a state bill.
+  assert.equal(
+    repLookupUrl({ jurisdiction: 'US', type: 'hr' }),
+    'https://www.house.gov/representatives/find-your-representative'
+  )
+})
+
+// The panel asks /api/representatives for a chamber the client computed, so
+// the two implementations have to agree on every bill shape we emit.
+test('frontend and backend agree on which chamber decides a bill', () => {
+  const cases = [
+    { isStateBill: false, type: 'hr', state: 'US' },
+    { isStateBill: false, type: 's', state: 'US' },
+    { isStateBill: false, type: 'sjres', state: 'US' },
+    { isStateBill: false, type: 'hconres', state: 'US' },
+    { isStateBill: true, state: 'CT', type: 'hb' },
+    { isStateBill: true, state: 'CT', type: 'sb' },
+    { isStateBill: true, state: 'CA', type: 'ab', originChamber: 'Assembly' },
+    { isStateBill: true, state: 'NY', type: 'sb', originChamber: 'Senate' },
+    { jurisdiction: 'MD', bill_type: 'hb' },
+    { jurisdiction: 'US', bill_type: 's' },
+  ]
+  for (const bill of cases) {
+    assert.equal(
+      decidingChamber(bill),
+      apiDecidingChamber(bill),
+      `decidingChamber differs for ${JSON.stringify(bill)}`
+    )
+  }
+})
+
+test('senate bills route to senators and house bills to representatives', () => {
+  assert.equal(decidingChamber({ type: 's', state: 'US' }), 'senate')
+  assert.equal(decidingChamber({ type: 'sres', state: 'US' }), 'senate')
+  assert.equal(decidingChamber({ type: 'hr', state: 'US' }), 'house')
+  assert.equal(decidingChamber({ type: 'hjres', state: 'US' }), 'house')
+  assert.equal(decidingChamber({ type: 'sb', state: 'CT', isStateBill: true }), 'state-upper')
+  assert.equal(decidingChamber({ type: 'hb', state: 'CT', isStateBill: true }), 'state-lower')
 })
 
 if (process.exitCode) {

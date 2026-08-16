@@ -28,6 +28,7 @@ import { registerTopicRoutes } from './topics.js'
 import { resolveStateBillRow, slugifySession } from './stateBills.js'
 import { registerBillOgImageRoutes } from './billOgImage.js'
 import { sanitizeCivicActions, federalBillUrl } from './civicLinks.js'
+import { representativesFor } from './representatives.js'
 import {
   googleConfigured,
   buildConsentUrl,
@@ -1804,6 +1805,138 @@ function transformBillTimeline(b) {
   return { history, progress, statusStage: deriveStageFromBill(b) }
 }
 
+// ─── Sponsors ────────────────────────────────────────────────────────────────
+// A bill's sponsor is the one piece of metadata that names a human being a
+// student can actually write to, and we were rendering it as "(-)" on state
+// bills and omitting it entirely on federal ones. Both paths below return the
+// same shape so the client renders one way:
+//
+//   { name, role, party, state, district, isPrimary, isCommittee, phone,
+//     contactUrl, firstName, lastName }
+//
+// firstName/lastName are kept for older app builds that still format the name
+// themselves; new code reads `name`.
+
+// The date a bill was actually introduced. We were labelling the LATEST
+// action date "Introduced", so a bill filed in March and signed in April
+// reported an introduction date of April — contradicting the progress bar
+// directly above it on the same page.
+function firstActionDate(b) {
+  const introduced = (b?.progress || []).find(p => Number(p.event) === 1)
+  if (introduced?.date) return introduced.date
+  const history = b?.history || []
+  return history.length ? history[0].date || '' : ''
+}
+
+function sponsorBio(s) {
+  // LegiScan sends bio as [] when it has nothing, and as an object when it does.
+  return (s && typeof s.bio === 'object' && !Array.isArray(s.bio)) ? s.bio : {}
+}
+
+function mapLegiscanSponsors(b) {
+  const billState = b?.state && b.state !== 'US' ? b.state : ''
+  return (b?.sponsors || []).map(s => {
+    const isCommittee = Number(s.committee_sponsor) === 1
+    const first = s.first_name || ''
+    const last = [s.last_name, s.suffix].filter(Boolean).join(' ').trim()
+    const name = s.name || [first, last].filter(Boolean).join(' ')
+    const bio = sponsorBio(s)
+    return {
+      name,
+      // A committee is not a person: it has no chamber role, party or district,
+      // and splitting its name across firstName/lastName is what produced
+      // "Government Administration and Elections Committee (-)".
+      role: isCommittee ? '' : (s.role || ''),
+      party: isCommittee ? '' : (s.party || ''),
+      state: isCommittee ? '' : (s.state || billState),
+      district: isCommittee ? '' : (s.district || ''),
+      isCommittee,
+      // sponsor_type_id: 1 = primary sponsor, 2 = cosponsor, 3 = joint.
+      isPrimary: Number(s.sponsor_type_id) === 1,
+      phone: bio?.social?.capitol_phone || bio?.social?.district_phone || '',
+      contactUrl: bio?.social?.webmail || bio?.links?.official?.website || bio?.social?.biography || '',
+      firstName: isCommittee ? name : first,
+      lastName: isCommittee ? '' : last,
+    }
+  })
+}
+
+function mapCongressSponsors(list) {
+  return (list || []).map(s => {
+    const name = s.fullName || [s.firstName, s.lastName].filter(Boolean).join(' ')
+    return {
+      // Congress.gov's fullName already reads "Rep. Hurd, Jeff [R-CO-3]".
+      // Rebuild it in natural order so it reads like a name, not an index entry.
+      name: [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' ') || name,
+      role: /^Sen\./.test(name) ? 'Sen' : /^Rep\./.test(name) ? 'Rep' : '',
+      party: s.party || '',
+      state: s.state || '',
+      district: s.district != null ? String(s.district) : '',
+      isCommittee: false,
+      isPrimary: true, // Congress.gov's sponsors[] is the primary sponsor(s); cosponsors are counted separately
+      phone: '',
+      contactUrl: '',
+      firstName: s.firstName || '',
+      lastName: s.lastName || '',
+      bioguideId: s.bioguideId || '',
+    }
+  })
+}
+
+// Congress.gov is the authoritative source for federal sponsor/committee data,
+// and it is the only one of our sources that carries a real introducedDate —
+// we were previously showing the LATEST ACTION date under an "Introduced"
+// label, which is a different (often much later) date entirely.
+async function fetchCongressBillMeta(congress, type, number) {
+  if (!CONGRESS_API_KEY) return null
+  const key = `cg-meta-${congress}-${String(type).toLowerCase()}-${number}`
+  const hit = getCache(key)
+  if (hit) return hit
+  try {
+    const url = `${CONGRESS_BASE}/bill/${congress}/${String(type).toLowerCase()}/${number}`
+      + `?format=json&api_key=${CONGRESS_API_KEY}`
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!resp.ok) return null
+    const b = (await resp.json())?.bill
+    if (!b) return null
+    const meta = {
+      sponsors: mapCongressSponsors(b.sponsors),
+      cosponsorCount: b.cosponsors?.count || 0,
+      policyArea: b.policyArea?.name || '',
+      committeeCount: b.committees?.count || 0,
+      introducedDate: b.introducedDate || '',
+      title: b.title || '',
+      latestAction: b.latestAction || null,
+      originChamber: b.originChamber || '',
+    }
+    setCache(key, meta, 1000 * 60 * 60 * 12)
+    return meta
+  } catch (err) {
+    console.error('[bill] congress.gov meta error:', err.message)
+    return null
+  }
+}
+
+// Where "Read full bill text" should land when we can't serve the text
+// in-app. Both of these open ON the text, not on a landing page with a Text
+// tab the student still has to find.
+function federalTextUrl(congress, type, number) {
+  const page = federalBillUrl(congress, type, number)
+  return page ? `${page}/text` : null
+}
+
+function legiscanTextUrl(b) {
+  const texts = Array.isArray(b?.texts) ? b.texts : []
+  if (!texts.length) return null
+  // Most recent version wins; ties break toward the later doc_id.
+  const latest = texts.slice().sort((x, y) =>
+    String(x.date || '').localeCompare(String(y.date || '')) || (x.doc_id || 0) - (y.doc_id || 0)
+  ).pop()
+  // state_link is the document on the legislature's own site — the primary
+  // source, and it opens straight to the text with no interstitial.
+  return latest?.state_link || latest?.url || null
+}
+
 app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res) => {
   const { congress, type, number } = req.params
   const legiscanId = req.query.legiscan_id
@@ -1816,10 +1949,12 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
     try {
       const data = await cachedGetBill(legiscanId)
       const b = data.bill
+      const isFederal = b.state === 'US'
+      const sponsors = mapLegiscanSponsors(b)
       // Transform to a shape the frontend expects
       const result = {
         bill: {
-          congress: b.state === 'US' ? currentFederalCongress() : 0,
+          congress: isFederal ? currentFederalCongress() : 0,
           type: type,
           number: parseInt(number, 10),
           title: b.title,
@@ -1827,21 +1962,34 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
           originChamber: originChamberFromType(type),
           latestAction: { text: b.status_desc || b.last_action || '', actionDate: b.status_date || b.last_action_date || '' },
           url: b.url || '',
-          sponsors: (b.sponsors || []).map(s => ({
-            firstName: s.first_name || s.name?.split(' ')[0] || '',
-            lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
-            party: s.party || '',
-            state: s.state || '',
-          })),
-          cosponsors: { count: (b.sponsors || []).length > 1 ? (b.sponsors.length - 1) : 0 },
+          textUrl: isFederal
+            ? (federalTextUrl(currentFederalCongress(), type, number) || legiscanTextUrl(b))
+            : legiscanTextUrl(b),
+          sponsors,
+          cosponsors: { count: sponsors.filter(s => !s.isPrimary).length },
           policyArea: { name: b.subjects?.[0]?.subject_name || '' },
-          introducedDate: b.status_date || '',
+          introducedDate: firstActionDate(b) || b.status_date || '',
           committees: { count: (b.committee || []).length },
           state: b.state || 'US',
           legiscan_bill_id: b.bill_id,
           ...transformBillTimeline(b),
         },
       }
+
+      // Federal bills get their sponsor block from Congress.gov, which names
+      // the member's party, state and district — LegiScan's federal sponsor
+      // rows carry a numeric state_id we can't render.
+      if (isFederal) {
+        const meta = await fetchCongressBillMeta(currentFederalCongress(), type, number)
+        if (meta?.sponsors?.length) {
+          result.bill.sponsors = meta.sponsors
+          result.bill.cosponsors = { count: meta.cosponsorCount }
+          if (meta.policyArea) result.bill.policyArea = { name: meta.policyArea }
+          if (meta.committeeCount) result.bill.committees = { count: meta.committeeCount }
+          if (meta.introducedDate) result.bill.introducedDate = meta.introducedDate
+        }
+      }
+
       setCache(billCacheKey, result)
       res.json(result)
     } catch (err) {
@@ -1889,10 +2037,11 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
         originChamber: row.origin_chamber || originChamberFromType(type),
         latestAction: { text: row.latest_action || '', actionDate: row.latest_action_date || '' },
         url: row.url || '',
+        textUrl: federalTextUrl(congress, type, number),
         sponsors: [],
         cosponsors: { count: 0 },
         policyArea: { name: '' },
-        introducedDate: row.latest_action_date || '',
+        introducedDate: '',
         committees: { count: 0 },
         state: 'US',
         legiscan_bill_id: row.legiscan_bill_id || null,
@@ -1915,15 +2064,10 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
               actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate,
             },
             url: b.url || bill.url,
-            sponsors: (b.sponsors || []).map(s => ({
-              firstName: s.first_name || s.name?.split(' ')[0] || '',
-              lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
-              party: s.party || '',
-              state: s.state || '',
-            })),
+            sponsors: mapLegiscanSponsors(b),
             cosponsors: { count: Math.max(0, (b.sponsors || []).length - 1) },
             policyArea: { name: b.subjects?.[0]?.subject_name || '' },
-            introducedDate: b.status_date || bill.introducedDate,
+            introducedDate: firstActionDate(b) || bill.introducedDate,
             committees: { count: (b.committee || []).length },
             ...transformBillTimeline(b),
           })
@@ -1931,6 +2075,22 @@ app.get('/api/bill/:congress/:type/:number', billDetailLimiter, async (req, res)
           console.error('[bill] enrich error:', err.message)
         }
       }
+
+      // Sponsors, cosponsor count, policy area and the real introduced date,
+      // from the source of record for federal legislation. This is the only
+      // path most federal bills take (our rows rarely carry a legiscan id), and
+      // without it the page rendered no sponsor at all.
+      const meta = await fetchCongressBillMeta(congress, type, number)
+      if (meta) {
+        if (meta.sponsors.length) bill.sponsors = meta.sponsors
+        if (meta.cosponsorCount) bill.cosponsors = { count: meta.cosponsorCount }
+        if (meta.policyArea) bill.policyArea = { name: meta.policyArea }
+        if (meta.committeeCount) bill.committees = { count: meta.committeeCount }
+        if (meta.introducedDate) bill.introducedDate = meta.introducedDate
+        if (meta.originChamber) bill.originChamber = meta.originChamber
+      }
+      // Last resort so the field is never blank: the earliest date we know of.
+      if (!bill.introducedDate) bill.introducedDate = row.latest_action_date || ''
 
       const result = { bill }
       setCache(cacheKey, result)
@@ -1979,6 +2139,7 @@ app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, r
       originChamber: row.origin_chamber || originChamberFromType(row.bill_type),
       latestAction: { text: row.latest_action || '', actionDate: row.latest_action_date || '' },
       url: row.url || '',
+      textUrl: null,
       sponsors: [],
       cosponsors: { count: 0 },
       policyArea: { name: '' },
@@ -2007,15 +2168,11 @@ app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, r
             actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate,
           },
           url: b.url || bill.url,
-          sponsors: (b.sponsors || []).map(s => ({
-            firstName: s.first_name || s.name?.split(' ')[0] || '',
-            lastName: s.last_name || s.name?.split(' ').slice(1).join(' ') || '',
-            party: s.party || '',
-            state: s.state || '',
-          })),
-          cosponsors: { count: Math.max(0, (b.sponsors || []).length - 1) },
+          textUrl: legiscanTextUrl(b),
+          sponsors: mapLegiscanSponsors(b),
+          cosponsors: { count: (b.sponsors || []).filter(s => Number(s.sponsor_type_id) !== 1).length },
           policyArea: { name: b.subjects?.[0]?.subject_name || '' },
-          introducedDate: b.status_date || bill.introducedDate,
+          introducedDate: firstActionDate(b) || bill.introducedDate,
           committees: { count: (b.committee || []).length },
           ...transformBillTimeline(b),
         })
@@ -2030,6 +2187,31 @@ app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, r
   } catch (err) {
     console.error('[state-bill] error:', err.message)
     res.status(500).json({ error: 'Failed to fetch bill detail' })
+  }
+})
+
+// The lawmakers who vote on a given bill, for the student's state. See
+// api/representatives.js for why the Senate answer is exact and the House
+// answer is a delegation for most states.
+app.get('/api/representatives', billDetailLimiter, async (req, res) => {
+  const state = String(req.query.state || '').toUpperCase()
+  const chamber = String(req.query.chamber || 'house')
+  // Deliberately NOT validated against US_STATES: that list omits NH because
+  // its legislature blocks automated bill-text access, which has nothing to do
+  // with whether NH has members of Congress. An unknown code just returns an
+  // empty delegation and the panel falls back to the official finder.
+  if (!/^[A-Z]{2}$/.test(state)) {
+    return res.status(400).json({ error: 'Invalid state' })
+  }
+  try {
+    const payload = await representativesFor({ state, chamber })
+    // Membership moves a handful of times a year; an hour of edge caching is
+    // free and this endpoint is hit on every panel open.
+    res.set('Cache-Control', 'public, max-age=3600')
+    res.json(payload)
+  } catch (err) {
+    console.error('[representatives] error:', err.message)
+    res.status(500).json({ error: 'Failed to load representatives' })
   }
 })
 

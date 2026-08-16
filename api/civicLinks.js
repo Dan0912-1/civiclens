@@ -26,12 +26,14 @@ const FEDERAL_TYPE_PATHS = {
   sconres: 'senate-concurrent-resolution',
 }
 
-// Universal, stable finders. Verified 200.
-const HOUSE_FINDER = 'https://www.house.gov/representatives/find-your-representative'
-const SENATE_CONTACT = 'https://www.senate.gov/senators/senators-contact.htm'
+// Universal, stable finders. Verified 200. Exported because
+// api/representatives.js hands the same URLs to the in-app panel — one owner
+// for every canonical civic URL.
+export const HOUSE_FINDER = 'https://www.house.gov/representatives/find-your-representative'
+export const SENATE_FINDER = 'https://www.senate.gov/senators/senators-contact.htm'
 // One page that covers all 50 states. Preferred over a hand-written per-state
 // map: 50 hand-entered URLs is 50 chances to reintroduce the bug this fixes.
-const STATE_LEGISLATOR_FINDER = 'https://openstates.org/find_your_legislator/'
+export const STATE_LEGISLATOR_FINDER = 'https://openstates.org/find_your_legislator/'
 
 export function federalBillUrl(congress, type, number) {
   const path = FEDERAL_TYPE_PATHS[String(type || '').toLowerCase().replace(/\./g, '')]
@@ -39,12 +41,20 @@ export function federalBillUrl(congress, type, number) {
   return `https://www.congress.gov/bill/${congress}th-congress/${path}/${number}`
 }
 
+// congress.gov opens a bill on its Summary tab. An action that told a student
+// to "read the full text" therefore landed them on a page where the text is
+// behind one more click, on a tab they have to notice first.
+export function federalBillTextUrl(congress, type, number) {
+  const page = federalBillUrl(congress, type, number)
+  return page ? `${page}/text` : null
+}
+
 // Where a student should go to reach the people who actually vote on THIS bill.
 export function contactUrlFor(bill) {
   if (bill?.isStateBill) return STATE_LEGISLATOR_FINDER
   const type = String(bill?.type || '').toLowerCase()
   // Senate-originated measures are voted by senators first.
-  if (type.startsWith('s')) return SENATE_CONTACT
+  if (type.startsWith('s')) return SENATE_FINDER
   return HOUSE_FINDER
 }
 
@@ -85,6 +95,10 @@ function isTrustedStateBillUrl(url) {
 // more reliable signal of what the student is being asked to do.
 const READ_INTENT = /\b(read|view|track|follow|look at|see)\b[^.]*\b(bill|text|legislation|measure|status|progress|language)\b/i
 const CONTACT_INTENT = /\b(contact|email|call|write|testify|tell|urge|reach out|message)\b/i
+// A narrower cut of READ_INTENT: the student is being sent to the words of the
+// bill, not to its status page. "Track its progress" wants the landing page;
+// "read the full text" wants the document.
+const TEXT_INTENT = /\b(full\s+)?(text|language|wording|bill\s+text)\b/i
 
 function isBillPageAction(action, url) {
   const prose = `${action?.action || ''} ${action?.how || ''}`
@@ -130,6 +144,12 @@ export function sanitizeCivicActions(parsed, bill, stateBillUrl = null) {
 
   const contactUrl = contactUrlFor(bill)
   const billUrl = billPageUrlFor(bill, stateBillUrl)
+  // State bills have no separately addressable text page we can construct from
+  // the bill's identity alone, so they keep the bill page (which is the URL our
+  // own database recorded for it).
+  const textUrl = bill?.isStateBill
+    ? billUrl
+    : (federalBillTextUrl(bill?.congress, bill?.type, bill?.number) || billUrl)
   let rewritten = 0
   let removed = 0
 
@@ -140,7 +160,11 @@ export function sanitizeCivicActions(parsed, bill, stateBillUrl = null) {
       const trailing = match.match(/[.,;:]+$/)?.[0] || ''
       const url = trailing ? match.slice(0, -trailing.length) : match
 
-      const replacement = isBillPageAction(action, url) ? (billUrl || contactUrl) : contactUrl
+      let replacement = contactUrl
+      if (isBillPageAction(action, url)) {
+        const prose = `${action?.action || ''} ${action?.how || ''}`
+        replacement = (TEXT_INTENT.test(prose) ? textUrl : billUrl) || billUrl || contactUrl
+      }
       if (replacement !== url) rewritten++
       return replacement + trailing
     })

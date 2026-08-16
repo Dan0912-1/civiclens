@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
-import { billHref, repLookupUrl } from '../lib/billUrl'
+import { billHref } from '../lib/billUrl'
+import RepsPanel from './RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import { haptic } from '../lib/haptics'
 import styles from './BillCard.module.css'
@@ -57,27 +58,6 @@ function shareBill(bill, analysis) {
   }
 }
 
-// Open the reps who actually vote on THIS bill. A state bill is decided by
-// state legislators, so sending its readers to their members of Congress —
-// which is what this did for every bill — pointed them at the wrong body
-// entirely. Federal bills still use the student's state for a direct lookup.
-async function openRepLookup(bill) {
-  let state = ''
-  try {
-    const stored = sessionStorage.getItem('civicProfile')
-    if (stored) state = (JSON.parse(stored).state || '').toUpperCase()
-  } catch {}
-  const url = repLookupUrl(bill, state)
-  try {
-    const { Capacitor } = await import('@capacitor/core')
-    if (Capacitor.isNativePlatform()) {
-      const { Browser } = await import('@capacitor/browser')
-      await Browser.open({ url, presentationStyle: 'popover' })
-      return
-    }
-  } catch {}
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
 
 // Memoized — parents pass stable callback references and a plain
 // animationDelay string (NOT an inline style object) so cards don't
@@ -87,6 +67,7 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [repsOpen, setRepsOpen] = useState(false)
   const [swipeOffset, setSwipeOffset] = useState(0)
   const swipeStart = useRef(null)
   const navigate = useNavigate()
@@ -346,7 +327,10 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
                 onClick={e => {
                   e.stopPropagation()
                   haptic('Light')
-                  openRepLookup(bill)
+                  // Opens in-app rather than punting to a third-party
+                  // directory: the panel knows which chamber decides this bill
+                  // and names the members when a state code is enough to.
+                  setRepsOpen(true)
                   if (onTrackInteraction) {
                     onTrackInteraction({ billId, actionType: 'contact_rep', topicTag: analysis?.topic_tag })
                   }
@@ -357,6 +341,10 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
             </div>
           </div>
         </>
+      )}
+
+      {repsOpen && (
+        <RepsPanel bill={bill} onClose={() => setRepsOpen(false)} />
       )}
 
       <SharePostModal
