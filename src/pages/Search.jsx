@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
+import {
+  getBookmarks, addBookmark, removeBookmark,
+  readCachedProfile, resolveProfile,
+} from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
 import { supabase, getSessionSafe } from '../lib/supabase'
@@ -51,16 +54,23 @@ const SUGGESTION_CHIPS = [
 export default function Search() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
 
-  // Read once per mount (was an IIFE that re-parsed sessionStorage on every
-  // render and broke handler memoization via a fresh object identity).
-  const profile = useMemo(() => {
-    try {
-      const stored = sessionStorage.getItem('civicProfile')
-      return stored ? JSON.parse(stored) : null
-    } catch { return null }
-  }, [])
+  // Seeded synchronously from this tab's cache (the old code read it in a
+  // useMemo; the object identity still has to be stable or personalizeBill's
+  // memoization breaks). A signed-in student in a fresh tab has no cache, so
+  // the effect below fills it in from Supabase — without it, "personalize this
+  // result" bounced them to the questionnaire they'd already completed.
+  const [profile, setProfile] = useState(readCachedProfile)
+
+  useEffect(() => {
+    if (profile || authLoading || !user) return
+    let cancelled = false
+    resolveProfile(user).then(p => {
+      if (!cancelled && p) setProfile(p)
+    })
+    return () => { cancelled = true }
+  }, [profile, authLoading, user])
 
   const initialQuery = searchParams.get('q') || ''
   const initialTab = searchParams.get('tab') || 'federal'
@@ -192,7 +202,11 @@ export default function Search() {
   }
 
   const personalizeBill = useCallback(async (bill) => {
-    if (!profile) {
+    // Resolve rather than trusting the render-time value: the student may have
+    // tapped before the Supabase fallback landed, and bouncing them to the
+    // questionnaire they already filled out is the bug we're fixing.
+    const resolved = profile || (authLoading ? null : await resolveProfile(user))
+    if (!resolved) {
       navigate('/profile', { state: { returnTo: `/search?${searchParams.toString()}` } })
       return
     }
@@ -205,7 +219,7 @@ export default function Search() {
         const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills: [stripBillForPersonalize(bill)], profile })
+          body: JSON.stringify({ bills: [stripBillForPersonalize(bill)], profile: resolved })
         })
         if (!resp.ok) return false
         const data = await resp.json()
@@ -237,7 +251,7 @@ export default function Search() {
         return next
       })
     }
-  }, [profile, navigate, searchParams])
+  }, [profile, authLoading, user, navigate, searchParams])
 
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null

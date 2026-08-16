@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useAuth } from '../context/AuthContext'
 import { getApiBase } from '../lib/api'
+import { resolveProfile } from '../lib/userProfile'
 import { stripBillForPersonalize } from '../lib/billId'
 import { haptic } from '../lib/haptics'
 import styles from './SharePostModal.module.css'
@@ -13,6 +15,7 @@ const PLATFORMS = [
 ]
 
 export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
+  const { user } = useAuth()
   const [platform, setPlatform] = useState('instagram')
   const [perspective, setPerspective] = useState('')
   const [drafts, setDrafts] = useState([])
@@ -32,6 +35,17 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
   }, [isOpen])
 
   const modalRef = useRef(null)
+  // Supersede guard + timeout: a second "Regenerate" tap aborts the first
+  // request (its late response could otherwise overwrite the fresh drafts),
+  // and a wedged connection can't leave the modal spinning forever.
+  //
+  // Declared with the other hooks, ABOVE the `!isOpen` early return. It used
+  // to sit below it, so opening the modal rendered one more hook than the
+  // closed render did — React threw "Rendered more hooks than during the
+  // previous render" and the ErrorBoundary replaced the whole page with
+  // "Something went wrong" the moment anyone tapped share on a personalized
+  // bill card.
+  const abortRef = useRef(null)
 
   useEffect(() => {
     if (!isOpen) return
@@ -67,12 +81,6 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
 
   if (!isOpen) return null
 
-  // Supersede guard + timeout: a second "Regenerate" tap aborts the first
-  // request (its late response could otherwise overwrite the fresh drafts),
-  // and a wedged connection can't leave the modal spinning forever. This was
-  // the only LLM-backed fetch in the app without a timeout.
-  const abortRef = useRef(null)
-
   async function generate() {
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -84,12 +92,10 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
     setDrafts([])
     setCopiedIdx(null)
     try {
-      // Pull profile from sessionStorage — same source the rest of the app uses
-      let profile = {}
-      try {
-        const stored = sessionStorage.getItem('civicProfile')
-        if (stored) profile = JSON.parse(stored)
-      } catch {}
+      // Cache first, Supabase second — the same resolution the rest of the app
+      // uses, so a signed-in student in a fresh tab still gets a draft written
+      // in their voice instead of a generic one.
+      const profile = (await resolveProfile(user)) || {}
 
       const resp = await fetch(`${getApiBase()}/api/share-post`, {
         method: 'POST',
