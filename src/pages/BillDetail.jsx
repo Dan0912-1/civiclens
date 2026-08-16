@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { supabase, getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
-import { addBookmark, removeBookmark, getBookmarks } from '../lib/userProfile'
+import { addBookmark, removeBookmark, getBookmarks, loadProfile } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
 import { completeGoogleAssignment } from '../lib/googleClassroom'
@@ -43,6 +43,35 @@ const TAG_COLORS = {
   Other:         'gray',
 }
 
+// Personalizing needs all three questionnaire answers. The Google sign-in seed
+// carries only name+email, and a half-filled manual profile may have a state
+// but no interests — neither is enough to personalize from.
+function isPersonalizable(p) {
+  return Boolean(p?.state && p?.grade && p?.interests?.length)
+}
+
+function readCachedProfile() {
+  try {
+    const p = JSON.parse(sessionStorage.getItem('civicProfile') || 'null')
+    return isPersonalizable(p) ? p : null
+  } catch { return null }
+}
+
+// sessionStorage is per-tab, so a signed-in student who lands on a bill in a
+// fresh tab — deep link, push notification, shared URL, cold PWA launch — has
+// an empty cache even though Supabase holds their profile. Fall back to the
+// cloud copy before concluding they have none; Results.jsx does the same on
+// mount, and skipping it here is what showed "Complete your profile" to people
+// who had already completed one.
+async function fetchCloudProfile(userId) {
+  try {
+    const cloud = await loadProfile(userId)
+    if (!isPersonalizable(cloud)) return null
+    sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
+    return cloud
+  } catch { return null }
+}
+
 export default function BillDetail() {
   // This component backs two routes:
   //   federal  /bill/:congress/:type/:number
@@ -58,16 +87,19 @@ export default function BillDetail() {
   const congress = params.congress ?? '0'
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, signInWithGoogle } = useAuth()
+  const { user, loading: authLoading, signInWithGoogle } = useAuth()
   const { showToast } = useToast()
   const trackedRef = useRef(false)
+  // Route id we've already POSTed to /api/personalize for. The effect below
+  // re-runs when auth resolves (null → signed-in user), and without this a
+  // request already in flight would be duplicated.
+  const requestedRef = useRef(null)
 
   // Data passed from Results page via router state. For deep links (push
   // notification, shared URL) location.state is null; fall back to query
   // params so the "Mark as Read" button + assignment banner still render.
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
-  const skipPersonalization = location.state?.skipPersonalization || false
   const searchParams = new URLSearchParams(location.search)
   const assignmentId = location.state?.assignment || searchParams.get('assignment') || null
   const assignmentClassroomId = location.state?.classroom || searchParams.get('classroom') || null
@@ -107,6 +139,7 @@ export default function BillDetail() {
   // Bill A → Bill B doesn't show stale A data for a frame.
   useEffect(() => {
     trackedRef.current = false
+    requestedRef.current = null
     setAnalysis(passedAnalysis)
     setBill(passedBill)
     setDetail(null)
@@ -396,7 +429,7 @@ export default function BillDetail() {
   // so a pending Bill A request can't overwrite Bill B's analysis after
   // navigation.
   useEffect(() => {
-    if (!bill || analysis || skipPersonalization) return
+    if (!bill || analysis) return
     let cancelled = false
     // Abort if the loaded bill doesn't match the current route — can happen
     // mid-navigation before the route-param effect has reset bill state.
@@ -412,19 +445,22 @@ export default function BillDetail() {
     )
     const currentRouteId = makeCongressBillId(type, number, congress)
     if (!sameBillId(billCongressId, currentRouteId)) return
+    if (requestedRef.current === currentRouteId) return
+
+    // Nothing cached and auth hasn't settled yet: wait. Declaring "no profile"
+    // while `user` is still null would prompt a signed-in student to build the
+    // profile they already have. The effect re-runs when authLoading flips.
+    const cached = readCachedProfile()
+    if (!cached && authLoading) return
 
     async function run() {
-      const stored = sessionStorage.getItem('civicProfile')
-      if (!stored) { setNoProfile(true); return }
-      let profile
-      try { profile = JSON.parse(stored) } catch { setNoProfile(true); return }
-      // Require the three questionnaire answers before personalizing.
-      // The Google-sign-in seed only has name+email; a half-filled manual
-      // profile might have state but no interests. Either case → prompt.
-      if (!profile?.state || !profile?.grade || !profile?.interests?.length) {
-        setNoProfile(true)
-        return
-      }
+      const profile = cached || (user ? await fetchCloudProfile(user.id) : null)
+      if (cancelled) return
+      if (!profile) { setNoProfile(true); return }
+      setNoProfile(false)
+      // Mark only once we're actually going to POST, so a run that ended in
+      // the profile prompt can still re-check after the student signs in.
+      requestedRef.current = currentRouteId
       setPersonalizationError(false)
       try {
         const resp = await fetch(`${API_BASE}/api/personalize`, {
@@ -448,14 +484,15 @@ export default function BillDetail() {
     }
     run()
     return () => { cancelled = true }
-  }, [bill, analysis, congress, type, number])
+  }, [bill, analysis, congress, type, number, user, authLoading])
 
   // Manual retry handler used by the "Try again" button in the UI.
   async function retryPersonalization() {
-    const stored = sessionStorage.getItem('civicProfile')
-    if (!stored || !bill) return
+    if (!bill) return
+    const profile = readCachedProfile() || (user ? await fetchCloudProfile(user.id) : null)
+    if (!profile) { setNoProfile(true); return }
+    setNoProfile(false)
     setPersonalizationError(false)
-    const profile = JSON.parse(stored)
     try {
       const resp = await fetch(`${API_BASE}/api/personalize`, {
         method: 'POST',
@@ -837,7 +874,7 @@ export default function BillDetail() {
               Try again
             </button>
           </div>
-        ) : noProfile || skipPersonalization ? (
+        ) : noProfile ? (
           <div className={styles.loadingAnalysis}>
             <span>Tell us about yourself so we can personalize this bill for you.</span>
             <button

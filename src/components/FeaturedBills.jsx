@@ -123,9 +123,12 @@ export default function FeaturedBills() {
   function openBill(row) {
     const b = row.bill_data || {}
     if (!b.type || !b.number) return
-    navigate(billHref(b), {
-      state: { bill: b, skipPersonalization: true },
-    })
+    // Don't pass a skip flag here. This used to send `skipPersonalization`
+    // so profile-less visitors got the profile CTA instead of a spinner, but
+    // the flag applied to everyone — students with a saved profile clicked a
+    // featured bill and were told to build the profile they already had.
+    // BillDetail makes that call itself, and it knows whether a profile exists.
+    navigate(billHref(b), { state: { bill: b } })
   }
 
   // Don't render the section at all if the backend has nothing to show
