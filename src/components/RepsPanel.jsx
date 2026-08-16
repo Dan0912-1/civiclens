@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useAuth } from '../context/AuthContext'
 import { getApiBase } from '../lib/api'
+import { readCachedProfile, resolveProfile } from '../lib/userProfile'
 import { decidingChamber, repLookupUrl, STATE_LEGISLATOR_FINDER } from '../lib/billUrl'
 import styles from './RepsPanel.module.css'
 
@@ -48,12 +50,10 @@ function openExternal(url) {
     .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
 }
 
-function readProfileState() {
-  try {
-    const stored = sessionStorage.getItem('civicProfile')
-    if (stored) return (JSON.parse(stored).state || '').toUpperCase()
-  } catch { /* sessionStorage unavailable (private mode / SSR) */ }
-  return ''
+const hasState = p => Boolean(p?.state)
+
+function cachedProfileState() {
+  return (readCachedProfile()?.state || '').toUpperCase()
 }
 
 function MemberCard({ member }) {
@@ -129,10 +129,33 @@ function SponsorList({ sponsors }) {
 export default function RepsPanel({ bill, sponsors = [], onClose }) {
   const chamber = decidingChamber(bill || {})
   const isStateChamber = chamber === 'state-upper' || chamber === 'state-lower'
-  const [profileState] = useState(readProfileState)
+  const { user, loading: authLoading } = useAuth()
+  const [profileState, setProfileState] = useState(cachedProfileState)
   const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(!isStateChamber && Boolean(profileState))
   const [failed, setFailed] = useState(false)
+  // Whether we've finished working out which state the student is in. Starts
+  // settled when this tab has the profile cached; otherwise a signed-in
+  // student's state has to come back from Supabase first, and rendering the
+  // "add your state" fallback before then would flash the wrong panel at
+  // someone who has a state on file.
+  const [stateSettled, setStateSettled] = useState(() => Boolean(cachedProfileState()))
+  const [loading, setLoading] = useState(!isStateChamber && Boolean(profileState))
+
+  useEffect(() => {
+    if (isStateChamber || stateSettled || authLoading) return
+    let cancelled = false
+    resolveProfile(user, hasState).then(profile => {
+      if (cancelled) return
+      const st = (profile?.state || '').toUpperCase()
+      setProfileState(st)
+      setStateSettled(true)
+      // Batched with the two above, so the lookup effect below never gets a
+      // render where we have a state but aren't loading yet — that gap would
+      // flash "we couldn't load the member list" for a frame.
+      if (st) setLoading(true)
+    })
+    return () => { cancelled = true }
+  }, [isStateChamber, stateSettled, authLoading, user])
 
   useEffect(() => {
     // State chambers never return a member list (see api/representatives.js),
@@ -156,6 +179,10 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // Only claim to be resolving when something could still come back: a
+  // signed-in student's Supabase profile, or auth itself still settling.
+  // Anonymous users go straight to the "add your state" fallback as before.
+  const resolvingState = !stateSettled && (authLoading || Boolean(user))
   const copy = CHAMBER_COPY[chamber] || CHAMBER_COPY.house
   const members = data?.members || []
   const finderUrl = data?.finderUrl || repLookupUrl(bill || {})
@@ -191,6 +218,8 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
             </button>
             <SponsorList sponsors={sponsors} />
           </>
+        ) : resolvingState || loading ? (
+          <div className={styles.loading}>Loading your {chamber === 'senate' ? 'senators' : 'delegation'}…</div>
         ) : !profileState ? (
           <>
             <p className={styles.note}>
@@ -200,8 +229,6 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
               Look up your members of Congress →
             </button>
           </>
-        ) : loading ? (
-          <div className={styles.loading}>Loading your {chamber === 'senate' ? 'senators' : 'delegation'}…</div>
         ) : failed || !members.length ? (
           <>
             <p className={styles.note}>

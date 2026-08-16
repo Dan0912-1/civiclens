@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark } from '../lib/userProfile'
+import {
+  loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark,
+  readCachedProfile, cacheProfile, isPersonalizable,
+} from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
 import { phCapture } from '../lib/posthog'
@@ -25,13 +28,8 @@ const BILLS_PER_PAGE = 3
 // /results hits a multi-hundred-ms blank window while we wait for Supabase —
 // the tabs and skeletons don't render until profile state is non-null.
 function readProfileSync() {
-  try {
-    const raw = sessionStorage.getItem('civicProfile')
-    if (!raw) return null
-    const p = JSON.parse(raw)
-    if (!p?.state || !p?.grade || !p?.interests?.length) return null
-    return p
-  } catch { return null }
+  const p = readCachedProfile()
+  return isPersonalizable(p) ? p : null
 }
 
 export default function Results() {
@@ -88,7 +86,7 @@ export default function Results() {
         const cloud = await loadProfile(user.id)
         if (cancelled) return
         if (cloud) {
-          sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
+          cacheProfile(cloud)
           // Keep the existing state identity when the cloud copy matches —
           // swapping in an identical-but-new object retriggers the feed
           // fetch effect for a second, redundant /api/legislation call.

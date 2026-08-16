@@ -4,7 +4,10 @@ import { useAuth } from '../context/AuthContext'
 import { supabase, getSessionSafe } from '../lib/supabase'
 import { getApiBase } from '../lib/api'
 import { trackInteraction } from '../lib/interactions'
-import { addBookmark, removeBookmark, getBookmarks, loadProfile } from '../lib/userProfile'
+import {
+  addBookmark, removeBookmark, getBookmarks,
+  readCachedProfile, resolveProfile, isPersonalizable,
+} from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
 import { completeGoogleAssignment } from '../lib/googleClassroom'
@@ -41,35 +44,6 @@ const TAG_COLORS = {
   Immigration:   'amber',
   Community:     'slate',
   Other:         'gray',
-}
-
-// Personalizing needs all three questionnaire answers. The Google sign-in seed
-// carries only name+email, and a half-filled manual profile may have a state
-// but no interests — neither is enough to personalize from.
-function isPersonalizable(p) {
-  return Boolean(p?.state && p?.grade && p?.interests?.length)
-}
-
-function readCachedProfile() {
-  try {
-    const p = JSON.parse(sessionStorage.getItem('civicProfile') || 'null')
-    return isPersonalizable(p) ? p : null
-  } catch { return null }
-}
-
-// sessionStorage is per-tab, so a signed-in student who lands on a bill in a
-// fresh tab — deep link, push notification, shared URL, cold PWA launch — has
-// an empty cache even though Supabase holds their profile. Fall back to the
-// cloud copy before concluding they have none; Results.jsx does the same on
-// mount, and skipping it here is what showed "Complete your profile" to people
-// who had already completed one.
-async function fetchCloudProfile(userId) {
-  try {
-    const cloud = await loadProfile(userId)
-    if (!isPersonalizable(cloud)) return null
-    sessionStorage.setItem('civicProfile', JSON.stringify(cloud))
-    return cloud
-  } catch { return null }
 }
 
 export default function BillDetail() {
@@ -447,14 +421,14 @@ export default function BillDetail() {
     if (!sameBillId(billCongressId, currentRouteId)) return
     if (requestedRef.current === currentRouteId) return
 
-    // Nothing cached and auth hasn't settled yet: wait. Declaring "no profile"
-    // while `user` is still null would prompt a signed-in student to build the
-    // profile they already have. The effect re-runs when authLoading flips.
-    const cached = readCachedProfile()
-    if (!cached && authLoading) return
+    // Nothing usable cached and auth hasn't settled yet: wait. Declaring "no
+    // profile" while `user` is still null would prompt a signed-in student to
+    // build the profile they already have. The effect re-runs when authLoading
+    // flips.
+    if (!isPersonalizable(readCachedProfile()) && authLoading) return
 
     async function run() {
-      const profile = cached || (user ? await fetchCloudProfile(user.id) : null)
+      const profile = await resolveProfile(user, isPersonalizable)
       if (cancelled) return
       if (!profile) { setNoProfile(true); return }
       setNoProfile(false)
@@ -489,7 +463,7 @@ export default function BillDetail() {
   // Manual retry handler used by the "Try again" button in the UI.
   async function retryPersonalization() {
     if (!bill) return
-    const profile = readCachedProfile() || (user ? await fetchCloudProfile(user.id) : null)
+    const profile = await resolveProfile(user, isPersonalizable)
     if (!profile) { setNoProfile(true); return }
     setNoProfile(false)
     setPersonalizationError(false)

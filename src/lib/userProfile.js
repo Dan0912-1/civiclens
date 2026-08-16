@@ -55,6 +55,67 @@ export async function saveProfile(userId, profile) {
   }
 }
 
+// ─── Profile resolution ───
+//
+// The saved profile lives in two places: sessionStorage for fast synchronous
+// reads, and Supabase as the durable copy. sessionStorage is PER-TAB, so a
+// signed-in student who arrives in a fresh tab — deep link, push notification,
+// shared URL, cold PWA launch — has an empty cache while their real profile
+// sits in Supabase. Any code that reads the cache alone and treats a miss as
+// "no profile" ends up asking people to rebuild what they already have, which
+// is exactly what the bill page did before #115.
+//
+// Read through these helpers rather than touching sessionStorage directly.
+
+export const PROFILE_CACHE_KEY = 'civicProfile'
+
+export function readCachedProfile() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PROFILE_CACHE_KEY) || 'null')
+  } catch {
+    // sessionStorage unavailable (private mode / SSR)
+    return null
+  }
+}
+
+export function cacheProfile(profile) {
+  try {
+    sessionStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile))
+  } catch { /* non-fatal — we just lose the fast path */ }
+}
+
+// All three questionnaire answers, which is what POST /api/personalize
+// requires. The Google sign-in seed carries only name+email, and a half-filled
+// manual profile may have a state but no interests — neither can personalize.
+export function isPersonalizable(p) {
+  return Boolean(p?.state && p?.grade && p?.interests?.length)
+}
+
+function isNonEmpty(p) {
+  return Boolean(p && Object.keys(p).length > 0)
+}
+
+/**
+ * Resolve the user's profile: cached copy first, Supabase second, seeding the
+ * cache on a cloud hit.
+ *
+ * `isSufficient` lets each caller state what it actually needs — RepsPanel
+ * only wants a state, personalization wants the full questionnaire — so a thin
+ * cached profile still falls through to the richer cloud copy.
+ *
+ * Returns null for anonymous users, so callers must wait for AuthContext's
+ * `loading` to settle before reading a null as "this person has no profile".
+ */
+export async function resolveProfile(user, isSufficient = isNonEmpty) {
+  const cached = readCachedProfile()
+  if (isSufficient(cached)) return cached
+  if (!user) return null
+  const cloud = await loadProfile(user.id)
+  if (!isSufficient(cloud)) return null
+  cacheProfile(cloud)
+  return cloud
+}
+
 export async function getBookmarks(userId) {
   if (!supabase) return []
   try {
