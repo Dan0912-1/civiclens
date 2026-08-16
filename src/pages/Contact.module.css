@@ -37,6 +37,18 @@
   animation: fadeUp 0.5s ease forwards;
 }
 
+/* The page's 24px gutters plus the form's 48px padding left only 231px of a
+   375px phone for the actual fields. Tighten both below 600px. */
+@media (max-width: 600px) {
+  .page {
+    padding: var(--space-xl) var(--space-md);
+  }
+
+  .form {
+    padding: var(--space-lg) var(--space-md);
+  }
+}
+
 .field {
   margin-bottom: var(--space-lg);
 }

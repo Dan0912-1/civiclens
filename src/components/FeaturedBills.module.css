@@ -162,6 +162,10 @@
   letter-spacing: 0.05em;
 }
 
+/* Official bill titles run past 200 characters and latest-action text past
+   300, which stretched all three cards to whatever the longest one needed
+   (614px at 1440px wide, worse as the columns narrow). Clamping both keeps
+   the row a predictable height no matter which bills the ranker picks. */
 .billTitle {
   font-family: var(--font-display);
   font-size: 1.2rem;
@@ -170,6 +174,11 @@
   line-height: 1.2;
   letter-spacing: -0.02em;
   margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .impactLine {
@@ -179,6 +188,14 @@
   line-height: 1.55;
   padding-left: 12px;
   border-left: 2px solid var(--amber);
+}
+
+.actionText {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .impactLine strong {
@@ -320,19 +337,16 @@
   100% { background-position: -200% 0; }
 }
 
-/* ─── Tablet ─── */
+/* ─── Tablet + mobile ─── */
+/* The section always renders exactly 3 bills (backend returns top3), so a
+   2-column tablet layout stranded the third card alone in row 2. Below the
+   3-across breakpoint go straight to a single column — full-width rows read
+   as a list, which is what 3 items want at that width. */
 @media (max-width: 900px) {
   .billGrid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
   }
   .moving {
     padding: var(--space-2xl) var(--space-lg);
-  }
-}
-
-/* ─── Mobile ─── */
-@media (max-width: 600px) {
-  .billGrid {
-    grid-template-columns: 1fr;
   }
 }

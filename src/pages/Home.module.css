@@ -135,7 +135,8 @@
 .trustStrip {
   display: flex;
   flex-wrap: wrap;
-  gap: 18px;
+  column-gap: 18px;
+  row-gap: 8px;
   align-items: center;
   margin-top: var(--space-xl);
   padding-top: var(--space-md);
@@ -152,10 +153,6 @@
   color: var(--amber-dark);
   font-weight: 700;
   margin-right: 4px;
-}
-
-.trustSep {
-  color: var(--border);
 }
 
 /* Chamber chip row (in hero, below CTA) */
@@ -398,6 +395,10 @@
 
 .searchInput {
   flex: 1;
+  /* Without this the input keeps its intrinsic ~20-character min width and
+     refuses to shrink, which pushed the Search button off-screen on a
+     320px phone. */
+  min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--navy);
   border-radius: 1px;
@@ -476,49 +477,37 @@
   margin-bottom: var(--space-xl);
 }
 
-/* 2 cols on phones (fits 375px iPhone), 3 cols ≥600px, 4 cols ≥960px.
+/* Full-width rows on phones, then a 3-across grid from 600px up.
+   Column counts are chosen to divide the topic count evenly (9 / 1 and
+   9 / 3), so the last row is never left holding a single stranded card
+   or a card stretched to fill the gap. Earlier 2- and 4-column layouts
+   both left an orphan and papered over it with a grid-column span.
    grid-auto-rows: 1fr keeps every row the same height so the columns
    look visually balanced regardless of how long each label wraps. */
 .topicScroll {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-auto-rows: 1fr;
-  gap: var(--space-sm);
-}
-
-/* With 9 topics in 2 columns the last card is an orphan in row 5;
-   span it across both columns so both columns contain exactly 4 full
-   cards and the last item becomes a wide footer card. */
-.topicCard:last-child:nth-child(odd) {
-  grid-column: 1 / -1;
+  grid-template-columns: 1fr;
+  gap: var(--space-xs);
 }
 
 @media (min-width: 600px) {
   .topics { padding: var(--space-2xl) var(--space-xl); }
   .topicScroll {
     grid-template-columns: repeat(3, 1fr);
+    grid-auto-rows: 1fr;
     gap: var(--space-md);
   }
-  /* 9 topics / 3 cols = 3 even rows, no orphan */
-  .topicCard:last-child:nth-child(odd) { grid-column: auto; }
 }
 
-@media (min-width: 960px) {
-  .topicScroll { grid-template-columns: repeat(4, 1fr); }
-  /* 9 topics / 4 cols = 2 rows of 4 + 1 orphan; span it across remaining
-     columns so the last row stays balanced. */
-  .topicCard:last-child {
-    grid-column: span 4;
-  }
-}
-
+/* Phone: a compact list row (emoji · label · VIEW →).
+   ≥600px it becomes the stacked tile below. */
 .topicCard {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: space-between;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
   gap: var(--space-sm);
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   background: var(--white);
   border: 1px solid var(--border);
   border-top: 2px solid var(--navy);
@@ -529,13 +518,16 @@
     border-color var(--dur-base) var(--ease-out),
     transform    var(--dur-base) var(--ease-out);
   cursor: pointer;
-  min-height: 74px;
+  min-height: 52px;
   text-align: left;
   word-break: break-word;
 }
 
 @media (min-width: 600px) {
   .topicCard {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
     padding: var(--space-lg);
     min-height: 110px;
     gap: var(--space-md);
@@ -554,14 +546,23 @@
 }
 
 .topicEmoji {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   display: block;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+@media (min-width: 600px) {
+  .topicEmoji {
+    font-size: 1.5rem;
+    margin-bottom: 4px;
+  }
 }
 
 .topicLabel {
   font-family: var(--font-body);
-  font-size: 0.72rem;
+  min-width: 0;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -584,13 +585,18 @@
   letter-spacing: 0.1em;
   color: var(--amber);
   font-weight: 600;
-  align-self: flex-end;
+  /* Phone rows: pin the affordance to the right edge. */
+  margin-left: auto;
+  padding-left: var(--space-sm);
+  flex-shrink: 0;
 }
 
 @media (min-width: 600px) {
   .topicCard::after {
-    font-size: 0.68rem;
     letter-spacing: 0.12em;
+    align-self: flex-end;
+    margin-left: 0;
+    padding-left: 0;
   }
 }
 
@@ -759,6 +765,46 @@
 
   .timelineLine {
     min-width: 20px;
+  }
+}
+
+/* ─── Small phones ─── */
+/* The three timeline labels are nowrap, so on a 320–400px screen the row
+   grew wider than the section and `overflow: hidden` silently clipped the
+   third step. Let the labels wrap, split the width evenly between the
+   steps, and shrink the connectors + section padding to buy room. */
+@media (max-width: 520px) {
+  .timeline {
+    padding: var(--space-2xl) var(--space-md);
+  }
+
+  .timelineStep {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .timelineLabel,
+  .timelineSub {
+    white-space: normal;
+  }
+
+  .timelineLine {
+    flex: 0 0 14px;
+    min-width: 14px;
+  }
+
+  /* Side-by-side leaves the input too narrow to read what you typed;
+     stack them the same way the hero CTAs stack. */
+  .searchSection {
+    padding: var(--space-2xl) var(--space-md);
+  }
+
+  .searchForm {
+    flex-direction: column;
+  }
+
+  .searchBtn {
+    width: 100%;
   }
 }
 

@@ -229,13 +229,14 @@ export default function Home() {
               Search Bills
             </button>
           </div>
+          {/* No interpunct separators between these: once the strip wraps
+              (it does below ~1100px, and on every phone) a separator gets
+              stranded at the end of a line. The row gap carries the
+              separation instead. */}
           <div className={styles.trustStrip}>
             <span><span className={styles.trustCheck}>✓</span>Congress.gov</span>
-            <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>State Legislatures</span>
-            <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Nonpartisan</span>
-            <span className={styles.trustSep}>·</span>
             <span><span className={styles.trustCheck}>✓</span>Updated Daily</span>
           </div>
         </div>
