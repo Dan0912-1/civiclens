@@ -190,10 +190,12 @@ export default function FeaturedBills() {
                 <h3 className={styles.billTitle}>{bill.title}</h3>
                 <div className={styles.impactLine}>
                   <span className={styles.ifPasses}>Latest action</span>
-                  {bill.latestAction}
-                  {bill.latestActionDate && (
-                    <span className={styles.actionDate}> · {bill.latestActionDate}</span>
-                  )}
+                  <span className={styles.actionText}>
+                    {bill.latestAction}
+                    {bill.latestActionDate && (
+                      <span className={styles.actionDate}> · {bill.latestActionDate}</span>
+                    )}
+                  </span>
                 </div>
                 <div className={styles.billFooter}>
                   <RelevanceBar score={score} isPersonalized={isPersonalized} />

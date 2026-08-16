@@ -4,6 +4,15 @@
   padding: var(--space-2xl) var(--space-lg);
 }
 
+/* On a 375px phone the page's 24px gutters plus the card's 48px padding ate
+   144px — 38% of the screen — squeezing every control in the questionnaire
+   into a 229px column. Tighten both below 600px. */
+@media (max-width: 600px) {
+  .page {
+    padding: var(--space-xl) var(--space-md);
+  }
+}
+
 .container {
   max-width: 640px;
   margin: 0 auto;
@@ -74,6 +83,12 @@
   box-shadow: none;
   padding: var(--space-2xl);
   animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
+}
+
+@media (max-width: 600px) {
+  .card {
+    padding: var(--space-lg) var(--space-md);
+  }
 }
 
 .stepContent {
@@ -265,23 +280,29 @@
 }
 
 /* Interests */
+/* One per row on phones, 3 across from 600px up. Nine interests never
+   divide into 2 columns, so the old phone grid always stranded a single
+   tile alone in the last row. */
 .interestGrid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-sm);
+  grid-template-columns: 1fr;
+  gap: var(--space-xs);
 }
 
 @media (min-width: 600px) {
-  .interestGrid { grid-template-columns: repeat(3, 1fr); }
+  .interestGrid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-sm);
+  }
 }
 
 .interestBtn {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: var(--space-xs);
-  padding: var(--space-md) var(--space-md);
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border);
   border-top: 2px solid var(--border);
   border-radius: 1px;
@@ -294,9 +315,20 @@
   background: var(--white);
   cursor: pointer;
   transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-  min-height: 68px;
+  min-height: 52px;
   text-align: left;
   word-break: break-word;
+}
+
+@media (min-width: 600px) {
+  .interestBtn {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: var(--space-xs);
+    padding: var(--space-md);
+    min-height: 68px;
+  }
 }
 
 .interestBtn:hover {
@@ -314,9 +346,17 @@
 }
 
 .interestEmoji {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   display: block;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+@media (min-width: 600px) {
+  .interestEmoji {
+    font-size: 1.5rem;
+    margin-bottom: 4px;
+  }
 }
 
 /* Sub-interests */
