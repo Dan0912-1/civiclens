@@ -10,7 +10,7 @@ import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } fro
 import { completeGoogleAssignment } from '../lib/googleClassroom'
 import GoogleAssignModal from '../components/GoogleAssignModal.jsx'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
-import { billHref } from '../lib/billUrl'
+import { billHref, congressGovUrl } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import styles from './BillDetail.module.css'
 
@@ -498,9 +498,11 @@ export default function BillDetail() {
       // session page when the year is close, and detail/url usually wins
       // before this fallback is used at all.
       ? `https://legiscan.com/${passedBill?.state || bill?.state}/bill/${type.toUpperCase()}${number}/${new Date().getFullYear()}`
-      : `https://www.congress.gov/bill/${congress}th-congress/${
-          type === 's' ? 'senate-bill' : type === 'hr' ? 'house-bill' : type === 'sjres' ? 'senate-joint-resolution' : 'house-joint-resolution'
-        }/${number}`
+      // Covers all eight federal types. The old inline ternary treated
+      // everything that wasn't s/hr/sjres as a house joint resolution, so
+      // every hres, sres, hconres and sconres linked to the wrong document.
+      : congressGovUrl(congress, type, number)
+        || `https://www.congress.gov/search?q=${encodeURIComponent(`${type.toUpperCase()} ${number}`)}`
   )
 
   if (loading && !bill) {
@@ -785,7 +787,7 @@ export default function BillDetail() {
             <div className={styles.sourceAttribution}>
               Powered by AI analysis of {analysis.sources?.length > 0
                 ? analysis.sources.join(' and ')
-                : 'bill data from LegiScan'}
+                : 'bill data from our database'}
             </div>
           </div>
         ) : personalizationError ? (

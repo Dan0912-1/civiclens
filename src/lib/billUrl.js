@@ -7,6 +7,59 @@
 // The session slug logic MUST match slugifySession in api/stateBills.js so the
 // links the app emits resolve against the same rows the backend sitemap lists.
 
+// congress.gov path segment per federal bill type. Verified against the
+// Congress.gov API's own legislationUrl field for the 119th Congress.
+//
+// This mirrors FEDERAL_TYPE_PATHS in api/civicLinks.js. The two cannot share a
+// module: .vercelignore excludes api/ from the frontend deploy, so importing
+// across that boundary would break the Vercel build. scripts/test-civic-links.mjs
+// asserts the two maps stay identical.
+export const FEDERAL_TYPE_PATHS = {
+  hr: 'house-bill',
+  s: 'senate-bill',
+  hres: 'house-resolution',
+  sres: 'senate-resolution',
+  hjres: 'house-joint-resolution',
+  sjres: 'senate-joint-resolution',
+  hconres: 'house-concurrent-resolution',
+  sconres: 'senate-concurrent-resolution',
+}
+
+/**
+ * The public congress.gov page for a federal bill.
+ *
+ * Returns null for an unrecognized type rather than guessing. The previous
+ * inline version fell back to "house-joint-resolution" for anything that
+ * wasn't s/hr/sjres, which silently mislabeled every hres, sres, hconres and
+ * sconres in the feed.
+ */
+export function congressGovUrl(congress, type, number) {
+  const path = FEDERAL_TYPE_PATHS[String(type ?? '').toLowerCase().replace(/\./g, '')]
+  if (!path || !congress || number == null) return null
+  return `https://www.congress.gov/bill/${congress}th-congress/${path}/${number}`
+}
+
+/**
+ * Where to send a student who wants to contact the people voting on THIS bill.
+ * State bills are decided by state legislators, so a federal member lookup is
+ * the wrong destination for them.
+ */
+export function repLookupUrl(bill, profileState = '') {
+  if (isStateBill(bill ?? {})) {
+    // One finder that covers all 50 states.
+    return 'https://openstates.org/find_your_legislator/'
+  }
+  // For a federal bill the relevant state is the STUDENT's, not the bill's —
+  // and "US" is a jurisdiction, not a state, so it must never reach the path.
+  const billState = String(bill?.state ?? bill?.jurisdiction ?? '').toUpperCase()
+  const state = (billState && billState !== 'US' ? billState : String(profileState || '').toUpperCase())
+  // GovTrack lists both senators and every House member for a state on one
+  // page, which beats congress.gov's bare search form.
+  return /^[A-Z]{2}$/.test(state)
+    ? `https://www.govtrack.us/congress/members/${state}`
+    : 'https://www.congress.gov/members/find-your-member'
+}
+
 export function slugifySession(session) {
   return String(session ?? '')
     .toLowerCase()

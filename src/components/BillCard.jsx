@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
-import { billHref } from '../lib/billUrl'
+import { billHref, repLookupUrl } from '../lib/billUrl'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import { haptic } from '../lib/haptics'
 import styles from './BillCard.module.css'
@@ -57,20 +57,17 @@ function shareBill(bill, analysis) {
   }
 }
 
-// Open the user's actual reps using their state from the saved profile.
-// Falls back to the generic Congress.gov member finder when no state is set.
-async function openRepLookup() {
+// Open the reps who actually vote on THIS bill. A state bill is decided by
+// state legislators, so sending its readers to their members of Congress —
+// which is what this did for every bill — pointed them at the wrong body
+// entirely. Federal bills still use the student's state for a direct lookup.
+async function openRepLookup(bill) {
   let state = ''
   try {
     const stored = sessionStorage.getItem('civicProfile')
     if (stored) state = (JSON.parse(stored).state || '').toUpperCase()
   } catch {}
-  // GovTrack accepts the 2-letter state code and returns BOTH senators + all
-  // House reps for that state on a single page — much better than the generic
-  // congress.gov "find your member" page that just dumps a search form.
-  const url = state
-    ? `https://www.govtrack.us/congress/members/${state}`
-    : 'https://www.congress.gov/members/find-your-member'
+  const url = repLookupUrl(bill, state)
   try {
     const { Capacitor } = await import('@capacitor/core')
     if (Capacitor.isNativePlatform()) {
@@ -349,7 +346,7 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
                 onClick={e => {
                   e.stopPropagation()
                   haptic('Light')
-                  openRepLookup()
+                  openRepLookup(bill)
                   if (onTrackInteraction) {
                     onTrackInteraction({ billId, actionType: 'contact_rep', topicTag: analysis?.topic_tag })
                   }

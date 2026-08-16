@@ -8,6 +8,14 @@
 //   in_session        — currently meeting; bills may be active
 //   adjourned         — 2026 regular session has ended sine die
 //   biennial_off_year — state only meets in odd years, no 2026 session
+//
+// IMPORTANT: this table is hand-maintained and therefore goes stale. A stale
+// "in_session" is the damaging direction — it tells a student a legislature is
+// meeting when it went home months ago. getStateSession() therefore treats a
+// past scheduledAdjournment as adjourned regardless of the stored status, so
+// the table degrades into "we're not sure when they return" rather than into a
+// confident falsehood. Refresh DATA_AS_OF and the rows together.
+export const DATA_AS_OF = '2026-05-08'
 
 export const STATE_SESSIONS = {
   AL: { status: 'adjourned', adjournedOn: '2026-04-09', nextConvenes: '2027-01' },
@@ -76,9 +84,44 @@ const STATE_NAMES = {
   WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
 }
 
+function todayIso() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+/**
+ * Session info for a state, corrected for the age of the table.
+ *
+ * A row still marked in_session whose scheduled adjournment has already passed
+ * is reported as adjourned, with `derived: true` so callers can word the note
+ * without a reconvene date we don't actually have.
+ */
 export function getStateSession(state) {
   if (!state) return null
-  return STATE_SESSIONS[state.toUpperCase()] || null
+  const info = STATE_SESSIONS[state.toUpperCase()]
+  if (!info) return null
+
+  if (
+    info.status === 'in_session' &&
+    info.scheduledAdjournment &&
+    info.scheduledAdjournment < todayIso()
+  ) {
+    return {
+      ...info,
+      status: 'adjourned',
+      adjournedOn: info.scheduledAdjournment,
+      // The stored date was the SCHEDULED adjournment, not a confirmed sine
+      // die, and we have no reconvene date for these.
+      derived: true,
+    }
+  }
+  return info
+}
+
+// True when the table is old enough that its "in session" rows should not be
+// trusted. Surfaced by scripts/check-session-freshness.mjs in CI.
+export function sessionDataAgeInDays(now = new Date()) {
+  const asOf = new Date(`${DATA_AS_OF}T00:00:00Z`)
+  return Math.floor((now - asOf) / 86400000)
 }
 
 export function isStateInSession(state) {
@@ -113,9 +156,21 @@ export function getSessionNote(state) {
     }
   }
   if (info.status === 'adjourned') {
+    // Derived from a passed scheduled-adjournment date: we know the session is
+    // over but not the exact sine die date, and we have no reconvene date.
+    // Say less rather than saying something wrong.
+    if (info.derived) {
+      return {
+        title: `${name}'s 2026 legislative session has ended.`,
+        body: `The legislature was scheduled to adjourn on ${formatMonthDay(info.adjournedOn)}. No new bills are being introduced until its next session begins.`,
+      }
+    }
+    const reconvenes = info.nextConvenes
+      ? ` and reconvenes in ${formatMonthYear(info.nextConvenes)}`
+      : ''
     return {
       title: `${name}'s 2026 legislative session has ended.`,
-      body: `The legislature adjourned sine die on ${formatMonthDay(info.adjournedOn)} and reconvenes in ${formatMonthYear(info.nextConvenes)}. No new bills are being introduced until then.`,
+      body: `The legislature adjourned sine die on ${formatMonthDay(info.adjournedOn)}${reconvenes}. No new bills are being introduced until then.`,
     }
   }
   return null
