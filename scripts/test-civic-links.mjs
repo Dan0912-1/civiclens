@@ -15,7 +15,7 @@ import {
   federalBillTextUrl,
   contactUrlFor,
 } from '../api/civicLinks.js'
-import { decidingChamber as apiDecidingChamber } from '../api/representatives.js'
+import { decidingChamber as apiDecidingChamber, districtsForZip, representativesFor } from '../api/representatives.js'
 import {
   congressGovUrl,
   congressGovTextUrl,
@@ -290,6 +290,70 @@ test('a state bill-page link degrades to the finder only when we have no URL', (
   sanitizeCivicActions(without, bill, null)
   assert.ok(withUrl.civic_actions[0].how.includes(url))
   assert.ok(without.civic_actions[0].how.includes('openstates.org/find_your_legislator'))
+})
+
+// ── ZIP → district ────────────────────────────────────────────────────────
+// The panel's job is to name a person. Before this, a student in any
+// multi-district state got the whole delegation and a link to house.gov.
+test('a ZIP inside one district resolves to that district', () => {
+  assert.deepEqual(districtsForZip('06032'), [{ state: 'CT', district: 5 }])
+  // At-large states encode district 00, which matches district 0 in the
+  // member data — not a missing value.
+  assert.deepEqual(districtsForZip('82001'), [{ state: 'WY', district: 0 }])
+})
+
+test('a split ZIP returns its districts ranked by share of the ZIP', () => {
+  const d = districtsForZip('06001')
+  assert.equal(d.length, 2)
+  assert.deepEqual(d[0], { state: 'CT', district: 5 }, 'largest share first')
+  assert.deepEqual(d[1], { state: 'CT', district: 1 })
+})
+
+test('malformed and unknown ZIPs resolve to nothing rather than guessing', () => {
+  for (const z of ['', '0603', '060321', 'abcde', null, undefined, '00000']) {
+    assert.deepEqual(districtsForZip(z), [], `zip ${JSON.stringify(z)}`)
+  }
+})
+
+// ZIP+4 is a shape people type, and its first five digits are the ZIP.
+test('ZIP+4 resolves to the same district as its five-digit ZIP', () => {
+  assert.deepEqual(districtsForZip('06032-1234'), [{ state: 'CT', district: 5 }])
+  assert.deepEqual(districtsForZip('060321234'), [{ state: 'CT', district: 5 }])
+})
+
+test('a ZIP narrows the House to one member, and marks it exact', async () => {
+  const r = await representativesFor({ state: 'CT', chamber: 'house', zip: '06032' })
+  assert.equal(r.members.length, 1)
+  assert.equal(r.members[0].district, 5)
+  assert.equal(r.exact, true)
+  assert.equal(r.fromZip, true)
+  assert.equal(r.delegationSize, 5, 'the state still has five seats')
+})
+
+test('a split ZIP narrows without claiming to be exact', async () => {
+  const r = await representativesFor({ state: 'CT', chamber: 'house', zip: '06001' })
+  assert.equal(r.members.length, 2)
+  assert.equal(r.exact, false)
+  assert.equal(r.reason, 'zip_spans_districts')
+})
+
+// A ZIP the student mistyped, or one from somewhere else entirely, must not
+// silently name someone who doesn't represent them.
+test('an unusable ZIP falls back to the full delegation', async () => {
+  for (const zip of ['99999', '90210']) {
+    const r = await representativesFor({ state: 'CT', chamber: 'house', zip })
+    assert.equal(r.members.length, 5, `zip ${zip}`)
+    assert.equal(r.fromZip, false)
+    assert.equal(r.reason, 'district_unknown')
+  }
+})
+
+test('a ZIP does not change the Senate answer, which is state-wide', async () => {
+  const withZip = await representativesFor({ state: 'CT', chamber: 'senate', zip: '06032' })
+  const without = await representativesFor({ state: 'CT', chamber: 'senate' })
+  assert.equal(withZip.members.length, 2)
+  assert.deepEqual(withZip.members.map(m => m.name), without.members.map(m => m.name))
+  assert.equal(withZip.exact, true)
 })
 
 // ── frontend / backend drift ──────────────────────────────────────────────

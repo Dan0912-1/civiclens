@@ -39,6 +39,7 @@ import { HOUSE_FINDER, SENATE_FINDER, STATE_LEGISLATOR_FINDER } from './civicLin
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url))
 const SNAPSHOT_PATH = join(MODULE_DIR, 'assets', 'data', 'legislators-current.csv')
+const ZIP_DISTRICTS_PATH = join(MODULE_DIR, 'assets', 'data', 'zip-districts.json')
 const REMOTE_CSV = 'https://unitedstates.github.io/congress-legislators/legislators-current.csv'
 
 // Refresh once a day. Membership changes on the order of a few times a year
@@ -165,6 +166,65 @@ export async function loadFederalLegislators() {
   return cached
 }
 
+// ── ZIP → congressional district ─────────────────────────────────────────────
+// See scripts/build-zip-districts.mjs. Built from the Census Bureau's official
+// ZCTA-to-district relationship file for the 119th Congress, so this names a
+// student's actual representative rather than handing them a delegation and a
+// link. 84.8% of ZIPs sit wholly inside one district; the rest straddle two or
+// three and are returned ranked by how much of the ZIP each district covers,
+// which the panel presents as candidates rather than an answer.
+//
+// A ZIP is coarser than an address, so a split ZIP genuinely cannot be
+// resolved further without one — that part of the earlier limitation stands.
+// What changed is that it now applies to ~15% of ZIPs instead of every student
+// in a multi-district state.
+
+const FIPS_TO_STATE = {
+  '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT',
+  '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL',
+  '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD',
+  '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE',
+  '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
+  '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI', '45': 'SC', '46': 'SD',
+  '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV',
+  '55': 'WI', '56': 'WY', '60': 'AS', '66': 'GU', '69': 'MP', '72': 'PR', '78': 'VI',
+}
+
+let zipMap = null
+
+function loadZipDistricts() {
+  if (zipMap) return zipMap
+  try {
+    zipMap = JSON.parse(readFileSync(ZIP_DISTRICTS_PATH, 'utf8'))
+  } catch (err) {
+    console.error('[reps] zip-districts load failed:', err.message)
+    zipMap = {}
+  }
+  return zipMap
+}
+
+/**
+ * Districts a ZIP falls in, best first.
+ * Returns [] for an unknown ZIP (PO-box-only ZIPs have no ZCTA, so they aren't
+ * in the file at all) — callers fall back to the state delegation.
+ */
+export function districtsForZip(zip) {
+  // Accept "06032" and the ZIP+4 forms ("06032-1234", "060321234"), which are
+  // the shapes people actually type. Anything else is a typo, and truncating a
+  // typo to five digits would name a representative with total confidence for
+  // a ZIP the student never entered — "060321" is not 06032.
+  const digits = String(zip ?? '').replace(/\D/g, '')
+  if (digits.length !== 5 && digits.length !== 9) return []
+  const z = digits.slice(0, 5)
+  const packed = loadZipDistricts()[z]
+  if (!packed) return []
+  return packed.split(',').map(geoid => ({
+    state: FIPS_TO_STATE[geoid.slice(0, 2)] || '',
+    // "00" is the at-large marker, and matches district 0 in the member data.
+    district: Number(geoid.slice(2)),
+  })).filter(d => d.state)
+}
+
 /** Which body votes on this bill next, in the vocabulary the panel speaks. */
 export function decidingChamber(bill) {
   const type = String(bill?.type || bill?.bill_type || '').toLowerCase().replace(/\./g, '')
@@ -194,7 +254,7 @@ const VALID_CHAMBERS = new Set(['house', 'senate', 'state-upper', 'state-lower']
  * The panel payload: who to contact, whether that list is exactly the
  * student's own lawmakers, and the honest reason when it isn't.
  */
-export async function representativesFor({ state, chamber }) {
+export async function representativesFor({ state, chamber, zip }) {
   const st = String(state || '').toUpperCase()
   const ch = VALID_CHAMBERS.has(chamber) ? chamber : 'house'
 
@@ -216,20 +276,56 @@ export async function representativesFor({ state, chamber }) {
   }
 
   const { members: all, source } = await loadFederalLegislators()
-  const members = all
+  const delegation = all
     .filter(m => m.chamber === ch && m.state === st)
     .sort((a, b) => (a.district ?? -1) - (b.district ?? -1) || a.name.localeCompare(b.name))
+
+  // A ZIP narrows the House down to the student's own member. Senate seats are
+  // state-wide, so a ZIP tells us nothing there that the state code didn't.
+  let members = delegation
+  let zipDistricts = []
+  if (ch === 'house' && zip) {
+    zipDistricts = districtsForZip(zip).filter(d => !st || d.state === st)
+    if (zipDistricts.length) {
+      const wanted = zipDistricts.map(d => `${d.state}-${d.district}`)
+      const matched = delegation.filter(m => wanted.includes(`${m.state}-${m.district}`))
+      // Preserve the ZIP's own ranking: the district covering most of the ZIP
+      // is the most likely one, and should be read first.
+      if (matched.length) {
+        members = wanted
+          .map(k => matched.find(m => `${m.state}-${m.district}` === k))
+          .filter(Boolean)
+      }
+    }
+  }
+
+  // Senators represent the whole state, so both are this student's. A
+  // single-district state has exactly one House member, same story. And a ZIP
+  // that lands in exactly one district names that student's representative.
+  const exact = members.length > 0 && (
+    ch === 'senate' ||
+    members.length === 1
+  )
+
+  let reason = null
+  if (!members.length) reason = 'no_members'
+  else if (ch === 'house' && members.length > 1) {
+    reason = zipDistricts.length > 1 ? 'zip_spans_districts' : 'district_unknown'
+  }
 
   return {
     scope: 'federal',
     chamber: ch,
     state: st,
-    // Senators represent the whole state, so both of them are this student's.
-    // A single-district state has exactly one House member, same story.
-    exact: members.length > 0 && (ch === 'senate' || members.length === 1),
+    exact,
     members,
+    // How many House members the state has in total — the panel says "1 of 5"
+    // rather than implying the state only has one.
+    delegationSize: delegation.length,
+    // True when the narrowing came from a ZIP rather than from the state alone.
+    fromZip: zipDistricts.length > 0,
     finderUrl: ch === 'senate' ? SENATE_FINDER : HOUSE_FINDER,
-    reason: members.length === 0 ? 'no_members' : (ch === 'house' && members.length > 1 ? 'district_unknown' : null),
+    reason,
     source,
   }
 }
