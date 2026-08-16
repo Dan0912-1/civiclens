@@ -1119,6 +1119,11 @@ async function fetchBillsFromLocalDB(interests, userState, discoveryTerms, searc
         isStateBill: isState,
         statusStage: row.status_stage || 'introduced',
         _isDiscovery: isDiscovery,
+        // Normalized app topics, carried so scoring doesn't go looking for
+        // them in a volatile per-bill detail cache that only gets populated
+        // when somebody happens to open that bill's page. Stripped before the
+        // response (see the internal-field delete list).
+        _topics: row.topics || [],
         // Extra fields from local DB that help personalization skip API calls
         _localText: row.full_text || null,
         _localCrsSummary: row.crs_summary || null,
@@ -1447,6 +1452,7 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
                 url: row.url || '',
                 updateDate: row.updated_at || '',
                 searchTerm: (row.topics || [])[0] || '',
+                _topics: row.topics || [],
                 legiscan_bill_id: row.legiscan_bill_id || null,
                 state: row.jurisdiction,
                 session: row.session || null, // needed to build the clean /states/ URL
@@ -1525,6 +1531,25 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
     // Combine — federal first, then state (frontend separates by tab)
     const balanced = [...pickedFederal, ...pickedState]
 
+    // ── Diversity metrics logging ──
+    // Measured BEFORE the internal fields are stripped below: getBillTopic
+    // reads _subjects and _topicTag, so running this after the delete loop
+    // classified every bill as "Other" and reported topics=0 entropy=0.00 on
+    // every request, however varied the feed actually was.
+    const topicSet = new Set(balanced.map(b => getBillTopic(b)).filter(t => t !== 'Other'))
+    const discoveryCount = balanced.filter(b => b.recommendReason === 'New topic for you').length
+    const topicCounts_ = {}
+    for (const b of balanced) {
+      const t = getBillTopic(b)
+      topicCounts_[t] = (topicCounts_[t] || 0) + 1
+    }
+    const total_ = balanced.length || 1
+    const entropy = -Object.values(topicCounts_).reduce((sum, c) => {
+      const p = c / total_
+      return sum + (p > 0 ? p * Math.log2(p) : 0)
+    }, 0)
+    console.log(`[diversity] topics=${topicSet.size} entropy=${entropy.toFixed(2)} discovery=${discoveryCount}/${total_} reasons=${balanced.map(b => b.recommendReason?.slice(0, 12) || '?').join(',')}`)
+
     // Clean internal fields but keep _score as `rankScore` and recommendReason
     // for frontend re-ranking and display.
     // Note: _isDiscovery / _isEmerging are deliberately removed BEFORE caching
@@ -1542,26 +1567,13 @@ app.post('/api/legislation', legislationLimiter, async (req, res) => {
       delete bill._isDiscovery
       delete bill._isEmerging
       delete bill._topicTag
+      delete bill._topics
       delete bill._localText
       delete bill._localCrsSummary
       delete bill._localTextWordCount
       delete bill._localTextVersion
     }
 
-    // ── Diversity metrics logging ──
-    const topicSet = new Set(balanced.map(b => getBillTopic(b)).filter(t => t !== 'Other'))
-    const discoveryCount = balanced.filter(b => b.recommendReason === 'New topic for you').length
-    const topicCounts_ = {}
-    for (const b of balanced) {
-      const t = getBillTopic(b)
-      topicCounts_[t] = (topicCounts_[t] || 0) + 1
-    }
-    const total_ = balanced.length || 1
-    const entropy = -Object.values(topicCounts_).reduce((sum, c) => {
-      const p = c / total_
-      return sum + (p > 0 ? p * Math.log2(p) : 0)
-    }, 0)
-    console.log(`[diversity] topics=${topicSet.size} entropy=${entropy.toFixed(2)} discovery=${discoveryCount}/${total_} reasons=${balanced.map(b => b.recommendReason?.slice(0, 12) || '?').join(',')}`)
 
     // Build _meta so the client can render an honest empty/degraded state
     // instead of a misleading "0 of 0 · try selecting All" when the underlying
@@ -2547,6 +2559,76 @@ function billStatusBucket(bill) {
 // Attacker-controlled fields (title, latestAction, latestActionDate) come
 // from `meta` when available, falling back to req.body only if LegiScan
 // didn't return them. type/number/congress are validated below by callers.
+// Re-run the civic-action URL sanitizer on an analysis we are about to SERVE.
+//
+// sanitizeCivicActions only ever ran at generation time, so a cached analysis
+// keeps whatever URLs the model originally wrote — including the plausible
+// .gov paths it invents that 404 (https://www.maryland.gov/CCRI,
+// https://www.congress.gov/bill/119th-congress/sb/475). Entries live for 30
+// days, and the only remedy was bumping the cache-key version, which throws
+// away every good analysis along with the bad links and does nothing for an
+// analysis stored somewhere else entirely — a bookmark's bill_data, or a copy
+// the client is holding in router state.
+//
+// Sanitizing on the way out closes that gap: every link a student can click is
+// rebuilt from the bill's own identity at serve time, whenever it was written.
+// The rewrite is idempotent (it derives URLs from the bill, not from the text
+// it finds), so a freshly-sanitized analysis passes through unchanged.
+// The canonical bill-page URL for state bills, straight from our bills table.
+//
+// A federal bill page is reconstructible from (congress, type, number), but a
+// state one isn't — it's whatever URL the scrapers recorded. Serve-time
+// sanitizing needs it: without it, sanitizeCivicActions has no bill page to
+// offer and collapses a perfectly good "read the bill" link down to the
+// generic legislator finder. We look it up rather than trusting the copy the
+// client sent, for the reason api/civicLinks.js gives — a state bill link must
+// only ever come from our own database.
+async function fetchStateBillUrls(stateBills) {
+  const urls = new Map() // billKey -> url
+  if (!supabase || !stateBills.length) return urls
+  const keyOf = b => `${b.state}-${String(b.type || '').toLowerCase()}-${b.number}`
+  try {
+    const results = await Promise.all(stateBills.map(async b => {
+      const { data } = await supabase
+        .from('bills')
+        .select('url')
+        .eq('jurisdiction', b.state)
+        .eq('bill_type', String(b.type || '').toLowerCase())
+        .eq('bill_number', b.number)
+        .limit(1)
+        .maybeSingle()
+      return [keyOf(b), data?.url || null]
+    }))
+    for (const [k, url] of results) if (url) urls.set(k, url)
+  } catch (err) {
+    console.error('[personalize] state bill URL lookup failed:', err.message)
+  }
+  return urls
+}
+
+function stateBillUrlKey(bill) {
+  return `${bill.state}-${String(bill.type || '').toLowerCase()}-${bill.number}`
+}
+
+function withSanitizedLinks(cachedResponse, bill, stateBillUrl = null) {
+  const analysis = cachedResponse?.analysis
+  if (!analysis || !Array.isArray(analysis.civic_actions)) return cachedResponse
+  // Copy before rewriting: the cached object is shared with the in-memory
+  // cache and with any other request holding the same reference.
+  const copy = {
+    ...cachedResponse,
+    analysis: { ...analysis, civic_actions: analysis.civic_actions.map(a => ({ ...a })) },
+  }
+  try {
+    sanitizeCivicActions(copy.analysis, bill, stateBillUrl)
+  } catch (err) {
+    // A malformed cached row must never turn a cache hit into a 500.
+    console.error('[personalize] serve-time link sanitize failed:', err.message)
+    return cachedResponse
+  }
+  return copy
+}
+
 function buildTrustedBill(reqBill, meta) {
   const safeStr = v => (typeof v === 'string' ? v.slice(0, 500) : '')
   return {
@@ -2647,7 +2729,14 @@ app.post('/api/personalize', personalizeLimiter, async (req, res) => {
   const cacheKey = `v10-detail-${identity}-${bucket}-${profileHash}`
 
   const cached = (await getSupabaseCache(cacheKey)) || getCache(cacheKey)
-  if (cached) return res.json(cached)
+  // Links get rebuilt from this bill's identity on the way out, so an entry
+  // written before a link fix can't keep serving a dead URL.
+  if (cached) {
+    const stateUrl = bill.isStateBill
+      ? (await fetchStateBillUrls([bill])).get(stateBillUrlKey(bill)) || null
+      : null
+    return res.json(withSanitizedLinks(cached, buildTrustedBill(bill, null), stateUrl))
+  }
 
   // Circuit breaker: fast-fail if Claude is in backoff
   if (isClaudeBackedOff()) {
@@ -2832,6 +2921,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   const studentState = normalizeProfile(profile).state || ''
 
   // Also check in-memory cache
+  const cacheHits = [] // { billId, bill, cached } — sanitized after the loop
   for (let i = 0; i < bills.length; i++) {
     const bill = bills[i]
     const cacheKey = cacheKeys[i]
@@ -2850,7 +2940,7 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
       if (bill.isStateBill && bill.state && studentState && bill.state !== studentState) {
         mismatches++
       }
-      results[billId] = cached
+      cacheHits.push({ billId, bill, cached })
     } else {
       misses++
       billsToPersonalize.push({
@@ -2863,6 +2953,18 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
   }
   if (mismatches > 0) {
     console.warn(`[metrics] feed cache-key/payload mismatch: ${mismatches}/${bills.length} bills returned with state mismatch for student state=${studentState}`)
+  }
+
+  // Rebuild every cached analysis's civic-action links from the bill's own
+  // identity before serving. The feed is where most students meet these links,
+  // and a cache entry can be up to 30 days older than the last link fix.
+  if (cacheHits.length) {
+    const stateHits = cacheHits.filter(h => h.bill.isStateBill && h.bill.state && h.bill.number != null)
+    const stateUrls = await fetchStateBillUrls(stateHits.map(h => h.bill))
+    for (const { billId, bill, cached } of cacheHits) {
+      const stateUrl = bill.isStateBill ? (stateUrls.get(stateBillUrlKey(bill)) || null) : null
+      results[billId] = withSanitizedLinks(cached, buildTrustedBill(bill, null), stateUrl)
+    }
   }
 
   if (!billsToPersonalize.length) {
@@ -4978,45 +5080,28 @@ const CAREER_MAP = {
   sports: ['athletics', 'Title IX', 'sports safety', 'NCAA'],
 }
 
-// Map interest categories to LegiScan subject names for scoring boost.
-// When a bill's subjects match a user's interests, boost its score even
-// if the keyword search term didn't match directly.
-const INTEREST_TO_SUBJECTS = {
-  education:    ['Education', 'Higher Education', 'Elementary and Secondary Education'],
-  environment:  ['Environmental Protection', 'Energy', 'Public Lands and Natural Resources'],
-  economy:      ['Economics and Public Finance', 'Labor and Employment', 'Taxation'],
-  healthcare:   ['Health', 'Mental Health'],
-  technology:   ['Science, Technology, Communications', 'Computer Security'],
-  housing:      ['Housing and Community Development'],
-  immigration:  ['Immigration'],
-  civil_rights: ['Civil Rights and Liberties, Minority Issues', 'Crime and Law Enforcement'],
-  community:    ['Social Welfare', 'Agriculture and Food'],
-}
-
 // ─── Diversified bill selection ──────────────────────────────────────────────
 
 // Infer a bill's topic from cached personalization, policyArea, or title regex
 function getBillTopic(bill) {
   if (bill._topicTag) return bill._topicTag
-  // Check cached personalization for topic_tag
-  if (bill.legiscan_bill_id) {
-    const cached = getCache(`bill-ls-${bill.legiscan_bill_id}`)
-    if (cached?.bill?.subjects?.[0]) {
-      // Map first subject to interest category
-      for (const [interest, subs] of Object.entries(INTEREST_TO_SUBJECTS)) {
-        const subName = cached.bill.subjects[0].subject_name || cached.bill.subjects[0]
-        if (subs.includes(subName)) return TAG_TO_INTEREST_REVERSE[interest] || interest
-      }
-    }
+  // Classify from the normalized topics the sync job already computed.
+  //
+  // This used to map bills.subjects through a table of Congress.gov subject
+  // names, read out of the per-bill detail cache. That never worked on two
+  // counts: the cached detail payload carries no subjects array at all, and
+  // bills.subjects wouldn't have helped either — it is empty on federal rows
+  // and holds each state's own uppercase vocabulary ("CONTRACTS", "BOARDS &
+  // COMMISSIONS") on state rows, matching neither. So every bill classified as
+  // "Other" and the feed's diversity logging reported topics=0 entropy=0.00
+  // on every request, forever.
+  const topics = bill._topics || []
+  if (topics.length && TAG_TO_INTEREST_REVERSE[topics[0]]) {
+    return TAG_TO_INTEREST_REVERSE[topics[0]]
   }
   if (bill.policyArea) {
     const cat = POLICY_AREA_TO_CATEGORY[bill.policyArea]
-    if (cat) {
-      const tagMap = { education: 'Education', environment: 'Environment', economy: 'Economy',
-        healthcare: 'Healthcare', technology: 'Technology', housing: 'Housing',
-        immigration: 'Immigration', civil_rights: 'Civil Rights', community: 'Community' }
-      return tagMap[cat] || 'Other'
-    }
+    if (cat) return TAG_TO_INTEREST_REVERSE[cat] || 'Other'
   }
   return 'Other'
 }
@@ -5130,16 +5215,21 @@ const STATUS_MOMENTUM = {
   failed:       0.10,
 }
 
-// Map subjects to states with heightened geographic relevance
-const STATE_SUBJECT_AFFINITY = {
-  'Agriculture and Food':                ['IA','IL','IN','NE','KS','MN','ND','SD','WI','MO','TX','AR'],
-  'Energy':                              ['TX','ND','OK','WY','NM','PA','WV','LA','CO','AK'],
-  'Public Lands and Natural Resources':  ['AK','NV','UT','ID','OR','WY','MT','AZ','CO','NM'],
-  'Armed Forces and National Security':  ['VA','TX','CA','NC','GA','FL','WA','HI','CO','MD'],
-  'Immigration':                         ['TX','CA','AZ','NM','FL','NY','IL','NJ'],
-  'Native Americans':                    ['AZ','NM','OK','SD','MT','AK','WA','MN','WI','NC'],
-  'Water Resources Development':         ['CA','AZ','CO','NV','TX','FL'],
-  'Environmental Protection':            ['CA','WA','OR','CO','VT','MA'],
+// Topics with heightened geographic relevance, by state.
+//
+// Previously keyed on Congress.gov subject names ('Agriculture and Food',
+// 'Public Lands and Natural Resources', ...) and matched against a subject set
+// that was always empty, so it never fired once. Re-keyed onto the normalized
+// topics we actually store. That coarsens the original intent — four of the old
+// rows collapse into `environment` and `community` — so the state lists below
+// are the union of the rows they replace, and this is a ranking nudge worth
+// tuning rather than a precise claim about any one state.
+const STATE_TOPIC_AFFINITY = {
+  // energy + public lands + water + environmental protection
+  environment:  ['TX','ND','OK','WY','NM','PA','WV','LA','CO','AK','NV','UT','ID','OR','MT','AZ','CA','WA','VT','MA','FL'],
+  // agriculture and food
+  community:    ['IA','IL','IN','NE','KS','MN','ND','SD','WI','MO','TX','AR'],
+  immigration:  ['TX','CA','AZ','NM','FL','NY','IL','NJ'],
 }
 
 function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSet, popularBillIds, userInterestKeys, topicCounts, userState }) {
@@ -5149,18 +5239,21 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
   else if (bill._isEmerging) interestScore = 0.7
   else if (bill._isDiscovery) interestScore = 0.5
 
-  // Subject-based boost: if the bill has LegiScan subjects that match the user's
+  // Topic-based boost: if the bill's classified topics match the user's
   // interests, boost the interestScore even if the search term didn't match.
-  const cached = bill.legiscan_bill_id ? getCache(`bill-ls-${bill.legiscan_bill_id}`) : null
-  const subjects = cached?.bill?.subjects || []
-  const subjectNames = new Set(subjects.map(s => s.subject_name || s))
-  if (interestScore < 0.8 && subjectNames.size > 0 && userInterestKeys?.length) {
-    for (const interest of userInterestKeys) {
-      const matchSubjects = INTEREST_TO_SUBJECTS[interest] || []
-      if (matchSubjects.some(s => subjectNames.has(s))) {
-        interestScore = Math.max(interestScore, 0.85)
-        break
-      }
+  //
+  // This used to map bills.subjects through a table of Congress.gov subject
+  // names, read out of getCache(`bill-ls-<id>`) — the per-bill DETAIL cache,
+  // which that endpoint populates and this one never does. The detail payload
+  // carries no subjects array, so the set was permanently empty and neither
+  // this boost nor the STATE_TOPIC_AFFINITY branch below could ever fire. Worse, on the rare hit
+  // the ranking depended on whether an unrelated user had opened that bill in
+  // the last hour. bills.topics is the normalized signal the sync job already
+  // computes, and it rides along on the bill (see transform in fetchFromLocalDB).
+  const billTopics = bill._topics || []
+  if (interestScore < 0.8 && billTopics.length && userInterestKeys?.length) {
+    if (billTopics.some(t => userInterestKeys.includes(t))) {
+      interestScore = Math.max(interestScore, 0.85)
     }
   }
 
@@ -5200,18 +5293,26 @@ function computeBillScore(bill, { interestTerms, interactionMap, discoveryTermSe
     }
   }
 
-  // StateRelevance (0–1): geographic relevance based on sponsors + subject affinity
+  // StateRelevance (0–1): geographic relevance from the bill's sponsors and
+  // its topic.
+  //
+  // The sponsor half reads the per-bill detail cache, which is populated only
+  // when someone opens that bill's page — so it fires for some requests and
+  // not others, on data unrelated to this student. It is kept because it is
+  // now correct when it does fire (federal sponsors carry a real `state` since
+  // they come from Congress.gov), but it is deliberately not the only signal.
   let stateRelevance = 0
-  if (userState && cached?.bill) {
-    const sponsors = cached.bill.sponsors || []
+  if (userState) {
+    const cachedDetail = bill.legiscan_bill_id ? getCache(`bill-ls-${bill.legiscan_bill_id}`) : null
+    const sponsors = cachedDetail?.bill?.sponsors || []
     if (sponsors.length > 0 && sponsors[0].state === userState) {
       stateRelevance = 0.5 // primary sponsor from student's state
     } else if (sponsors.some(s => s.state === userState)) {
       stateRelevance = 0.3 // cosponsor from student's state
     }
-    // Subject-state affinity boost
-    for (const [subject, states] of Object.entries(STATE_SUBJECT_AFFINITY)) {
-      if (states.includes(userState) && subjectNames.has(subject)) {
+    // Topic-state affinity boost
+    for (const [topic, states] of Object.entries(STATE_TOPIC_AFFINITY)) {
+      if (states.includes(userState) && billTopics.includes(topic)) {
         stateRelevance = Math.min(1, stateRelevance + 0.2)
         break
       }
