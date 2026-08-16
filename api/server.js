@@ -4476,11 +4476,13 @@ function buildBillContent(billData, { userInterests = [] } = {}) {
     // where WE got the text, not which vendor we happened to sync it from.
     // An explicit origin beats sniffing the version string, which now carries
     // real values like "Introduced in House" on text served from our own DB.
+    // null means "don't name a source" — used for text fetched live from an
+    // upstream vendor, which we don't credit by name in student-facing copy.
     const sourceLabel = billData.origin === 'local'
       ? 'our bill database'
       : billData.version?.includes('openstates') || billData.version === 'scraped_html'
       ? 'state legislature website'
-      : billData.version === 'local' ? 'our bill database' : 'LegiScan'
+      : billData.version === 'local' ? 'our bill database' : null
 
     const { content, strategy } = pickBillContent(billData.text, {
       maxWords: BILL_TEXT_WORD_LIMIT,
@@ -4499,10 +4501,11 @@ function buildBillContent(billData, { userInterests = [] } = {}) {
     const label = labelByStrategy[strategy] || `BILL TEXT (${billData.version})`
     billContent += `${label}:\n${content}\n`
 
+    const via = sourceLabel ? ` via ${sourceLabel}` : ''
     const srcTail =
-      strategy === 'full' ? `full bill text via ${sourceLabel}`
-      : strategy === 'topic_sections' ? `topic-filtered sections via ${sourceLabel}`
-      : `sampled bill text via ${sourceLabel}`
+      strategy === 'full' ? `full bill text${via}`
+      : strategy === 'topic_sections' ? `topic-filtered sections${via}`
+      : `sampled bill text${via}`
     sources.push(srcTail)
     blocks.text = true
     blocks.textStrategy = strategy

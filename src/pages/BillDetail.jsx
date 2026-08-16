@@ -787,7 +787,7 @@ export default function BillDetail() {
             <div className={styles.sourceAttribution}>
               Powered by AI analysis of {analysis.sources?.length > 0
                 ? analysis.sources.join(' and ')
-                : 'bill data from LegiScan'}
+                : 'bill data from our database'}
             </div>
           </div>
         ) : personalizationError ? (
