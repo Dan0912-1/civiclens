@@ -237,6 +237,61 @@ test('missing or malformed civic_actions does not throw', () => {
   assert.doesNotThrow(() => sanitizeCivicActions({ civic_actions: [{}, null] }, { isStateBill: false }))
 })
 
+// ── serve-time re-sanitizing ──────────────────────────────────────────────
+// The sanitizer runs again when a CACHED analysis is served, because entries
+// live for 30 days and can predate any link fix. Two properties matter: it
+// must be idempotent (a good analysis survives untouched), and it must not
+// downgrade a state bill's real link just because it is re-running.
+test('re-sanitizing an already-clean analysis changes nothing', () => {
+  const bill = { isStateBill: false, congress: 119, type: 'hr', number: 9544 }
+  const make = () => ({
+    civic_actions: [
+      { action: 'Read', how: 'Read the full text at https://www.congress.gov/bill/119th-congress/house-bill/9544/text today.' },
+      { action: 'Contact', how: 'Email your rep via https://www.house.gov/representatives/find-your-representative now.' },
+    ],
+  })
+  const once = make()
+  sanitizeCivicActions(once, bill, null)
+  const twice = JSON.parse(JSON.stringify(once))
+  const report = sanitizeCivicActions(twice, bill, null)
+  assert.deepEqual(twice.civic_actions, once.civic_actions)
+  assert.equal(report.rewritten, 0, 'a second pass should rewrite nothing')
+})
+
+test('serve-time pass kills a hallucinated .gov link in an old cached analysis', () => {
+  // Verbatim from a real cached row in personalization_cache.
+  const bill = { isStateBill: true, state: 'MD', type: 'hb', number: 529, congress: 0 }
+  const parsed = {
+    civic_actions: [
+      { action: 'Learn more', how: 'See https://www.maryland.gov/mdhhs/Pages/Medicaid.aspx for details.' },
+    ],
+  }
+  sanitizeCivicActions(parsed, bill, 'https://openstates.org/md/bills/2026/HB529/')
+  assert.ok(!parsed.civic_actions[0].how.includes('maryland.gov'), parsed.civic_actions[0].how)
+})
+
+test('re-sanitizing a state bill keeps its real bill link when we supply it', () => {
+  const bill = { isStateBill: true, state: 'CT', type: 'hb', number: 5001, congress: 0 }
+  const url = 'https://openstates.org/ct/bills/2026/HB5001/'
+  const parsed = { civic_actions: [{ action: 'Read', how: `Read the bill at ${url} first.` }] }
+  sanitizeCivicActions(parsed, bill, url)
+  assert.ok(parsed.civic_actions[0].how.includes(url), parsed.civic_actions[0].how)
+})
+
+// The regression this guards: serving a cached STATE analysis without looking
+// the canonical URL up would replace a working bill link with the generic
+// finder — a downgrade caused by the fix itself.
+test('a state bill-page link degrades to the finder only when we have no URL', () => {
+  const bill = { isStateBill: true, state: 'CT', type: 'hb', number: 5001, congress: 0 }
+  const url = 'https://openstates.org/ct/bills/2026/HB5001/'
+  const withUrl = { civic_actions: [{ action: 'Read', how: `Read the bill at ${url}.` }] }
+  const without = { civic_actions: [{ action: 'Read', how: `Read the bill at ${url}.` }] }
+  sanitizeCivicActions(withUrl, bill, url)
+  sanitizeCivicActions(without, bill, null)
+  assert.ok(withUrl.civic_actions[0].how.includes(url))
+  assert.ok(without.civic_actions[0].how.includes('openstates.org/find_your_legislator'))
+})
+
 // ── frontend / backend drift ──────────────────────────────────────────────
 // The two type maps must stay identical. They can't share a module because
 // .vercelignore excludes api/ from the frontend deploy, so only a test can
