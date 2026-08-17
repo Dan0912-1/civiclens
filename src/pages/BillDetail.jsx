@@ -48,6 +48,69 @@ const TAG_COLORS = {
   Other:         'gray',
 }
 
+/**
+ * One block of the bill as its official printing sets it.
+ *
+ * The printed document carries its structure entirely through layout — the
+ * masthead, the centered display lines, the section rules, and above all the
+ * indentation ladder that shows which clause sits inside which subsection.
+ * formatBillText recovers that structure from the collapsed text; this renders
+ * it back with real typography instead of a monospace column.
+ */
+function BillTextBlock({ block, showDeleted, styles }) {
+  // States mark repealed language by bracketing it mid-sentence. Hiding it
+  // shows the statute as the bill would leave it; the reader's toggle strikes
+  // it through instead.
+  const body = block.runs
+    ? block.runs
+      .filter(run => showDeleted || !run.struck)
+      .map((run, index) => (run.struck
+        ? <del key={index} className={styles.billTextStruck}>{run.text}</del>
+        : <span key={index}>{run.text}</span>))
+    : block.text
+
+  const deletedClass = block.deleted ? styles.billTextDeleted : ''
+
+  if (block.type === 'masthead') {
+    return <p className={styles.billTextMasthead}>{block.text}</p>
+  }
+
+  if (block.type === 'display') {
+    return <h3 className={`${styles.billTextDisplay} ${deletedClass}`}>{block.text}</h3>
+  }
+
+  if (block.type === 'heading') {
+    return (
+      <h4 className={`${styles.billTextDocumentHeading} ${deletedClass}`}>
+        {block.marker && <span className={styles.billTextSectionNumber}>{block.marker}</span>}
+        {block.text && <span className={styles.billTextSectionTitle}>{block.text}</span>}
+      </h4>
+    )
+  }
+
+  if (block.type === 'enacting') {
+    return <p className={`${styles.billTextEnacting} ${deletedClass}`}>{body}</p>
+  }
+
+  if (block.type === 'provision') {
+    return (
+      <p
+        className={[
+          styles.billTextProvision,
+          block.quoted ? styles.billTextQuoted : '',
+          deletedClass,
+        ].filter(Boolean).join(' ')}
+        style={{ '--depth': block.depth || 0 }}
+      >
+        <span className={styles.billTextMarker}>{block.marker}</span>
+        <span className={styles.billTextProvisionBody}>{body}</span>
+      </p>
+    )
+  }
+
+  return <p className={`${styles.billTextParagraph} ${deletedClass}`}>{body}</p>
+}
+
 export default function BillDetail() {
   // This component backs two routes:
   //   federal  /bill/:congress/:type/:number
@@ -607,7 +670,11 @@ export default function BillDetail() {
       : congressGovTextUrl(congress, type, number) || billUrl)
   const civicActions = analysis?.civic_actions?.filter(action => !isReadBillAction(action)) || []
   const fullTextBlocks = fullText ? formatBillText(fullText.text) : []
-  const billTextHasDeletions = fullTextBlocks.some(block => block.deleted)
+  // Congress marks a whole provision as removed; states strike words inside an
+  // otherwise current sentence. Both feed the same reader toggle.
+  const billTextHasDeletions = fullTextBlocks.some(block => (
+    block.deleted || block.runs?.some(run => run.struck)
+  ))
   const visibleFullTextBlocks = fullTextBlocks.filter(block => (
     block.type !== 'metadata' && (showDeletedText || !block.deleted)
   ))
@@ -1052,17 +1119,9 @@ export default function BillDetail() {
                     )}
 
                     <article className={styles.billTextBody}>
-                      {visibleFullTextBlocks.map((block, index) => {
-                        if (block.type === 'heading') {
-                          return <h4 key={index} className={`${styles.billTextDocumentHeading} ${block.deleted ? styles.billTextDeleted : ''}`}>{block.text}</h4>
-                        }
-                        const blockClass = block.type === 'provision'
-                          ? styles.billTextProvision
-                          : block.type === 'enacting'
-                            ? styles.billTextEnacting
-                            : styles.billTextParagraph
-                        return <p key={index} className={`${blockClass} ${block.deleted ? styles.billTextDeleted : ''}`}>{block.text}</p>
-                      })}
+                      {visibleFullTextBlocks.map((block, index) => (
+                        <BillTextBlock key={index} block={block} showDeleted={showDeletedText} styles={styles} />
+                      ))}
                       <footer className={styles.billTextEnd}>End of bill text</footer>
                     </article>
                   </>
