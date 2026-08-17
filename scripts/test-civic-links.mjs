@@ -280,9 +280,9 @@ test('bill text formatting rejoins hard wraps and preserves structure', () => {
     'publish the required materials.',
   ].join('\n'))
   assert.deepEqual(blocks, [
-    { type: 'heading', text: 'SECTION 1. SHORT TITLE.' },
+    { type: 'heading', level: 2, marker: 'SECTION 1.', text: 'SHORT TITLE.' },
     { type: 'paragraph', text: 'This Act may be cited as the “Student Civic Literacy Act”.' },
-    { type: 'provision', text: '(a) In general.—The Secretary shall publish the required materials.' },
+    { type: 'provision', marker: '(a)', depth: 0, text: 'In general.—The Secretary shall publish the required materials.' },
   ])
 })
 
@@ -292,11 +292,11 @@ test('bill text formatting decodes GPO amendment markup and one-line sections', 
     + 'SEC. 2. CURRENT SYSTEM. The Secretary shall act. (1) First requirement. (2) Second requirement.'
   )
   assert.deepEqual(blocks, [
-    { type: 'heading', text: 'SECTION 1. OLD TITLE.', deleted: true },
-    { type: 'heading', text: 'SEC. 2. CURRENT SYSTEM.' },
+    { type: 'heading', level: 2, marker: 'SECTION 1.', text: 'OLD TITLE.', deleted: true },
+    { type: 'heading', level: 2, marker: 'SEC. 2.', text: 'CURRENT SYSTEM.' },
     { type: 'paragraph', text: 'The Secretary shall act.' },
-    { type: 'provision', text: '(1) First requirement.' },
-    { type: 'provision', text: '(2) Second requirement.' },
+    { type: 'provision', marker: '(1)', depth: 0, text: 'First requirement.' },
+    { type: 'provision', marker: '(2)', depth: 0, text: 'Second requirement.' },
   ])
 })
 
@@ -315,10 +315,10 @@ test('bill text formatting does not split an internal subsection reference', () 
     "SEC. 2. SYSTEM. Section 10 is amended— (1) by inserting after subsection (k) the following: ``(A) New rule.--Apply it.''"
   )
   assert.deepEqual(blocks, [
-    { type: 'heading', text: 'SEC. 2. SYSTEM.' },
+    { type: 'heading', level: 2, marker: 'SEC. 2.', text: 'SYSTEM.' },
     { type: 'paragraph', text: 'Section 10 is amended—' },
-    { type: 'provision', text: '(1) by inserting after subsection (k) the following:' },
-    { type: 'provision', text: '(A) New rule.—Apply it.' },
+    { type: 'provision', marker: '(1)', depth: 0, text: 'by inserting after subsection (k) the following:' },
+    { type: 'provision', marker: '(A)', depth: 1, quoted: true, text: 'New rule.—Apply it.' },
   ])
 })
 
@@ -340,7 +340,10 @@ test('bill text formatting removes GPO PDF line numbers and page furniture', () 
     },
     {
       type: 'provision',
-      text: '(v) follow Federal data minimization practices to ensure only the minimum',
+      marker: '(v)',
+      depth: 0,
+      quoted: true,
+      text: 'follow Federal data minimization practices to ensure only the minimum',
     },
   ])
 })
@@ -350,6 +353,146 @@ test('bill text formatting keeps ordinary statutory numbers without GPO page fur
   assert.deepEqual(blocks, [
     { type: 'paragraph', text: 'Section 2 applies within 5 years to 21 institutions and 15 U.S.C. 272(c).' },
   ])
+})
+
+// ── Reconstructed nesting ─────────────────────────────────────────────────
+// Our stored copies are whitespace-collapsed, so the indentation the printed
+// bill uses to show nesting is gone. Depth has to come back from the markers.
+test('bill text formatting nests provisions down the drafting ladder', () => {
+  const blocks = formatBillText(
+    'SEC. 2. RULES. (a) In general.—Section 601 is amended— (1) by striking the first sentence; '
+    + 'and (2) by adding at the end the following: ``(A) any direct effect; and ``(B) any indirect effect. '
+    + '``(i) a rule about veterans; or ``(ii) a rule about rates.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => [block.marker, block.depth]),
+    [['(a)', 0], ['(1)', 1], ['(2)', 1], ['(A)', 2], ['(B)', 2], ['(i)', 3], ['(ii)', 3]]
+  )
+})
+
+test('bill text formatting places an amendment that starts mid-sequence', () => {
+  // Amendments quote existing statute, so an inserted list routinely opens at
+  // "(9)" rather than "(1)". It is still a paragraph one level under "(b)".
+  const blocks = formatBillText(
+    'SEC. 3. DEFINITIONS. (b) Indirect effects.—Section 601 is amended by adding at the end the following: '
+    + '``(9) Economic impact.--The term `economic impact\' means-- ``(A) any direct economic effect.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => [block.marker, block.depth]),
+    [['(b)', 0], ['(9)', 1], ['(A)', 2]]
+  )
+})
+
+test('bill text formatting restarts a level rather than nesting it in itself', () => {
+  // The ladder alternates kinds, so a second quoted statute opening at "(a)"
+  // sits beside the earlier subsections, not inside them.
+  const blocks = formatBillText(
+    'SEC. 5. AMENDMENTS. (a) First.—Do a thing. (b) Second.—Do another. (c) Third.—Section 9 is amended '
+    + 'to read as follows: ``(a) In general.--The Secretary shall report.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => [block.marker, block.depth]),
+    [['(a)', 0], ['(b)', 0], ['(c)', 0], ['(a)', 0]]
+  )
+})
+
+test('bill text formatting reads a nested single quote as a quotation', () => {
+  const blocks = formatBillText("SEC. 2. TERMS. (1) Rule.--The term `rule' has the meaning given.")
+  assert.equal(blocks.at(-1).text, 'Rule.—The term ‘rule’ has the meaning given.')
+})
+
+test('bill text formatting splits siblings joined by a coordinating clause', () => {
+  const blocks = formatBillText(
+    'SEC. 4. AMENDMENTS. (1) Analysis.—Section 604(a) is amended— (A) by redesignating paragraph (6) '
+    + 'as paragraph (7); and (B) in paragraph (6), by striking the heading.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => block.marker),
+    ['(1)', '(A)', '(B)']
+  )
+})
+
+// ── State print artifacts ─────────────────────────────────────────────────
+// Connecticut prints a margin line number beside every line and a running
+// header on every page. Extraction drops both straight into the prose.
+test('bill text formatting removes state margin line numbers', () => {
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. Subsection (b) of section 10-66bb of the general 1 statutes is repealed and the '
+    + 'following is substituted in lieu thereof 2 (Effective July 1, 2026): 3 Any organization that '
+    + 'is exempt from taxation 4 under Section 501(c)(3) of the Internal Revenue Code of 1986, or any 5 '
+    + 'subsequent corresponding internal revenue code of the United States, 6 as amended from time to '
+    + 'time, may apply to the Commissioner of 7 Education for a certificate of approval, provided no 8 '
+    + 'nonpublic school may be established as a charter school and no 9 parent may establish a charter '
+    + 'school for home instruction. 10'
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /exempt from taxation under Section 501\(c\)\(3\)/)
+  assert.match(joined, /Commissioner of Education for a certificate/)
+  // The real statutory citations in the same sentence must survive.
+  assert.match(joined, /section 10-66bb/)
+  assert.match(joined, /Internal Revenue Code of 1986/)
+})
+
+test('bill text formatting removes the Connecticut running page header', () => {
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. The commissioners shall jointly -- 5 of 11 -- Substitute Bill No. 138 LCO 6 of 11 '
+    + 'submit a report to the joint standing committee.'
+  )
+  assert.equal(
+    blocks.at(-1).text,
+    'The commissioners shall jointly submit a report to the joint standing committee.'
+  )
+})
+
+test('bill text formatting strikes bracketed state repeals inline', () => {
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. The board shall review [, annually,] all applications.'
+  )
+  const provision = blocks.at(-1)
+  assert.equal(provision.text, 'The board shall review , annually, all applications.')
+  assert.deepEqual(provision.runs, [
+    { text: 'The board shall review ', struck: false },
+    { text: ', annually,', struck: true },
+    { text: ' all applications.', struck: false },
+  ])
+})
+
+test('bill text formatting leaves federal brackets alone', () => {
+  // Only state drafting uses brackets to mark repeals; federal text must keep
+  // them verbatim.
+  const blocks = formatBillText('SEC. 2. RULES. The Secretary shall publish [Reserved] guidance.')
+  assert.equal(blocks.at(-1).text, 'The Secretary shall publish [Reserved] guidance.')
+  assert.equal(blocks.at(-1).runs, undefined)
+})
+
+test('bill text formatting keeps a state act title in one piece', () => {
+  const blocks = formatBillText(
+    'AN ACT CONCERNING GAMING. Be it enacted by the Senate and House of Representatives in General Assembly convened:'
+  )
+  assert.equal(blocks[0].type, 'display')
+  assert.equal(blocks[0].text, 'AN ACT CONCERNING GAMING.')
+})
+
+test('bill text formatting splits mixed-case state section labels', () => {
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. (Effective July 1, 2026) The town shall act. Sec. 2. Subsection (h) of section '
+    + '10-264l is repealed.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'heading').map(block => block.marker),
+    ['Section 1.', 'Sec. 2.']
+  )
+})
+
+test('bill text formatting reads the federal masthead', () => {
+  const blocks = formatBillText(
+    '[Congressional Bills 119th Congress] 119th CONGRESS 2d Session S. 5178 To amend chapter 6 of title 5.'
+  )
+  assert.equal(blocks.find(block => block.type === 'masthead').text, 'S. 5178 · 119th CONGRESS · 2d Session')
 })
 
 test('missing or malformed civic_actions does not throw', () => {

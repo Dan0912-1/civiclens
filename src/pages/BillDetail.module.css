@@ -532,10 +532,23 @@
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-lg);
+  margin-bottom: var(--space-xl);
   padding: var(--space-lg) var(--space-xl);
   overflow: visible;
-  border-top: 1px solid var(--border);
+  background: var(--white);
+  border: 1px solid var(--border);
   border-left: 3px solid var(--amber);
+  border-radius: 1px;
+  animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
+}
+
+.billTextEyebrow {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
 }
 
 .billTextIcon {
@@ -567,7 +580,11 @@
 
 .billTextHeading {
   margin: 0;
+  color: var(--navy);
+  font-family: var(--font-display);
   font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .billTextDescription {
@@ -784,36 +801,157 @@
   border-color: var(--navy);
 }
 
+/* ─── The bill as a printed document ─────────────────────────────────────
+   The official printing carries the bill's structure entirely through layout:
+   a centered masthead, display lines above the enacting clause, ruled section
+   heads, and an indentation ladder showing which clause sits inside which
+   subsection. formatBillText recovers that structure from text whose
+   whitespace was collapsed at ingest; these rules set it in proportional type
+   rather than the source's fixed 66-column monospace. */
 .billTextBody {
+  --bill-indent: 1.55rem;
+  --bill-marker: 2.5rem;
+  --bill-max-depth: 4;
   max-width: 760px;
-  max-height: none;
   min-height: 560px;
   margin: 0 auto;
   padding: clamp(2.25rem, 6vw, 4.75rem);
-  overflow: visible;
   background: #fffdfa;
   border: 1px solid var(--border);
   color: var(--text-primary);
   box-shadow: 0 8px 28px rgba(10, 25, 41, 0.08);
-  scrollbar-gutter: auto;
+}
+
+.billTextMasthead {
+  margin-bottom: 1.6rem;
+  padding-bottom: 1.4rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* "A BILL", "IN THE SENATE OF THE UNITED STATES" — centered display lines the
+   source sets apart from the body. */
+.billTextDisplay {
+  margin: 2.4rem 0 1.15rem;
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.billTextMasthead + .billTextDisplay {
+  margin-top: 0;
+}
+
+.billTextDocumentHeading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 2.5rem 0 1rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border-light, rgba(13, 27, 42, 0.12));
+}
+
+.billTextDocumentHeading:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.billTextSectionNumber {
+  color: var(--amber-dark);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Section titles arrive from the source in full capitals. Held at body size
+   with open tracking they read as a heading instead of shouting. */
+.billTextSectionTitle {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.45;
+  letter-spacing: 0.045em;
 }
 
 .billTextParagraph,
 .billTextProvision,
 .billTextEnacting {
   margin-bottom: 1.15rem;
+  font-family: var(--font-serif);
   font-size: 1.04rem;
   line-height: 1.82;
+  color: var(--text-primary);
 }
 
+.billTextEnacting {
+  padding: var(--space-sm) 0 var(--space-sm) var(--space-md);
+  border-left: 2px solid var(--amber);
+  color: var(--navy);
+  font-style: italic;
+}
+
+/* The ladder. Each level steps in by one indent, and the marker hangs in the
+   margin so wrapped lines align under the text — the same relationship the
+   printed bill draws with spaces. */
 .billTextProvision {
-  padding-left: 1.65rem;
-  border-left: 0;
-  text-indent: -1.65rem;
+  display: grid;
+  grid-template-columns: minmax(var(--bill-marker), auto) minmax(0, 1fr);
+  column-gap: 0.35rem;
+  /* Bills do reach a sixth level. Past the last step the marker alone carries
+     the nesting, so the measure stays readable instead of collapsing into a
+     narrow gutter. */
+  margin-left: calc(min(var(--depth, 0), var(--bill-max-depth)) * var(--bill-indent));
+}
+
+.billTextMarker {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.billTextProvisionBody {
+  min-width: 0;
+}
+
+/* Language this bill writes into existing law, which the source marks with
+   opening quotation marks. */
+.billTextQuoted {
+  padding: 0.15rem 0 0.15rem 0.85rem;
+  border-left: 2px solid rgba(232, 160, 32, 0.35);
+}
+
+.billTextQuoted .billTextMarker,
+.billTextQuoted .billTextProvisionBody {
+  color: var(--text-secondary);
 }
 
 .billTextDeleted {
   background: #faf0f0;
+  color: #826f6f;
+  text-decoration: line-through;
+  text-decoration-color: rgba(107, 31, 31, 0.55);
+}
+
+/* States strike words inside an otherwise current sentence. */
+.billTextStruck {
+  color: #8b5f5f;
+  text-decoration: line-through;
+  text-decoration-color: rgba(107, 31, 31, 0.5);
+  text-decoration-thickness: 1px;
 }
 
 .billTextUnavailable {
@@ -829,6 +967,13 @@
   padding: var(--space-xl);
   color: var(--text-secondary);
   text-align: center;
+}
+
+.billTextUnavailable a {
+  color: var(--amber-dark);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .billTextUnavailableIcon {
@@ -858,8 +1003,13 @@
 }
 
 .billTextSkeleton {
-  min-height: 55vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: var(--space-md);
+  min-height: 55vh;
+  color: var(--text-muted);
+  font-size: 0.9rem;
 }
 
 .billTextSkeleton > div:last-child {
@@ -983,6 +1133,12 @@
   }
 
   .billTextBody {
+    /* A narrow screen cannot spend 1.55rem per level, so the ladder steps in
+       more tightly and stops sooner. Nesting still reads because the marker
+       keeps its own column at every depth. */
+    --bill-indent: 0.85rem;
+    --bill-marker: 2.1rem;
+    --bill-max-depth: 3;
     min-height: 70vh;
     margin: 0 auto;
     padding: 28px 20px 44px;
@@ -995,6 +1151,15 @@
   .billTextEnacting {
     font-size: 1rem;
     line-height: 1.76;
+  }
+
+  .billTextDisplay {
+    font-size: 1rem;
+    letter-spacing: 0.12em;
+  }
+
+  .billTextDocumentHeading {
+    margin: 1.9rem 0 0.85rem;
   }
 }
 
@@ -1256,200 +1421,6 @@
   background: var(--cream);
 }
 
-.billTextSection {
-  background: var(--white);
-  border: 1px solid var(--border);
-  border-top: 2px solid var(--navy);
-  border-radius: 1px;
-  margin-bottom: var(--space-xl);
-  overflow: hidden;
-  animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
-}
-
-.billTextToggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-lg);
-  width: 100%;
-  padding: var(--space-lg) var(--space-xl);
-  text-align: left;
-  color: var(--navy);
-  background: var(--white);
-  transition: background var(--dur-fast) var(--ease-out);
-}
-
-.billTextToggle:hover {
-  background: var(--cream);
-}
-
-.billTextToggle:disabled {
-  cursor: wait;
-}
-
-.billTextToggleTitle {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.billTextEyebrow {
-  font-family: var(--font-mono);
-  font-size: 0.64rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-.billTextHeading {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--navy);
-  line-height: 1.25;
-}
-
-.billTextToggleAction {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--navy);
-  white-space: nowrap;
-}
-
-.billTextPanel {
-  padding: 0 var(--space-xl) var(--space-xl);
-  border-top: 1px solid var(--border-light);
-}
-
-.billTextDocumentMeta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-md) 0;
-  font-family: var(--font-mono);
-  font-size: 0.67rem;
-  color: var(--text-muted);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.billTextDocumentMeta a,
-.billTextUnavailable a {
-  color: var(--amber-dark);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.billTextChangeNote {
-  margin: 0 0 var(--space-md);
-  padding: 8px 12px;
-  border-left: 2px solid #8b5f5f;
-  background: #f6eeee;
-  font-size: 0.78rem;
-  color: #664848;
-}
-
-.billTextBody {
-  max-height: min(68vh, 720px);
-  overflow-y: auto;
-  padding: clamp(1.25rem, 4vw, 2.5rem);
-  background: var(--cream);
-  border: 1px solid var(--border);
-  border-radius: 1px;
-  color: var(--text-primary);
-  scrollbar-gutter: stable;
-}
-
-.billTextDocumentHeading {
-  margin: 1.75rem 0 0.65rem;
-  font-family: var(--font-body);
-  font-size: 0.8rem;
-  font-weight: 700;
-  line-height: 1.4;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--navy);
-}
-
-.billTextDocumentHeading:first-child {
-  margin-top: 0;
-}
-
-.billTextParagraph,
-.billTextProvision,
-.billTextEnacting {
-  margin: 0 0 1rem;
-  font-family: var(--font-serif);
-  font-size: 0.98rem;
-  line-height: 1.75;
-  color: var(--text-secondary);
-}
-
-.billTextProvision {
-  padding-left: var(--space-md);
-  border-left: 2px solid var(--border);
-}
-
-.billTextEnacting {
-  padding: var(--space-sm) 0 var(--space-sm) var(--space-md);
-  border-left: 2px solid var(--amber);
-  font-style: italic;
-  color: var(--navy);
-}
-
-.billTextDeleted {
-  color: #826f6f;
-  text-decoration: line-through;
-  text-decoration-color: rgba(107, 31, 31, 0.55);
-}
-
-.billTextUnavailable {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding-top: var(--space-lg);
-  color: var(--text-secondary);
-}
-
-.billTextSkeleton {
-  min-height: 120px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  gap: 8px;
-}
-
-@media (max-width: 520px) {
-  .billTextToggle {
-    padding: var(--space-md);
-  }
-
-  .billTextPanel {
-    padding: 0 var(--space-md) var(--space-md);
-  }
-
-  .billTextDocumentMeta {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .billTextBody {
-    margin: 0 calc(-1 * var(--space-md));
-    border-left: 0;
-    border-right: 0;
-  }
-}
-
 .error {
   text-align: center;
   padding: var(--space-2xl);
@@ -1589,92 +1560,3 @@
   }
 }
 
-/* Shared reader selectors also existed in the former inline accordion. Keep
-   these final declarations after that legacy block so the modal owns scrolling
-   and document layout instead of creating a nested scroll area. */
-.billTextSection {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-lg);
-  padding: var(--space-lg) var(--space-xl);
-  overflow: visible;
-  border-top: 1px solid var(--border);
-  border-left: 3px solid var(--amber);
-}
-
-.billTextHeading {
-  margin: 0;
-  font-size: 1.2rem;
-}
-
-.billTextBody {
-  max-width: 760px;
-  max-height: none;
-  min-height: 560px;
-  margin: 0 auto;
-  padding: clamp(2.25rem, 6vw, 4.75rem);
-  overflow: visible;
-  background: #fffdfa;
-  border: 1px solid var(--border);
-  color: var(--text-primary);
-  box-shadow: 0 8px 28px rgba(10, 25, 41, 0.08);
-  scrollbar-gutter: auto;
-}
-
-.billTextParagraph,
-.billTextProvision,
-.billTextEnacting {
-  margin-bottom: 1.15rem;
-  font-size: 1.04rem;
-  line-height: 1.82;
-}
-
-.billTextProvision {
-  padding-left: 1.65rem;
-  border-left: 0;
-  text-indent: -1.65rem;
-}
-
-.billTextDeleted {
-  background: #faf0f0;
-}
-
-.billTextUnavailable {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  justify-content: center;
-  min-height: 55vh;
-  max-width: 560px;
-  margin: 0 auto;
-  padding: var(--space-xl);
-  text-align: center;
-}
-
-.billTextSkeleton {
-  min-height: 55vh;
-  gap: var(--space-md);
-}
-
-@media (max-width: 620px) {
-  .billTextSection {
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-md);
-    padding: var(--space-lg);
-  }
-
-  .billTextBody {
-    min-height: 70vh;
-    margin: 0 auto;
-    padding: 28px 20px 44px;
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-  }
-
-  .billTextParagraph,
-  .billTextProvision,
-  .billTextEnacting {
-    font-size: 1rem;
-    line-height: 1.76;
-  }
-}
