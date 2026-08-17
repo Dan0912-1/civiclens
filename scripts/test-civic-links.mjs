@@ -434,6 +434,62 @@ test('bill text formatting removes state margin line numbers', () => {
   assert.match(joined, /Internal Revenue Code of 1986/)
 })
 
+test('bill text formatting does not apply GPO PDF repairs to state bills', () => {
+  // A state page counter looks like GPO's, but the GPO hyphen repair reads a
+  // margin number that follows a hyphenated word as part of that word and
+  // deletes it — which used to break the line-number run and strand its first
+  // few numbers in the prose.
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. (Effective from passage) Notwithstanding any 1 provision of title 26 of the general '
+    + 'statutes, any person who violates any 2 regulation concerning the taking of striped bass, '
+    + 'whether in the marine 3 or inland waters of the state, shall have committed an infraction 4 '
+    + 'and shall be fined two hundred fifty dollars for a first offense, three 5 hundred fifty dollars '
+    + 'for a second offense, by mail, or plead not guilty in 6 accordance with section 51-164n of the '
+    + 'general statutes, provided the 7 amount of such fine shall be paid to the municipality where the 8 '
+    + 'infraction occurred. 9 (a) Notwithstanding the provisions of this title, no person shall 10 '
+    + 'engage in the hand-harvesting of horseshoe crabs or the eggs of 11 '
+    + '-- 1 of 3 -- Raised Bill No. 5333 LCO No. 1651 2 of 3 horseshoe crabs from the waters of this state. 12'
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /Notwithstanding any provision of title 26 of the general statutes/)
+  assert.match(joined, /violates any regulation concerning/)
+  assert.match(joined, /whether in the marine or inland waters/)
+  assert.match(joined, /the eggs of horseshoe crabs from the waters/)
+  // The hyphenated word must survive intact, and real citations with it.
+  assert.match(joined, /hand-harvesting of horseshoe crabs/)
+  assert.match(joined, /section 51-164n/)
+})
+
+test('bill text formatting strips a line-number run with one number missing', () => {
+  // Page furniture can swallow a printed number. The run either side of the
+  // hole is one run, not two.
+  const numbered = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12]
+  const source = 'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. The commissioner shall act '
+    + numbered.map(n => `and take further steps as required ${n}`).join(' ')
+  const joined = formatBillText(source).map(block => block.text).join(' ')
+  assert.equal(/\b\d+\b/.test(joined.replace('Section 1.', '')), false, joined)
+})
+
+test('bill text formatting does not read an annotation as an enumerator', () => {
+  // "(NEW)" flags a section that creates law rather than amending it, and
+  // "(ENV)" names the committee of reference. Neither is a rung on the ladder.
+  const blocks = formatBillText(
+    'Be it enacted by the Senate and House of Representatives in General Assembly convened: '
+    + 'Section 1. (NEW) (Effective July 1, 2026) The department shall submit a report. '
+    + 'Sec. 2. (a) The board shall act.'
+  )
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => block.marker),
+    ['(a)']
+  )
+  assert.match(
+    blocks.find(block => block.type === 'paragraph').text,
+    /^\(NEW\) \(Effective July 1, 2026\) The department/
+  )
+})
+
 test('bill text formatting removes the Connecticut running page header', () => {
   const blocks = formatBillText(
     'Be it enacted by the Senate and House of Representatives in General Assembly convened: '

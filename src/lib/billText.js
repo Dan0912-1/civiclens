@@ -114,8 +114,12 @@ function createDepthTracker() {
  * numbers in normal HTML/plain-text exports are never touched.
  */
 function cleanGpoPdfArtifacts(source) {
+  // Gate on markers only a GPO PDF export carries. A bare "— 4 of 11 —" page
+  // count is NOT one of them: state legislatures print the same counter, and
+  // the hyphen repair below then eats their margin numbers out of ordinary
+  // hyphenated words ("hand-harvesting of ... crabs or the eggs of 15").
   const hasGpoPageFurniture = /\bVerDate\s+Sep\s+11\s+2014\b/i.test(source)
-    || /[—–-]\s*\d+\s+of\s+\d+\s*[—–-]/i.test(source)
+    || /[—–-]\s*\d+\s+of\s+\d+\s*[—–-]\s*(?:\d+\s*)?[•●]\s*[A-Z]\s*\d+\s+[A-Z]{1,4}\b/i.test(source)
   if (!hasGpoPageFurniture) return source
 
   return source
@@ -190,6 +194,11 @@ function stripPrintLineNumbers(source) {
   const MIN_RUN = 8
   const MIN_GAP = 2
   const MAX_GAP = 40
+  // A printed number can go missing — swallowed by page furniture, or by a
+  // word that wrapped mid-hyphen. Tolerating one absent number keeps a single
+  // chain intact instead of splitting it and stranding its opening few
+  // numbers in the prose.
+  const MAX_SKIP = 2
   const drop = new Set()
 
   let start = 0
@@ -199,9 +208,11 @@ function stripPrintLineNumbers(source) {
     for (let next = start + 1; next < numbers.length; next++) {
       const candidate = numbers[next]
       const current = numbers[cursor]
-      if (candidate.value !== current.value + 1) continue
+      const step = candidate.value - current.value
+      if (step < 1 || step > MAX_SKIP) continue
       const gap = candidate.index - current.index
-      if (gap < MIN_GAP || gap > MAX_GAP) continue
+      // A skipped number means roughly a line's worth of extra words.
+      if (gap < MIN_GAP || gap > MAX_GAP * step) continue
       run.push(candidate)
       cursor = next
     }
@@ -221,10 +232,20 @@ function stripPrintLineNumbers(source) {
 // "subdivision (2) of section 12-411" is never mistaken for the next item.
 const REFERENCE_WORDS = /^(?:sections?|subsections?|subdivisions?|subparagraphs?|paragraphs?|clauses?|subclauses?|chapters?|titles?|parts?|items?|divisions?)$/i
 
+/**
+ * The shape of an enumerator: a number, a single letter, roman numerals, or the
+ * doubled letter of the item level. Deliberately narrower than "any short
+ * parenthesis" — bills carry parenthetical annotations in exactly that
+ * position, and "(NEW)" marking a new section of statute or "(ENV)" naming the
+ * committee of reference are not places in the ladder.
+ */
+const ENUM = String.raw`\d{1,3}|[A-Za-z]|[ivxl]{2,6}|[IVXL]{2,6}|[a-z]{2,3}`
+const ENUM_MARKER = new RegExp(String.raw`\((?:${ENUM})\)`, 'g')
+
 // A provision can open on a run of markers when a level has a single child —
 // "(A)(i)" cites one place, and drafters print the pair together. The optional
 // bracket is a state repeal opening on the same provision.
-const LEADING_MARKERS_RE = /^(\[?)((?:\([A-Za-z0-9]{1,4}\)\s+){1,3})/
+const LEADING_MARKERS_RE = new RegExp(String.raw`^(\[?)((?:\((?:${ENUM})\)\s+){1,3})`)
 
 /**
  * Break out the provisions that the printed bill runs together inside a single
@@ -245,14 +266,14 @@ function splitInlineSiblings(line) {
     const lead = rest.match(/^\s*/)[0].length
     const run = rest.slice(lead).match(LEADING_MARKERS_RE)
     if (!run) return position + lead
-    for (const marker of run[2].match(/\([A-Za-z0-9]{1,4}\)/g)) ladder.depthFor(marker.slice(1, -1))
+    for (const marker of run[2].match(ENUM_MARKER)) ladder.depthFor(marker.slice(1, -1))
     return position + lead + run[0].length
   }
 
   const parts = []
   // A marker may be followed by prose or, where a subparagraph opens straight
   // onto its first clause, by the next marker down — "shall enroll (A) (i)".
-  const candidates = /(\S+)\s+\(([A-Za-z0-9]{1,4})\)\s+(?=[A-Za-z“]|\([A-Za-z0-9]{1,4}\)\s)/g
+  const candidates = new RegExp(String.raw`(\S+)\s+\((${ENUM})\)\s+(?=[A-Za-z“]|\((?:${ENUM})\)\s)`, 'g')
   candidates.lastIndex = openLadderAt(0)
   let start = 0
   let match
@@ -360,13 +381,15 @@ export function formatBillText(text = '') {
     // cross-references ("in section 12-81 of the general statutes") intact.
     .replace(/(?<=[.,:;”’")\]])\s+(?=(?:Section|Sec\.)\s+\d+[a-z]?\.)/g, '\n')
     .replace(/\s+(?=(?:TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART|SUBPART|DIVISION)\s+[IVXLCDM\d]+\b)/g, '\n')
-    .replace(/\s+(?=(?:``|“)\([A-Za-z0-9]{1,4}\)\s+)/g, '\n')
+    // \x60 is the backtick GPO doubles to open a quotation; writing it escaped
+    // keeps the pair from closing this template literal.
+    .replace(new RegExp(String.raw`\s+(?=(?:\x60\x60|“)\((?:${ENUM})\)\s+)`, 'g'), '\n')
     // A marker that follows sentence-ending punctuation, a dash, or a colon
     // opens a new provision. References inside a sentence ("subsection (k) the
     // following") are preceded by a word, so they stay put. A state repeal
     // bracket can sit between the two.
-    .replace(/(?<=[—:;.])\s+(?:(?:and|or)\s+)?(?=\[?\([A-Za-z0-9]{1,4}\)\s+)/g, '\n')
-    .replace(/\s+(?=\[?\([A-Za-z]{1,4}\)\s+[A-Z])/g, '\n')
+    .replace(new RegExp(String.raw`(?<=[—:;.])\s+(?:(?:and|or)\s+)?(?=\[?\((?:${ENUM})\)\s+)`, 'g'), '\n')
+    .replace(new RegExp(String.raw`\s+(?=\[?\((?:${ENUM})\)\s+[A-Z])`, 'g'), '\n')
     .replace(/\s+(?=(?:IN THE (?:SENATE|HOUSE)|A BILL\b|AN ACT\b|Be it enacted\b))/g, '\n')
 
   const lines = normalized
@@ -453,7 +476,7 @@ export function formatBillText(text = '') {
     // A quotation mark opening a marker means the provision is language being
     // written into existing law, not an operative command of this bill.
     let quoted = false
-    if (/^“\s*\([A-Za-z0-9]{1,4}\)/.test(line)) {
+    if (new RegExp(String.raw`^“\s*\((?:${ENUM})\)`).test(line)) {
       quoted = true
       line = line.slice(1).trim().replace(/”(?=\.?$)/, '').replace(/\.\.$/, '.')
     }
@@ -553,7 +576,7 @@ export function formatBillText(text = '') {
       paragraphDeleted = deleted
       paragraphQuoted = quoted
       if (provisionMatch) {
-        const markers = provisionMatch[2].match(/\([A-Za-z0-9]{1,4}\)/g)
+        const markers = provisionMatch[2].match(ENUM_MARKER)
         // The run descends the ladder; the provision sits at the innermost.
         for (const marker of markers) paragraphDepth = depths.depthFor(marker.slice(1, -1))
         paragraphMarker = markers.join('')
