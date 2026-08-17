@@ -3,6 +3,41 @@ const PROVISION_RE = /^(?:``|["“])?(?:\([a-z0-9]{1,4}\)|\d+[.)])\s+/i
 const SECTION_WITH_TITLE_RE = /^((?:SECTION|SEC\.)\s+\d+[A-Z0-9.-]*\s+(?:[A-Z][A-Z0-9 ,&'’()/-]*\.)+)(?:\s+(.+))?$/
 const FRONT_MATTER_RE = /^(IN THE (?:SENATE|HOUSE) OF THE UNITED STATES|A BILL)(?:\s+(.+))?$/
 
+/**
+ * Remove print-layout debris from text extracted from GPO bill PDFs. In those
+ * files the margin line number can land inside a wrapped word ("Tech-18
+ * nology"), while each page injects a VerDate footer and document marker.
+ * Keep this deliberately gated by those unmistakable markers so real bill
+ * numbers in normal HTML/plain-text exports are never touched.
+ */
+function cleanGpoPdfArtifacts(source) {
+  const hasGpoPageFurniture = /\bVerDate\s+Sep\s+11\s+2014\b/i.test(source)
+    || /[—–-]\s*\d+\s+of\s+\d+\s*[—–-]/i.test(source)
+  if (!hasGpoPageFurniture) return source
+
+  return source
+    // A printed margin number can be attached to a line-ending hyphen.
+    .replace(/([A-Za-z])-\s*(?:[1-9]|1\d|2[0-5])\s+([a-z])/g, '$1$2')
+    // The same margin number can sit between a coordinating word and the
+    // first word on the next printed line.
+    .replace(/\b(and|or)\s+(?:[1-9]|1\d|2[0-5])\s+(?=[A-Za-z“‘])/gi, '$1 ')
+    // Drop the complete GPO production footer, including the final line
+    // number printed immediately before it. Leave a marker temporarily so we
+    // can remove the first line number after the page break as well.
+    .replace(
+      /\s+(?:[1-9]|1\d|2[0-5])\s+VerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b/gi,
+      ' <GPO_PAGE_BREAK> '
+    )
+    .replace(/\bVerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b/gi, ' <GPO_PAGE_BREAK> ')
+    // Printed page count and document slug, for example
+    // "— 5 of 72 — 6 •S 2511 RS".
+    .replace(/[—–-]\s*\d+\s+of\s+\d+\s*[—–-]\s*(?:\d+\s*)?[•●]\s*[A-Z]\s*\d+\s+[A-Z]{1,4}\b/gi, ' ')
+    // Line numbering restarts at 1 after the page furniture. It usually
+    // appears after the first short run of prose on the new page.
+    .replace(/<GPO_PAGE_BREAK>((?:(?![.!?;]).){0,180}?)\s+1\s+(?=[a-z])/gi, '$1 ')
+    .replace(/<GPO_PAGE_BREAK>/g, ' ')
+}
+
 function isHeading(line) {
   if (HEADING_RE.test(line)) return true
   // Legislative exports often represent headings only through capitalization.
@@ -19,7 +54,7 @@ function isHeading(line) {
  * headings, paragraph markers, and real blank-line boundaries.
  */
 export function formatBillText(text = '') {
-  const normalized = String(text)
+  const normalized = cleanGpoPdfArtifacts(String(text))
     // GPO plain-text exports sometimes arrive HTML-encoded even though the
     // response itself is text. Decode only the small safe entity set used by
     // these documents; React still escapes the resulting strings on render.
@@ -28,6 +63,8 @@ export function formatBillText(text = '') {
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&#0*39;|&apos;/gi, "'")
+    .replace(/‘‘/g, '“')
+    .replace(/’’/g, '”')
     .replace(/<\/?DOC>/gi, '')
     .replace(/<DELETED>/gi, '\n<DELETED>')
     .replace(/<\/DELETED>/gi, '</DELETED>\n')
@@ -36,7 +73,7 @@ export function formatBillText(text = '') {
     // strongest structural boundaries before doing the normal line pass.
     .replace(/\s+(?=(?:SECTION|SEC\.)\s+\d+[A-Z0-9.-]*\s)/g, '\n')
     .replace(/\s+(?=(?:TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART|SUBPART|DIVISION)\s+[IVXLCDM\d]+\b)/g, '\n')
-    .replace(/\s+(?=``\([A-Za-z0-9]{1,4}\)\s+)/g, '\n')
+    .replace(/\s+(?=(?:``|“)\([A-Za-z0-9]{1,4}\)\s+)/g, '\n')
     .replace(/\s+(?=\(\d{1,4}\)\s+(?:[A-Z]|by\b|an?\b|to\b|provide\b|report\b|establish\b|collect\b|submit\b|ensure\b|in\s+general\b))/g, '\n')
     .replace(/\s+(?=\([A-Za-z]{1,4}\)\s+[A-Z])/g, '\n')
     .replace(/(?<=[—:;-])\s+(?=\([A-Za-z]{1,4}\)\s+)/g, '\n')
