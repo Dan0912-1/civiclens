@@ -123,26 +123,114 @@ function cleanGpoPdfArtifacts(source) {
   if (!hasGpoPageFurniture) return source
 
   return source
-    // A printed margin number can be attached to a line-ending hyphen.
-    .replace(/([A-Za-z])-\s*(?:[1-9]|1\d|2[0-5])\s+([a-z])/g, '$1$2')
-    // The same margin number can sit between a coordinating word and the
-    // first word on the next printed line.
-    .replace(/\b(and|or)\s+(?:[1-9]|1\d|2[0-5])\s+(?=[A-Za-z“‘])/gi, '$1 ')
     // Drop the complete GPO production footer, including the final line
-    // number printed immediately before it. Leave a marker temporarily so we
-    // can remove the first line number after the page break as well.
+    // number printed immediately before it. Leave a marker temporarily: it
+    // bounds the page, whose line numbering starts over.
+    // The footer is followed by the printed page number and the running
+    // document slug ("3 •S 2511 RS"), which otherwise lands mid-sentence:
+    // "information for students and 26 •S 2511 RS families making decisions".
     .replace(
-      /\s+(?:[1-9]|1\d|2[0-5])\s+VerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b/gi,
+      /\s+\d{1,2}\s+VerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b(?:\s*\d{1,4})?(?:\s*[•●]\s*[A-Z]{1,2}\.?\s*\d+\s+[A-Z]{1,4}\b)?/gi,
       ' <GPO_PAGE_BREAK> '
     )
-    .replace(/\bVerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b/gi, ' <GPO_PAGE_BREAK> ')
+    .replace(
+      /\bVerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b(?:\s*\d{1,4})?(?:\s*[•●]\s*[A-Z]{1,2}\.?\s*\d+\s+[A-Z]{1,4}\b)?/gi,
+      ' <GPO_PAGE_BREAK> '
+    )
     // Printed page count and document slug, for example
     // "— 5 of 72 — 6 •S 2511 RS".
     .replace(/[—–-]\s*\d+\s+of\s+\d+\s*[—–-]\s*(?:\d+\s*)?[•●]\s*[A-Z]\s*\d+\s+[A-Z]{1,4}\b/gi, ' ')
-    // Line numbering restarts at 1 after the page furniture. It usually
-    // appears after the first short run of prose on the new page.
+    // The last line of a page can break a word, leaving its halves on either
+    // side of the footer: "equal representation be-25 <footer> tween 2-year".
+    // Rejoin the word and keep the page boundary just past it.
+    .replace(
+      /([A-Za-z])-\d{1,2}\s*<GPO_PAGE_BREAK>\s*([A-Za-z]+)/g,
+      '$1$2 <GPO_PAGE_BREAK> '
+    )
+    // Now that pages are bounded, take out the margin numbers themselves.
+    .replace(/[\s\S]+/, stripGpoMarginNumbers)
+    // Numbering restarts at 1 after the page furniture, which leaves the new
+    // page's first number too isolated to have joined a run above.
     .replace(/<GPO_PAGE_BREAK>((?:(?![.!?;]).){0,180}?)\s+1\s+(?=[a-z])/gi, '$1 ')
     .replace(/<GPO_PAGE_BREAK>/g, ' ')
+    // Provision headings are typeset in small caps with a full-size initial,
+    // and the extraction splits that initial off and drifts the closing period:
+    // "E STABLISHMENT OF SYSTEM .—". Both halves are wrong the same way. The
+    // dash is still in either form here — this runs before the em dash is
+    // normalised — so match it by lookahead rather than reproducing it.
+    .replace(/([A-Z])\s+\.\s*(?=—|--)/g, '$1.')
+    .replace(/\b([A-Z]) ([A-Z][A-Z ]*?)\s*\.(?=—|--)/g, '$1$2.')
+}
+
+/**
+ * Take the margin line numbers off a GPO PDF, a printed page at a time.
+ *
+ * The numbers come in two forms and both have to be counted together: a bare
+ * number between two words ("programs; 24 (iii) provide"), and one swallowed by
+ * a word that wrapped across the line ("institu-22 tional"). Counting only the
+ * bare ones leaves a run too broken to recognise, which used to leave a scatter
+ * of stray numbers behind on PDF-sourced bills.
+ *
+ * A page numbers its lines 1..~25, so the run is long and strictly ascending.
+ * Whether the document is numbered at all is decided across every page at once:
+ * once several pages have shown a full run, a short page — the first, with only
+ * a few lines under the masthead, or the last — is trusted on a couple of
+ * numbers rather than left alone for want of its own evidence.
+ */
+function stripGpoMarginNumbers(text) {
+  const pages = text.split('<GPO_PAGE_BREAK>').map(findMarginRun)
+  const numbered = pages.filter(page => page.run.length >= 8).length >= 3
+  const required = numbered ? 2 : 6
+  return pages
+    .map(page => (page.run.length >= required ? removeRun(page) : page.text))
+    .join(' <GPO_PAGE_BREAK> ')
+}
+
+/** The longest ascending count of margin numbers on one printed page. */
+function findMarginRun(text) {
+  // The bare form has to match at a page edge too: the last number on a page
+  // sits flush against the footer that was just cut away.
+  const CANDIDATE = /([A-Za-z])-(\d{1,2})\s+(?=[A-Za-z])|(?<=^|\s)(\d{1,2})(?=\s|$)/g
+  const tokens = text.split(' ')
+  const hits = []
+  for (const match of text.matchAll(CANDIDATE)) {
+    const wrapped = match[2] !== undefined
+    // A wrapped number is part of a broken word and can never be a citation.
+    // A bare one can be, and a citation is excluded from the count entirely
+    // rather than merely spared: "section 5 of the College Trans-5 parency
+    // Act" holds both a citation and the real margin number, and the count
+    // has to reach past the first to find the second.
+    if (!wrapped && isCitedNumber(tokens, text.slice(0, match.index).split(' ').length - 1)) continue
+    hits.push({
+      start: match.index,
+      end: match.index + match[0].length,
+      value: Number(wrapped ? match[2] : match[3]),
+      // A wrapped number leaves the two halves of its word to be rejoined.
+      replacement: wrapped ? match[1] : '',
+    })
+  }
+
+  // Longest ascending run, allowing one number to have gone missing.
+  let run = []
+  for (let start = 0; start + run.length < hits.length; start++) {
+    const candidate = [hits[start]]
+    for (let next = start + 1; next < hits.length; next++) {
+      const step = hits[next].value - candidate[candidate.length - 1].value
+      if (step >= 1 && step <= 2) candidate.push(hits[next])
+    }
+    if (candidate.length > run.length) run = candidate
+  }
+  return { text, run }
+}
+
+function removeRun({ text, run }) {
+  let out = ''
+  let cursor = 0
+  for (const hit of run) {
+    out += text.slice(cursor, hit.start) + hit.replacement
+    cursor = hit.end
+  }
+  return out + text.slice(cursor)
 }
 
 /**
@@ -173,6 +261,31 @@ function cleanStatePageFurniture(source) {
     .replace(/\bLCO\s+(?:No\.\s*)?\d+\s*/gi, ' ')
 }
 
+// Words that make the number after them part of the law rather than part of
+// the printing, and units that do the same from the other side.
+const CITES_A_NUMBER = /^(?:sections?|subsections?|subdivisions?|subparagraphs?|paragraphs?|clauses?|subclauses?|chapters?|subchapters?|titles?|parts?|subparts?|divisions?|items?|articles?|amendments?|rules?|forms?|no|nos|number|numbers|U\.?S\.?C|C\.?F\.?R|Pub|law|act|code|note|table|figure|column|line|page|volume|vol|§+)$/i
+const NUMBER_UNITS = /^(?:percent|per|percentage|days?|weeks?|months?|years?|hours?|minutes?|dollars?|cents?|U\.?S\.?C\.?|C\.?F\.?R\.?|Stat|billion|million|thousand|times)$/i
+
+// Abbreviations that carry a period and still cite the number after them,
+// unlike an ordinary word whose period simply ends the sentence.
+const NUMBERED_ABBREVIATION = /^(?:no|nos|vol|art|sec|secs|par|ch|pt|Pub|U\.?S\.?C|C\.?F\.?R|Stat)$/i
+
+/** Whether this bare integer is doing work in the sentence, not the margin. */
+function isCitedNumber(tokens, index) {
+  const before = (tokens[index - 1] || '').replace(/^[("'“‘]+/, '')
+  const trimmed = before.replace(/[),.;:"'”’]+$/g, '')
+  const after = (tokens[index + 1] || '').replace(/[),.;:"'”’]+$/g, '')
+  // "...the College Transparency Act. 6" ends a sentence; the number after it
+  // is the margin, not a citation. "section 5" and "No. 12" do cite.
+  const endsSentence = /[.!?;:]$/.test(before) && !NUMBERED_ABBREVIATION.test(trimmed)
+  // A citation names what it points into — "section 5 of the College
+  // Transparency Act", "chapter 35 of title 44". Without that the citing word
+  // is only the word this line happened to break after, and the number is the
+  // margin: "described in this paragraph 3 shall not include".
+  if (!endsSentence && CITES_A_NUMBER.test(trimmed) && /^of$/i.test(after)) return true
+  return NUMBER_UNITS.test(after)
+}
+
 /**
  * Strip the margin line numbers that legislative printers set beside every
  * printed line and that text extraction drops into the prose ("exempt from
@@ -181,7 +294,8 @@ function cleanStatePageFurniture(source) {
  * Removing every bare integer would destroy real statutory references, so this
  * only removes numbers that belong to a long, strictly consecutive run spaced
  * like printed lines. Statutory citations never form a 1, 2, 3, ... chain at
- * regular word intervals, which makes the run itself the evidence.
+ * regular word intervals, which makes the run itself the evidence. A citation
+ * that happens to land on the count is protected outright — see isCitedNumber.
  */
 function stripPrintLineNumbers(source) {
   const tokens = source.split(' ')
@@ -217,7 +331,13 @@ function stripPrintLineNumbers(source) {
       cursor = next
     }
     if (run.length >= MIN_RUN) {
-      for (const entry of run) drop.add(entry.index)
+      // A citation can sit exactly where the count expects a line number, and
+      // deleting it rewrites the law: "in accordance with section 5 of the
+      // College Transparency Act" must not become "in accordance with section
+      // of the College Transparency Act". Such a number still counts toward
+      // the run — dropping it from the chain would break the run in two — it
+      // just never leaves the text.
+      for (const entry of run) if (!isCitedNumber(tokens, entry.index)) drop.add(entry.index)
       start = numbers.indexOf(run[run.length - 1]) + 1
     } else {
       start++

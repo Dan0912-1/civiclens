@@ -348,6 +348,83 @@ test('bill text formatting removes GPO PDF line numbers and page furniture', () 
   ])
 })
 
+// ── GPO PDF margin numbers ────────────────────────────────────────────────
+// Text extracted from a typeset GPO PDF carries a margin number for every
+// printed line. They arrive in two forms — bare between two words, and
+// swallowed by a word that wrapped across the line — and both have to be
+// counted together for the run to be recognisable at all.
+const GPO_FOOTER = 'VerDate Sep 11 2014 02:29 Aug 05, 2026 Jkt 069200 PO 00000 Frm 00002 '
+  + 'Fmt 6652 Sfmt 6401 E:\\BILLS\\S2511.RS S2511kjohnson on DSK7ZCZBW3PROD with $$_JOB 3 •S 2511 RS'
+
+test('bill text formatting removes GPO margin numbers in both forms', () => {
+  const blocks = formatBillText(
+    '``(i) accurately evaluate student enrollment patterns, progres-19 sion, completion, and '
+    + 'postcollegiate outcomes; 20 ``(ii) assist with transparency, institu-21 tional improvement, '
+    + 'and analysis of Fed-22 eral aid programs; 23 ``(iii) provide accurate, complete, and 24 '
+    + 'customizable information for students and 25 ' + GPO_FOOTER + ' families making decisions '
+    + 'about postsec-1 ondary education; and 2 ``(iv) reduce the reporting burden on 3 institutions '
+    + 'of higher education, in accord-4 ance with section 5 of the College Trans-5 parency Act. 6 '
+    + '``(B) AVOIDING DUPLICATED REPORT-7 ING.--Notwithstanding any other provision of 8 this section.'
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  // Every wrapped word is rejoined, including across the page footer.
+  assert.match(joined, /enrollment patterns, progression, completion/)
+  assert.match(joined, /institutional improvement, and analysis of Federal aid programs/)
+  assert.match(joined, /information for students and families making decisions/)
+  assert.match(joined, /about postsecondary education/)
+  assert.match(joined, /reduce the reporting burden on institutions of higher education/)
+  // The small-caps heading breaks uppercase rather than lowercase.
+  assert.match(joined, /AVOIDING DUPLICATED REPORTING/)
+  // Nothing of the printed page survives.
+  assert.doesNotMatch(joined, /VerDate|DSK7ZCZBW3PROD|[•●]|S2511/)
+  assert.doesNotMatch(joined, /\b\d{1,2}\b(?! of the College)/)
+})
+
+test('bill text formatting repairs small-caps provision headings', () => {
+  // The PDF sets these in small caps with a full-size initial; extraction
+  // splits the initial off and drifts the closing period away from the word.
+  const blocks = formatBillText(
+    '``(i) evaluate patterns, progres-11 sion; 12 ``(ii) assist with transpar-13 ency; 14 '
+    + '``(A) E STABLISHMENT OF SYSTEM .--Not later 15 than 4 years after enactment; 16 '
+    + '``(B) A VOIDING DUPLICATED REPORTING .--Notwith-17 standing any other provision. 18 '
+    + GPO_FOOTER
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /ESTABLISHMENT OF SYSTEM\.—Not later than 4 years/)
+  assert.match(joined, /AVOIDING DUPLICATED REPORTING\.—Notwithstanding any other provision/)
+})
+
+test('bill text formatting keeps a citation that lands on the margin count', () => {
+  // "section 5 of the College Trans-5 parency Act" holds both a citation and
+  // the real margin number, and only one of them may go. Deleting the citation
+  // rewrites the law.
+  const blocks = formatBillText(
+    '``(i) evaluate enrollment patterns, progres-19 sion and completion; 20 ``(ii) assist with '
+    + 'transparency, institu-21 tional improvement; 22 ``(iii) provide accurate and 23 customizable '
+    + 'information for students and 24 families making decisions; and 25 ``(iv) reduce the reporting '
+    + 'burden on 26 institutions of higher education, in accord-27 ance with section 5 of the College '
+    + 'Trans-28 parency Act. 29 ' + GPO_FOOTER + ' ``(B) Other provisions apply.'
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /in accordance with section 5 of the College Transparency Act/)
+})
+
+test('bill text formatting removes a margin number that only looks cited', () => {
+  // A citing word before the number is not enough — a citation names what it
+  // points into. "this paragraph 3 shall not include" is a broken line.
+  const blocks = formatBillText(
+    '``(i) evaluate enrollment patterns, progres-11 sion; 12 ``(ii) assist with transpar-13 ency; 14 '
+    + '``(iii) any aggregate information described in this paragraph 15 shall not include personally '
+    + 'identifiable information, 16 consistent with any relevant Federal law 17 relating to privacy, '
+    + 'and with chapter 35 of title 44, United 18 States Code. 19 ' + GPO_FOOTER
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /described in this paragraph shall not include/)
+  assert.match(joined, /relevant Federal law relating to privacy/)
+  // The real citation in the same sentence survives.
+  assert.match(joined, /chapter 35 of title 44, United States Code/)
+})
+
 test('bill text formatting keeps ordinary statutory numbers without GPO page furniture', () => {
   const blocks = formatBillText('Section 2 applies within 5 years to 21 institutions and 15 U.S.C. 272(c).')
   assert.deepEqual(blocks, [
