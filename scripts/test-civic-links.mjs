@@ -300,6 +300,35 @@ test('bill text formatting decodes GPO amendment markup and one-line sections', 
   ])
 })
 
+test('bill text formatting classifies export metadata and cleans GPO typography', () => {
+  const blocks = formatBillText(
+    '[Congressional Bills 119th Congress] [From GPO]\n\nThis is the ``current text\'\'.'
+  )
+  assert.deepEqual(blocks, [
+    { type: 'metadata', text: '[Congressional Bills 119th Congress] [From GPO]' },
+    { type: 'paragraph', text: 'This is the “current text”.' },
+  ])
+})
+
+test('bill text formatting does not split an internal subsection reference', () => {
+  const blocks = formatBillText(
+    "SEC. 2. SYSTEM. Section 10 is amended— (1) by inserting after subsection (k) the following: ``(A) New rule.--Apply it.''"
+  )
+  assert.deepEqual(blocks, [
+    { type: 'heading', text: 'SEC. 2. SYSTEM.' },
+    { type: 'paragraph', text: 'Section 10 is amended—' },
+    { type: 'provision', text: '(1) by inserting after subsection (k) the following:' },
+    { type: 'provision', text: '(A) New rule.—Apply it.' },
+  ])
+})
+
+test('bill text formatting preserves coordinated hyphens', () => {
+  const blocks = formatBillText('Use privacy- and security-enhancing tools, not a user- friendly export.')
+  assert.deepEqual(blocks, [
+    { type: 'paragraph', text: 'Use privacy- and security-enhancing tools, not a user-friendly export.' },
+  ])
+})
+
 test('missing or malformed civic_actions does not throw', () => {
   assert.doesNotThrow(() => sanitizeCivicActions({}, { isStateBill: false }))
   assert.doesNotThrow(() => sanitizeCivicActions({ civic_actions: null }, { isStateBill: false }))

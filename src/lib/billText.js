@@ -37,7 +37,9 @@ export function formatBillText(text = '') {
     .replace(/\s+(?=(?:SECTION|SEC\.)\s+\d+[A-Z0-9.-]*\s)/g, '\n')
     .replace(/\s+(?=(?:TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART|SUBPART|DIVISION)\s+[IVXLCDM\d]+\b)/g, '\n')
     .replace(/\s+(?=``\([A-Za-z0-9]{1,4}\)\s+)/g, '\n')
-    .replace(/\s+(?=\([A-Za-z0-9]{1,4}\)\s+(?:[A-Z]|by\b|the\b|an?\b|to\b|in\s+general\b))/g, '\n')
+    .replace(/\s+(?=\(\d{1,4}\)\s+(?:[A-Z]|by\b|an?\b|to\b|provide\b|report\b|establish\b|collect\b|submit\b|ensure\b|in\s+general\b))/g, '\n')
+    .replace(/\s+(?=\([A-Za-z]{1,4}\)\s+[A-Z])/g, '\n')
+    .replace(/(?<=[—:;-])\s+(?=\([A-Za-z]{1,4}\)\s+)/g, '\n')
     .replace(/\s+(?=(?:IN THE (?:SENATE|HOUSE)|A BILL\b|Be it enacted\b))/g, '\n')
 
   const lines = normalized
@@ -53,9 +55,17 @@ export function formatBillText(text = '') {
 
   const flushParagraph = () => {
     if (!paragraph.length) return
+    const joinedText = paragraph.join(' ')
+      .replace(/\s+/g, ' ')
+      .replace(/(\w)-\s+(?!(?:and|or)\b)(?=\w)/g, '$1-')
+      .replace(/\s+Calendar No\.\s+\d+.*$/i, '')
+      .trim()
+    const blockType = paragraphType === 'paragraph' && /^\[Congressional Bills\b/i.test(joinedText)
+      ? 'metadata'
+      : paragraphType
     blocks.push({
-      type: paragraphType,
-      text: paragraph.join(' ').replace(/\s+/g, ' ').trim(),
+      type: blockType,
+      text: joinedText,
       ...(paragraphDeleted ? { deleted: true } : {}),
     })
     paragraph = []
@@ -75,6 +85,13 @@ export function formatBillText(text = '') {
     if (opensDeletion) inDeleted = true
     const deleted = inDeleted
     line = line.replace(/<\/?DELETED>/gi, '').trim()
+      .replace(/``/g, '“')
+      .replace(/''/g, '”')
+      .replace(/--/g, '—')
+      .replace(/(\w)-\s+(?!(?:and|or)\b)(?=\w)/g, '$1-')
+    if (/^“\([A-Za-z0-9]{1,4}\)/.test(line)) {
+      line = line.slice(1).replace(/”(?=\.?$)/, '').replace(/\.\.$/, '.')
+    }
     if (!line) {
       if (closesDeletion) inDeleted = false
       continue
