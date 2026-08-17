@@ -960,3 +960,26 @@
   .headline { font-size: 1.1rem; }
   .summaryBody, .passFailBody { font-size: 0.9rem; line-height: 1.6; }
 }
+
+/* In-app answer to an AI action's "find your representative" link. The action
+   already names the student's state in its prose; sending them to a national
+   lookup form contradicted that, so the link becomes a button that opens the
+   panel which can name the actual member. */
+.actionRepBtn {
+  display: inline-block;
+  margin-top: var(--space-sm);
+  padding: 8px 14px;
+  background: var(--navy);
+  color: var(--white);
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.actionRepBtn:hover { background: #0a1520; }

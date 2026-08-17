@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  loadProfile, saveProfile, getBookmarks, addBookmark, removeBookmark,
-  readCachedProfile, cacheProfile, isPersonalizable,
+  saveProfile, getBookmarks, addBookmark, removeBookmark,
+  readCachedProfile, cacheProfile, isPersonalizable, getProfileAge,
+  readProfileRow, PROFILE_READ_FAILED,
 } from '../lib/userProfile'
 import { getApiBase } from '../lib/api'
 import { trackInteraction, computeLocalSummary, getLocalInteractions, syncLocalInteractions } from '../lib/interactions'
@@ -83,8 +84,23 @@ export default function Results() {
     async function sync() {
       const cached = readProfileSync()
       if (user) {
-        const cloud = await loadProfile(user.id)
+        let cloud = await readProfileRow(user.id)
         if (cancelled) return
+        if (cloud === PROFILE_READ_FAILED) {
+          // One retry before we conclude anything. A read that merely timed
+          // out used to be indistinguishable from an empty account, which
+          // meant a slow network on a fresh tab sent a student who HAS a
+          // profile to the questionnaire to build another one.
+          cloud = await readProfileRow(user.id)
+          if (cancelled) return
+        }
+        if (cloud === PROFILE_READ_FAILED) {
+          // Still no answer. Show the cached profile if this tab has one and
+          // otherwise leave the page as-is; never write in this state, since
+          // the row we can't read may be better than anything we'd send.
+          if (cached) setProfile(prev => prev || cached)
+          return
+        }
         if (cloud) {
           cacheProfile(cloud)
           // Keep the existing state identity when the cloud copy matches —
@@ -314,7 +330,8 @@ export default function Results() {
     try {
       const body = {
         interests: profile.interests,
-        grade: profile.grade,
+        age: getProfileAge(profile),
+        grade: getProfileAge(profile), // compatibility with older API deployments
         state: profile.state,
         subInterests: profile.subInterests || [],
         career: profile.career || '',
@@ -518,8 +535,8 @@ export default function Results() {
         {/* Header */}
         <div className={styles.header}>
           <div className={styles.profilePill}>
-            📍 {profile.state} · Age {profile.grade}
-            {profile.hasJob ? ' · Works' : ''}
+            📍 {profile.state} · Age {getProfileAge(profile)}
+            {profile.employment && profile.employment !== 'none' ? ' · Works' : ''}
           </div>
           <h1 className={styles.heading}>Your Legislation</h1>
           <p className={styles.subhead}>

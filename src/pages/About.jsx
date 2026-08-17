@@ -135,11 +135,11 @@ export default function About() {
             </details>
 
             <details className={styles.faq}>
-              <summary>Why do you ask for my state and grade level?</summary>
+              <summary>Why do you ask for my state and age?</summary>
               <p>
                 Your state determines which state legislature we track for you.
-                Grade level helps the AI choose examples and vocabulary that
-                fit your age. Neither field is shared outside the app.
+                Age helps the AI choose examples and vocabulary that fit you.
+                Neither field is shared outside the app.
               </p>
             </details>
 

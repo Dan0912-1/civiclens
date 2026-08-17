@@ -21,7 +21,13 @@ import {
   congressGovTextUrl,
   repLookupUrl,
   decidingChamber,
+  isRepFinderUrl,
+  trimDanglingConnector,
+  HOUSE_FINDER,
+  SENATE_FINDER,
+  STATE_LEGISLATOR_FINDER,
 } from '../src/lib/billUrl.js'
+import { splitActionText } from '../src/lib/actionLinks.js'
 
 let passed = 0
 function test(name, fn) {
@@ -72,7 +78,8 @@ test('state bill no longer links to an unrelated federal bill', () => {
   }
   sanitizeCivicActions(parsed, bill, 'https://openstates.org/md/bills/2026/HB529/')
   assert.equal(parsed.civic_actions[0].how, 'Go to https://openstates.org/md/bills/2026/HB529/ to read it.')
-  assert.equal(parsed.civic_actions[1].how, 'Visit https://openstates.org/find_your_legislator/ to email.')
+  assert.equal(parsed.civic_actions[1].action, 'Contact your state legislators')
+  assert.equal(parsed.civic_actions[1].how, 'Email your state legislators at https://openstates.org/find_your_legislator/.')
 })
 
 test('hallucinated state agency URLs are replaced', () => {
@@ -223,12 +230,27 @@ test('chamber routing sends senate bills to senate contacts', () => {
   assert.equal(contactUrlFor({ isStateBill: true, state: 'CT' }), 'https://openstates.org/find_your_legislator/')
 })
 
+test('senate contact prose and destination name the same audience', () => {
+  const bill = { isStateBill: false, congress: 119, type: 's', number: 5225 }
+  const parsed = {
+    civic_actions: [{ action: 'Contact representatives', how: 'Email your Connecticut state representatives at https://example.com now.' }],
+  }
+  sanitizeCivicActions(parsed, bill, null)
+  assert.equal(parsed.civic_actions[0].action, 'Contact your U.S. senators')
+  assert.match(parsed.civic_actions[0].how, /^Email your U\.S\. senators at https:\/\/www\.senate\.gov\//)
+  assert.ok(!parsed.civic_actions[0].how.includes('state representatives'))
+})
+
 // ── robustness ────────────────────────────────────────────────────────────
 test('trailing punctuation stays prose, not part of the URL', () => {
   const bill = { isStateBill: false, congress: 119, type: 'hr', number: 9544 }
   const parsed = { civic_actions: [{ action: 'a', how: 'Read https://www.congress.gov/bill/119th-congress/house-bill/9544.' }] }
   sanitizeCivicActions(parsed, bill, null)
   assert.ok(parsed.civic_actions[0].how.endsWith('/9544.'))
+  const parts = splitActionText(parsed.civic_actions[0].how)
+  const linked = parts.find(p => p.href)
+  assert.equal(linked.href, 'https://www.congress.gov/bill/119th-congress/house-bill/9544')
+  assert.equal(linked.trailing, '.')
 })
 
 test('missing or malformed civic_actions does not throw', () => {
@@ -354,6 +376,49 @@ test('a ZIP does not change the Senate answer, which is state-wide', async () =>
   assert.equal(withZip.members.length, 2)
   assert.deepEqual(withZip.members.map(m => m.name), without.members.map(m => m.name))
   assert.equal(withZip.exact, true)
+})
+
+// ── in-app answers to "find your rep" links ───────────────────────────────
+// The sanitizer rewrites an AI action's contact URL to a national finder. That
+// is safe but a dead end: the prose says "email your Connecticut
+// representative" and the link knows nothing about Connecticut. The client
+// detects those URLs and opens our own panel instead.
+test('every finder we rewrite contact links to is recognised', () => {
+  for (const u of [HOUSE_FINDER, SENATE_FINDER, STATE_LEGISLATOR_FINDER]) {
+    assert.equal(isRepFinderUrl(u), true, u)
+    assert.equal(isRepFinderUrl(u + '/'), true, `${u} (trailing slash)`)
+    assert.equal(isRepFinderUrl(u.toUpperCase()), true, `${u} (case)`)
+  }
+})
+
+test('a real bill or member link is not mistaken for a finder', () => {
+  for (const u of [
+    'https://www.congress.gov/bill/119th-congress/house-resolution/234/text',
+    'https://openstates.org/ct/bills/2026/HB5001/',
+    'https://www.murphy.senate.gov/contact',
+    '', null, undefined,
+  ]) assert.equal(isRepFinderUrl(u), false, String(u))
+})
+
+test('removing a mid-sentence URL does not strand its preposition', () => {
+  const parts = [{ text: 'Email your Connecticut representative at ', href: null, trailing: '' }]
+  assert.equal(trimDanglingConnector(parts)[0].text, 'Email your Connecticut representative.')
+})
+
+// Both of these were real bugs: trimming the connector before the punctuation
+// produced "representative..", and a fragment that was only "." counted as
+// real text so the scan stopped before reaching the "via" it had to remove.
+test('prose that already ends cleanly is left alone', () => {
+  const parts = [{ text: 'Email your U.S. representative.', href: null, trailing: '' }]
+  assert.equal(trimDanglingConnector(parts)[0].text, 'Email your U.S. representative.')
+})
+
+test('a lone punctuation fragment after the URL does not stop the trim', () => {
+  const parts = [
+    { text: 'Share your view via ', href: null, trailing: '' },
+    { text: '.', href: null, trailing: '' },
+  ]
+  assert.equal(trimDanglingConnector(parts).map(p => p.text).join(''), 'Share your view.')
 })
 
 // ── frontend / backend drift ──────────────────────────────────────────────

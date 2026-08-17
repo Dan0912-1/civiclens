@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, useRef } from 'react'
 import { supabase, getSessionSafe, withAuthTimeout, broadcastAuthChange, onAuthBroadcast } from '../lib/supabase'
-import { saveProfile, loadProfile } from '../lib/userProfile'
+import {
+  saveProfile, readProfileRow, seedProfileIfAbsent, PROFILE_READ_FAILED,
+} from '../lib/userProfile'
 import { resetPushState, teardownPushNotifications } from '../lib/pushNotifications'
 import { phIdentify, phReset, phCapture } from '../lib/posthog'
 import { Capacitor } from '@capacitor/core'
@@ -116,7 +118,7 @@ export function AuthProvider({ children }) {
 
       // Auto-create profile row for new OAuth sign-ups so they don't appear "profileless"
       if (event === 'SIGNED_IN' && session?.user) {
-        const existing = await loadProfile(session.user.id)
+        const existing = await readProfileRow(session.user.id)
         // Merge local sessionStorage profile into cloud on first sign-in
         // so students who filled out their profile before creating an
         // account don't lose their work.
@@ -125,7 +127,16 @@ export function AuthProvider({ children }) {
         if (localRaw) {
           try { localProfile = JSON.parse(localRaw) } catch {}
         }
-        if (!existing && localProfile && localProfile.interests?.length) {
+        if (existing === PROFILE_READ_FAILED) {
+          // We don't know what's up there, so we write nothing. This branch
+          // used to be indistinguishable from "no row yet" — loadProfile
+          // returned null for a 4s timeout exactly as it did for a new
+          // account — and the seed below would then overwrite a complete
+          // profile with just a name and an email. A student signing in on a
+          // fresh tab while Supabase was slow lost their profile for real,
+          // and the app then asked them to build it again.
+          console.warn('[auth] profile read inconclusive — skipping seed/merge')
+        } else if (!existing && localProfile && localProfile.interests?.length) {
           // Local profile is richer than a bare seed — upload it
           const meta = session.user.user_metadata || {}
           await saveProfile(session.user.id, {
@@ -134,9 +145,11 @@ export function AuthProvider({ children }) {
             email: meta.email || session.user.email || localProfile.email || '',
           })
         } else if (!existing) {
-          // No local profile — seed an empty one so they don't appear "profileless"
+          // No local profile — seed an empty one so they don't appear
+          // "profileless". Insert-only, so even if the read above was wrong
+          // this cannot clobber an existing profile.
           const meta = session.user.user_metadata || {}
-          await saveProfile(session.user.id, {
+          await seedProfileIfAbsent(session.user.id, {
             name: meta.full_name || meta.name || '',
             email: meta.email || session.user.email || '',
           })

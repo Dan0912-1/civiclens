@@ -100,6 +100,41 @@ const CONTACT_INTENT = /\b(contact|email|call|write|testify|tell|urge|reach out|
 // "read the full text" wants the document.
 const TEXT_INTENT = /\b(full\s+)?(text|language|wording|bill\s+text)\b/i
 
+function contactCopyFor(bill) {
+  if (bill?.isStateBill) {
+    return { title: 'Contact your state legislators', audience: 'your state legislators' }
+  }
+  if (String(bill?.type || '').toLowerCase().startsWith('s')) {
+    return { title: 'Contact your U.S. senators', audience: 'your U.S. senators' }
+  }
+  return { title: 'Contact your U.S. representative', audience: 'your U.S. representative' }
+}
+
+function alignContactProse(action, bill) {
+  const prose = `${action?.action || ''} ${action?.how || ''}`
+  if (!CONTACT_INTENT.test(prose) || typeof action?.how !== 'string') return
+
+  const { title, audience } = contactCopyFor(bill)
+  action.action = title
+
+  // A correct link with the wrong audience is still a broken instruction.
+  // Replace only the lead-in, preserving the canonical URL and the
+  // issue-specific purpose that follows it.
+  const urlIndex = action.how.search(/https?:\/\//i)
+  if (urlIndex < 0) return
+  const verb = /\b(call|phone)\b/i.test(prose)
+    ? 'Call'
+    : /\bwrite\b/i.test(prose)
+      ? 'Write to'
+      : /\b(email|message)\b/i.test(prose)
+        ? 'Email'
+        : 'Contact'
+  let destinationAndSuffix = action.how.slice(urlIndex)
+  if (verb === 'Email') destinationAndSuffix = destinationAndSuffix.replace(/\s+to email\b/i, '')
+  if (verb === 'Call') destinationAndSuffix = destinationAndSuffix.replace(/\s+to call\b/i, '')
+  action.how = `${verb} ${audience} at ${destinationAndSuffix}`
+}
+
 function isBillPageAction(action, url) {
   const prose = `${action?.action || ''} ${action?.how || ''}`
   // An explicit contact verb wins: "email your rep about the bill" is contact.
@@ -169,6 +204,7 @@ export function sanitizeCivicActions(parsed, bill, stateBillUrl = null) {
       return replacement + trailing
     })
     action.how = tidyAfterRewrite(action.how)
+    alignContactProse(action, bill)
   }
 
   // A bill-page action on a state bill we have no trusted URL for would have

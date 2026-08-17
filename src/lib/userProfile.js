@@ -23,35 +23,91 @@ function withTimeout(promise, ms, fallback = null) {
   ])
 }
 
-export async function loadProfile(userId) {
-  if (!supabase) return null
+// Returned when we could not determine whether a profile row exists — a
+// timeout, a network blip, an RLS error. It is NOT the same as "this user has
+// no profile", and any code that WRITES based on the answer has to tell them
+// apart. Conflating the two is how a complete profile got overwritten with a
+// bare {name, email} seed on sign-in: a slow read looked exactly like a brand
+// new account.
+export const PROFILE_READ_FAILED = Symbol('profile-read-failed')
+
+/**
+ * Read the stored profile. Returns the profile object, `null` when the user
+ * genuinely has no row yet, or PROFILE_READ_FAILED when we couldn't find out.
+ */
+export async function readProfileRow(userId) {
+  if (!supabase) return PROFILE_READ_FAILED
   try {
+    // maybeSingle, not single: "no row" is a normal answer here and shouldn't
+    // arrive as an error we'd have to pattern-match on.
     const query = supabase
       .from('user_profiles')
       .select('profile')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
     const result = await withTimeout(query, PROFILE_READ_TIMEOUT_MS, { __timeout: true })
     if (result?.__timeout) {
-      console.warn('[loadProfile] Supabase read timed out — falling back to sessionStorage')
-      return null
+      console.warn('[profile] Supabase read timed out')
+      return PROFILE_READ_FAILED
     }
     const { data, error } = result
-    if (error || !data) return null
-    return data.profile
+    if (error) {
+      console.warn('[profile] Supabase read failed:', error.message)
+      return PROFILE_READ_FAILED
+    }
+    if (!data) return null
+    return data.profile ?? null
   } catch {
-    return null
+    return PROFILE_READ_FAILED
   }
 }
 
+// Profile-or-null view of readProfileRow, for readers that only want the data
+// and have nothing destructive to decide.
+export async function loadProfile(userId) {
+  const row = await readProfileRow(userId)
+  return row === PROFILE_READ_FAILED ? null : row
+}
+
+/** Returns true when the write actually landed. */
 export async function saveProfile(userId, profile) {
-  if (!supabase) return
+  if (!supabase) return false
   try {
-    await supabase
+    const { error } = await supabase
       .from('user_profiles')
       .upsert({ id: userId, profile, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+    if (error) {
+      console.warn('[profile] save failed:', error.message)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.warn('[profile] save threw:', err?.message)
+    return false
+  }
+}
+
+/**
+ * Create the row only if the user doesn't have one. Insert-only on purpose: a
+ * seed carries just name+email, so if a real profile is already there this has
+ * to be a no-op. The database decides via the primary key rather than the
+ * client deciding from a read it may have gotten wrong.
+ */
+export async function seedProfileIfAbsent(userId, profile) {
+  if (!supabase) return false
+  try {
+    const { error } = await supabase
+      .from('user_profiles')
+      .insert({ id: userId, profile, updated_at: new Date().toISOString() })
+    // 23505 = unique_violation: the row already existed, which is a success
+    // for our purposes — somebody else's profile is intact.
+    if (error && error.code !== '23505') {
+      console.warn('[profile] seed failed:', error.message)
+      return false
+    }
+    return true
   } catch {
-    // non-fatal
+    return false
   }
 }
 
@@ -84,11 +140,25 @@ export function cacheProfile(profile) {
   } catch { /* non-fatal — we just lose the fast path */ }
 }
 
+// Profiles created before the age-field migration stored the answer under
+// `grade`. Read both so existing students are not forced through onboarding
+// again, while all new writes carry the accurately named `age` field.
+export function getProfileAge(profile) {
+  const value = profile?.age ?? profile?.grade
+  return value == null ? '' : String(value)
+}
+
+export function normalizeProfileAge(profile) {
+  if (!profile) return profile
+  const age = getProfileAge(profile)
+  return { ...profile, age, grade: age }
+}
+
 // All three questionnaire answers, which is what POST /api/personalize
 // requires. The Google sign-in seed carries only name+email, and a half-filled
 // manual profile may have a state but no interests — neither can personalize.
 export function isPersonalizable(p) {
-  return Boolean(p?.state && p?.grade && p?.interests?.length)
+  return Boolean(p?.state && getProfileAge(p) && p?.interests?.length)
 }
 
 function isNonEmpty(p) {
@@ -108,12 +178,13 @@ function isNonEmpty(p) {
  */
 export async function resolveProfile(user, isSufficient = isNonEmpty) {
   const cached = readCachedProfile()
-  if (isSufficient(cached)) return cached
+  if (isSufficient(cached)) return normalizeProfileAge(cached)
   if (!user) return null
   const cloud = await loadProfile(user.id)
   if (!isSufficient(cloud)) return null
-  cacheProfile(cloud)
-  return cloud
+  const normalized = normalizeProfileAge(cloud)
+  cacheProfile(normalized)
+  return normalized
 }
 
 export async function getBookmarks(userId) {

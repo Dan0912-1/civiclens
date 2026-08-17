@@ -13,9 +13,10 @@ import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } fro
 import { completeGoogleAssignment } from '../lib/googleClassroom'
 import GoogleAssignModal from '../components/GoogleAssignModal.jsx'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
-import { billHref, congressGovUrl, congressGovTextUrl } from '../lib/billUrl'
+import { billHref, congressGovUrl, congressGovTextUrl, isRepFinderUrl, trimDanglingConnector } from '../lib/billUrl'
 import RepsPanel from '../components/RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
+import { splitActionText } from '../lib/actionLinks'
 import styles from './BillDetail.module.css'
 
 const API_BASE = getApiBase()
@@ -74,6 +75,7 @@ export default function BillDetail() {
   // params so the "Mark as Read" button + assignment banner still render.
   const passedBill = location.state?.bill || null
   const passedAnalysis = location.state?.analysis || null
+  const returnTo = location.state?.returnTo || '/results'
   const searchParams = new URLSearchParams(location.search)
   const assignmentId = location.state?.assignment || searchParams.get('assignment') || null
   const assignmentClassroomId = location.state?.classroom || searchParams.get('classroom') || null
@@ -584,7 +586,7 @@ export default function BillDetail() {
       <main className={styles.page}>
         <div className={styles.container}>
           <p className={styles.error}>{error}</p>
-          <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
+          <button className={styles.backBtn} onClick={() => navigate(returnTo)}>
             ← Go back
           </button>
         </div>
@@ -595,7 +597,7 @@ export default function BillDetail() {
   return (
     <main className={styles.page}>
       <div className={styles.container}>
-        <button className={styles.backBtn} onClick={() => window.history.length > 2 ? navigate(-1) : navigate('/results')}>
+        <button className={styles.backBtn} onClick={() => navigate(returnTo)}>
           ← Back to results
         </button>
 
@@ -815,19 +817,36 @@ export default function BillDetail() {
               <div className={styles.actionsSection}>
                 <h3 className={styles.actionsHeading}>Take action</h3>
                 <div className={styles.actionsGrid}>
-                  {analysis.civic_actions.map((a, i) => (
+                  {analysis.civic_actions.map((a, i) => {
+                    // A "find your rep" link is answered in-app rather than
+                    // handed off: we know the student's state, and the panel
+                    // can name the actual member from their ZIP. The URL is
+                    // dropped from the prose (along with the "at"/"via" that
+                    // introduced it) and replaced by the button below.
+                    const parts = splitActionText(a.how)
+                    const hasFinder = parts.some(p => p.href && isRepFinderUrl(p.href))
+                    const shown = hasFinder
+                      ? trimDanglingConnector(parts.filter(p => !(p.href && isRepFinderUrl(p.href))))
+                      : parts
+                    return (
                     <div key={i} className={styles.actionCard}>
                       <div className={styles.actionTitle}>{a.action}</div>
                       <p className={styles.actionHow}>{
-                        a.how.split(/(https?:\/\/[^\s,)]+)/g).map((part, j) =>
-                          /^https?:\/\//.test(part)
-                            ? <a key={j} href={part} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>{part}</a>
-                            : part
+                        shown.map((part, j) =>
+                          part.href
+                            ? <span key={j}><a href={part.href} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>{part.text}</a>{part.trailing}</span>
+                            : part.text
                         )
                       }</p>
+                      {hasFinder && (
+                        <button className={styles.actionRepBtn} onClick={() => setRepsOpen(true)}>
+                          Find and contact your lawmakers →
+                        </button>
+                      )}
                       {a.time && <span className={styles.actionTime}>~{a.time}</span>}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -858,6 +877,7 @@ export default function BillDetail() {
                   returnTo: location.pathname,
                   returnState: {
                     bill: bill || passedBill,
+                    returnTo,
                     assignment: assignmentId,
                     classroom: assignmentClassroomId,
                     assignmentInstructions,

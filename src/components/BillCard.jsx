@@ -1,12 +1,13 @@
 import { useState, useRef, memo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import SharePostModal from './SharePostModal'
 import { makeBillId } from '../lib/billId'
-import { billHref } from '../lib/billUrl'
+import { billHref, isRepFinderUrl, trimDanglingConnector } from '../lib/billUrl'
 import RepsPanel from './RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import { haptic } from '../lib/haptics'
+import { splitActionText } from '../lib/actionLinks'
 import styles from './BillCard.module.css'
 
 const TAG_COLORS = {
@@ -71,10 +72,16 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
   const [swipeOffset, setSwipeOffset] = useState(0)
   const swipeStart = useRef(null)
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
   const billId = makeBillId(bill)
   const tagColor = TAG_COLORS[analysis?.topic_tag] || 'gray'
   const isLoading = !analysis
+  const contactLabel = bill.isStateBill
+    ? 'Contact state legislators'
+    : String(bill.type || '').toLowerCase().startsWith('s')
+      ? 'Contact senators'
+      : 'Contact representative'
 
   // Swipe-to-bookmark: swipe left to toggle bookmark
   function onTouchStart(e) {
@@ -106,7 +113,9 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
   function openDetail() {
     // billHref → clean /states/... for state bills; /bill/...?legiscan_id= for
     // federal (and sessionless state bills) so the detail page resolves as before.
-    navigate(billHref(bill), { state: { bill, analysis } })
+    navigate(billHref(bill), {
+      state: { bill, analysis, returnTo: `${location.pathname}${location.search}` },
+    })
   }
 
   return (
@@ -242,26 +251,43 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
               {analysis.civic_actions?.length > 0 && (
                 <div className={styles.actions}>
                   <div className={styles.actionsHeading}>Take action</div>
-                  {analysis.civic_actions.map((a, i) => (
+                  {analysis.civic_actions.map((a, i) => {
+                    // Same as the detail page: a generic rep-finder link is
+                    // answered by our own panel, which knows the student's
+                    // state and can name the member from a ZIP.
+                    const parts = splitActionText(a.how)
+                    const hasFinder = parts.some(p => p.href && isRepFinderUrl(p.href))
+                    const shown = hasFinder
+                      ? trimDanglingConnector(parts.filter(p => !(p.href && isRepFinderUrl(p.href))))
+                      : parts
+                    return (
                     <div key={i} className={styles.actionItem}>
                       <div className={styles.actionTitle}>{a.action}</div>
                       <p className={styles.actionHow}>{
-                        (a.how || '').split(/(https?:\/\/[^\s,)]+)/g).map((part, j) =>
-                          /^https?:\/\//.test(part)
-                            ? <a
-                                key={j}
-                                href={part}
+                        shown.map((part, j) =>
+                          part.href
+                            ? <span key={j}><a
+                                href={part.href}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={e => e.stopPropagation()}
                                 style={{ color: 'var(--amber)', textDecoration: 'underline' }}
-                              >{part}</a>
-                            : part
+                              >{part.text}</a>{part.trailing}</span>
+                            : part.text
                         )
                       }</p>
+                      {hasFinder && (
+                        <button
+                          className={styles.actionRepBtn}
+                          onClick={e => { e.stopPropagation(); setRepsOpen(true) }}
+                        >
+                          Find and contact your lawmakers →
+                        </button>
+                      )}
                       {a.time && <span className={styles.actionTime}>⏱ {a.time}</span>}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -336,7 +362,7 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
                   }
                 }}
               >
-                Contact Rep
+                {contactLabel}
               </button>
             </div>
           </div>
