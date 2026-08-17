@@ -264,7 +264,7 @@ export default function RepsPanel({ bill, sponsors = [], onClose }) {
             <p className={styles.note}>
               State legislative districts are smaller than a ZIP code, so there's no way
               to name your own {chamber === 'state-upper' ? 'state senator' : 'state representative'}{' '}
-              without your street address — which we don't ask students for. The official
+              without your street address, which we don't ask anyone for. The official
               finder takes an address on its own site and gives you the exact answer.
             </p>
             <button className={styles.finderBtn} onClick={() => openExternal(STATE_LEGISLATOR_FINDER)}>

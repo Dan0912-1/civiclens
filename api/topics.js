@@ -43,8 +43,8 @@ const TOPICS = {
     navLabel: 'Education',
     tags: ['education'],
     keywords: [],
-    intro: 'Education law shapes what your school can offer, how it is funded, and what happens after you graduate. These bills cover public schools, college costs, student aid, and the rules that decide who gets into a classroom. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current education bills in Congress, explained in plain language for students: school funding, college costs, and student aid.',
+    intro: 'Education law shapes what schools can offer, how they are funded, and what college costs. These bills cover public schools, tuition, student aid, and the rules that decide who gets into a classroom. Here is what is moving in Congress right now, explained in plain language.',
+    metaDescription: 'Current education bills in Congress, explained in plain language: school funding, college costs, and student aid.',
   },
   environment: {
     title: 'Environment Bills',
@@ -52,15 +52,15 @@ const TOPICS = {
     tags: ['environment'],
     keywords: [],
     intro: 'Environmental law decides how clean your air and water are, how public land is used, and how the country prepares for a changing climate. These bills affect the neighborhoods you live in and the world you will inherit. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current environment bills in Congress, explained in plain language for students: clean air and water, public land, and climate.',
+    metaDescription: 'Current environment bills in Congress, explained in plain language: clean air and water, public land, and climate.',
   },
   economy: {
     title: 'Economy Bills',
     navLabel: 'Economy',
     tags: ['economy'],
     keywords: [],
-    intro: 'Economic policy reaches your paycheck, the prices you pay, and the jobs that will be open when you start working. These bills cover wages, taxes, prices, and how the government spends money. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current economy bills in Congress, explained in plain language for students: wages, taxes, prices, and jobs.',
+    intro: 'Economic policy reaches your paycheck, the prices you pay, and which jobs are open. These bills cover wages, taxes, prices, and how the government spends money. Here is what is moving in Congress right now, explained in plain language.',
+    metaDescription: 'Current economy bills in Congress, explained in plain language: wages, taxes, prices, and jobs.',
   },
   healthcare: {
     title: 'Healthcare Bills',
@@ -68,7 +68,7 @@ const TOPICS = {
     tags: ['healthcare'],
     keywords: [],
     intro: 'Health policy decides what care you can get, what it costs, and who is covered. These bills touch doctor visits, mental health, prescriptions, and insurance. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current healthcare bills in Congress, explained in plain language for students: coverage, costs, mental health, and prescriptions.',
+    metaDescription: 'Current healthcare bills in Congress, explained in plain language: coverage, costs, mental health, and prescriptions.',
   },
   technology: {
     title: 'Technology Bills',
@@ -76,7 +76,7 @@ const TOPICS = {
     tags: ['technology'],
     keywords: [],
     intro: 'Technology law sets the rules for the apps you use, the data companies collect about you, and how online tools are kept safe. These bills cover privacy, social media, artificial intelligence, and online safety. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current technology bills in Congress, explained in plain language for students: privacy, social media, AI, and online safety.',
+    metaDescription: 'Current technology bills in Congress, explained in plain language: privacy, social media, AI, and online safety.',
   },
   housing: {
     title: 'Housing Bills',
@@ -84,7 +84,7 @@ const TOPICS = {
     tags: ['housing'],
     keywords: [],
     intro: 'Housing policy affects rent, home prices, and whether families can afford a place to live. These bills cover affordability, renters, construction, and homelessness. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current housing bills in Congress, explained in plain language for students: rent, affordability, renters, and homelessness.',
+    metaDescription: 'Current housing bills in Congress, explained in plain language: rent, affordability, renters, and homelessness.',
   },
   immigration: {
     title: 'Immigration Bills',
@@ -92,7 +92,7 @@ const TOPICS = {
     tags: ['immigration'],
     keywords: [],
     intro: 'Immigration law decides who can live, work, and study in the United States, and under what rules. These bills affect students, families, and workers across the country. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current immigration bills in Congress, explained in plain language for students: who can live, work, and study in the US.',
+    metaDescription: 'Current immigration bills in Congress, explained in plain language: who can live, work, and study in the US.',
   },
   'civil-rights': {
     title: 'Civil Rights Bills',
@@ -100,7 +100,7 @@ const TOPICS = {
     tags: ['civil_rights'],
     keywords: [],
     intro: 'Civil rights law protects how people are treated under the law, including voting, free speech, and equal access. These bills shape rights you rely on every day. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current civil rights bills in Congress, explained in plain language for students: voting, free speech, and equal access.',
+    metaDescription: 'Current civil rights bills in Congress, explained in plain language: voting, free speech, and equal access.',
   },
   community: {
     title: 'Community Bills',
@@ -108,7 +108,7 @@ const TOPICS = {
     tags: ['community'],
     keywords: [],
     intro: 'Community policy covers public safety, local services, and the programs that keep neighborhoods running. These bills affect daily life where you live. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current community bills in Congress, explained in plain language for students: public safety, local services, and neighborhood programs.',
+    metaDescription: 'Current community bills in Congress, explained in plain language: public safety, local services, and neighborhood programs.',
   },
 
   // ── High-intent aliases ──
@@ -134,23 +134,23 @@ const TOPICS = {
     tags: ['environment'],
     keywords: ['climate', 'emission', 'clean energy', 'greenhouse', 'carbon', 'renewable', 'wildfire'],
     intro: 'Climate policy shapes energy costs, how the country responds to extreme weather, and the air you breathe. These bills cover clean energy, emissions, and disaster preparation. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current climate bills in Congress, explained in plain language for students: clean energy, emissions, and disaster preparation.',
+    metaDescription: 'Current climate bills in Congress, explained in plain language: clean energy, emissions, and disaster preparation.',
   },
   'mental-health': {
     title: 'Mental Health Bills',
     navLabel: 'Mental Health',
     tags: ['healthcare', 'community'],
     keywords: ['mental health', 'suicide', 'counsel', 'behavioral health', 'crisis', 'depression', 'anxiety'],
-    intro: 'Mental health policy decides what support is available at school, online, and in your community, and what it costs. These bills cover counseling, crisis help, and access to care. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current mental health bills in Congress, explained in plain language for students: counseling, crisis help, and access to care.',
+    intro: 'Mental health policy decides what support is available at school, at work, online, and in your community, and what it costs. These bills cover counseling, crisis help, and access to care. Here is what is moving in Congress right now, explained in plain language.',
+    metaDescription: 'Current mental health bills in Congress, explained in plain language: counseling, crisis help, and access to care.',
   },
   taxes: {
     title: 'Tax Bills',
     navLabel: 'Taxes',
     tags: ['economy'],
     keywords: ['tax', 'irs', 'deduction', 'credit', 'income tax', 'refund'],
-    intro: 'Tax policy affects how much you and your family keep from each paycheck and what public services get funded. These bills cover income taxes, credits, and how the government raises money. Here is what is moving in Congress right now, explained in plain language.',
-    metaDescription: 'Current tax bills in Congress, explained in plain language for students: income taxes, credits, and how the government raises money.',
+    intro: 'Tax policy affects how much you keep from each paycheck and what public services get funded. These bills cover income taxes, credits, and how the government raises money. Here is what is moving in Congress right now, explained in plain language.',
+    metaDescription: 'Current tax bills in Congress, explained in plain language: income taxes, credits, and how the government raises money.',
   },
 }
 
@@ -419,7 +419,7 @@ ${body.join('\n')}
 function renderUnknownTopicHtml(slug) {
   const canonical = `${SITE_URL}/topics`
   const title = 'Browse Bills by Topic | CapitolKey'
-  const desc = 'Explore current U.S. legislation by topic, explained in plain language for students. Education, healthcare, economy, climate, and more.'
+  const desc = 'Explore current U.S. legislation by topic, explained in plain language. Education, healthcare, economy, climate, and more.'
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

@@ -220,13 +220,17 @@
 }
 
 /* Toggle */
+/* Auto-fit grid rather than a flex row: the employment row carries five
+   options now (it used to be three), and a wrapping flex row leaves the
+   orphans on the last line wider than the ones above them. Equal columns wrap
+   to 2-3 across on a phone without that mismatch. */
 .toggleRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: var(--space-sm);
 }
 
 .toggleBtn {
-  flex: 1;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 1px;

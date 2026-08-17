@@ -10,17 +10,17 @@ export default function About() {
 
         <div className={styles.hero}>
           <h1>How CapitolKey works</h1>
-          <p>A nonpartisan civic education tool built for students, by a student.</p>
+          <p>A nonpartisan civic tool for anyone who wants to know what Congress and their state legislature are actually doing. Built by a high school student.</p>
         </div>
 
         <div className={styles.section}>
           <h2>The problem we solve</h2>
           <p>
-            Thousands of bills move through Congress every year. Some will raise
-            your future student loan interest rate. Some will change the minimum
-            wage you earn at your part-time job. Some will shape the environment
-            you inherit. But the only tools that track this legislation were built
-            for lawyers, lobbyists, and political professionals, not for you.
+            Thousands of bills move through Congress every year. Some change what
+            you pay for a prescription. Some change the interest on a student
+            loan, or the wage a job has to pay, or what your property taxes fund.
+            But the only tools that track this legislation were built for lawyers,
+            lobbyists, and political professionals, not for you.
           </p>
           <p>
             CapitolKey changes that. We take real legislation, pull the bills most
@@ -81,10 +81,10 @@ export default function About() {
             <details className={styles.faq}>
               <summary>Is CapitolKey free to use?</summary>
               <p>
-                Yes. CapitolKey is free for students, teachers, and anyone who
-                wants to understand what's happening in Congress and their
-                state legislature. There's no paywall, no subscription, and
-                no ads.
+                Yes. CapitolKey is free for everyone: students, teachers, and
+                any adult who wants to understand what's happening in Congress
+                and their state legislature. There's no paywall, no
+                subscription, and no ads.
               </p>
             </details>
 
@@ -221,8 +221,10 @@ export default function About() {
           <p>
             CapitolKey was built by a high school student who serves on his town's
             Board of Education, Commission on Aging, and Community Fund board. The
-            goal is simple: give every student the same civic information that
-            policy professionals have access to, in a format that actually makes sense.
+            goal is simple: give everyone the same civic information that policy
+            professionals have access to, in a format that actually makes sense.
+            It started with students in mind, and it works the same way for the
+            adults who now make up a real share of who uses it.
           </p>
         </div>
 
