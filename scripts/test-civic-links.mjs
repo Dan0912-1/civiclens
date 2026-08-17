@@ -27,7 +27,8 @@ import {
   SENATE_FINDER,
   STATE_LEGISLATOR_FINDER,
 } from '../src/lib/billUrl.js'
-import { splitActionText } from '../src/lib/actionLinks.js'
+import { isReadBillAction, splitActionText } from '../src/lib/actionLinks.js'
+import { formatBillText } from '../src/lib/billText.js'
 
 let passed = 0
 function test(name, fn) {
@@ -251,6 +252,52 @@ test('trailing punctuation stays prose, not part of the URL', () => {
   const linked = parts.find(p => p.href)
   assert.equal(linked.href, 'https://www.congress.gov/bill/119th-congress/house-bill/9544')
   assert.equal(linked.trailing, '.')
+})
+
+test('the dedicated reader suppresses only duplicate read-bill actions', () => {
+  assert.equal(isReadBillAction({
+    action: 'Read the bill',
+    how: 'Visit https://www.congress.gov/example/text to read the full text.',
+  }), true)
+  assert.equal(isReadBillAction({
+    action: 'Track the bill',
+    how: 'Review its status every week.',
+  }), false)
+  assert.equal(isReadBillAction({
+    action: 'Research the issue',
+    how: 'Read reports from several sources.',
+  }), false)
+})
+
+test('bill text formatting rejoins hard wraps and preserves structure', () => {
+  const blocks = formatBillText([
+    'SECTION 1. SHORT TITLE.',
+    '',
+    'This Act may be cited as the',
+    '“Student Civic Literacy Act”.',
+    '',
+    '(a) In general.—The Secretary shall',
+    'publish the required materials.',
+  ].join('\n'))
+  assert.deepEqual(blocks, [
+    { type: 'heading', text: 'SECTION 1. SHORT TITLE.' },
+    { type: 'paragraph', text: 'This Act may be cited as the “Student Civic Literacy Act”.' },
+    { type: 'provision', text: '(a) In general.—The Secretary shall publish the required materials.' },
+  ])
+})
+
+test('bill text formatting decodes GPO amendment markup and one-line sections', () => {
+  const blocks = formatBillText(
+    '&lt;DOC&gt; &lt;DELETED&gt;SECTION 1. OLD TITLE.&lt;/DELETED&gt; '
+    + 'SEC. 2. CURRENT SYSTEM. The Secretary shall act. (1) First requirement. (2) Second requirement.'
+  )
+  assert.deepEqual(blocks, [
+    { type: 'heading', text: 'SECTION 1. OLD TITLE.', deleted: true },
+    { type: 'heading', text: 'SEC. 2. CURRENT SYSTEM.' },
+    { type: 'paragraph', text: 'The Secretary shall act.' },
+    { type: 'provision', text: '(1) First requirement.' },
+    { type: 'provision', text: '(2) Second requirement.' },
+  ])
 })
 
 test('missing or malformed civic_actions does not throw', () => {
