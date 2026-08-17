@@ -329,6 +329,29 @@ test('bill text formatting preserves coordinated hyphens', () => {
   ])
 })
 
+test('bill text formatting removes GPO PDF line numbers and page furniture', () => {
+  const blocks = formatBillText(
+    'Tech-18 nology, including frameworks, con-19 sistent with section 2(c) of the Na-20 tional Institute of Standards and 21 Technology Act (15 U.S.C. 272(c)), or 22 any relevant successor of such frame-23 works; 24 VerDate Sep 11 2014 02:29 Aug 05, 2026 Jkt 069200 PO 00000 Frm 00005 Fmt 6652 Sfmt 6401 E:\\BILLS\\S2511.RS S2511 kjohnson on DSK7ZCZBW3PROD with $$_JOB — 5 of 72 — 6 •S 2511 RS ‘‘(v) follow Federal data minimization 1 practices to ensure only the minimum'
+  )
+  assert.deepEqual(blocks, [
+    {
+      type: 'paragraph',
+      text: 'Technology, including frameworks, consistent with section 2(c) of the National Institute of Standards and Technology Act (15 U.S.C. 272(c)), or any relevant successor of such frameworks;',
+    },
+    {
+      type: 'provision',
+      text: '(v) follow Federal data minimization practices to ensure only the minimum',
+    },
+  ])
+})
+
+test('bill text formatting keeps ordinary statutory numbers without GPO page furniture', () => {
+  const blocks = formatBillText('Section 2 applies within 5 years to 21 institutions and 15 U.S.C. 272(c).')
+  assert.deepEqual(blocks, [
+    { type: 'paragraph', text: 'Section 2 applies within 5 years to 21 institutions and 15 U.S.C. 272(c).' },
+  ])
+})
+
 test('missing or malformed civic_actions does not throw', () => {
   assert.doesNotThrow(() => sanitizeCivicActions({}, { isStateBill: false }))
   assert.doesNotThrow(() => sanitizeCivicActions({ civic_actions: null }, { isStateBill: false }))
