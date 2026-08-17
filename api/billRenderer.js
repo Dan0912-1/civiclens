@@ -92,7 +92,7 @@ function renderBillHtml({ congress, type, number, bill }) {
   const stageLabel = STAGE_LABELS[bill?.status_stage] || ''
   const metaDesc = summary
     ? clamp(summary, 155)
-    : `${label}${ordinal ? `, ${ordinal},` : ''} explained in plain language: what it does, where it stands, and how it could affect you. Nonpartisan, built for students.`
+    : `${label}${ordinal ? `, ${ordinal},` : ''} explained in plain language: what it does, where it stands, and how it could affect you. Nonpartisan and free to read.`
 
   const ogImage = `${SITE_URL}/og/bill/${congress}/${lcType}/${number}`
 
@@ -203,7 +203,7 @@ function renderStateBillHtml({ state, session, type, number, row }) {
   const stageLabel = STAGE_LABELS[row?.status_stage] || ''
   const metaDesc = summary
     ? clamp(summary, 155)
-    : `${longLabel}${sessionTxt ? `, ${sessionTxt},` : ''} explained in plain language: what it does, where it stands, and how it could affect you. Nonpartisan, built for students.`
+    : `${longLabel}${sessionTxt ? `, ${sessionTxt},` : ''} explained in plain language: what it does, where it stands, and how it could affect you. Nonpartisan and free to read.`
 
   const ogImage = `${SITE_URL}/og-image.png`
 

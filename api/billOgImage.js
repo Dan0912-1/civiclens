@@ -124,7 +124,7 @@ function buildCardSvg({ congress, type, number, bill, validShape }) {
   const maxWidth = W - PAD * 2
 
   const rawTitle = (bill?.title || '').trim()
-  const headline = rawTitle || 'U.S. legislation, explained for students'
+  const headline = rawTitle || 'U.S. legislation, explained in plain language'
   // Smaller type for longer titles so 1-3 lines always fit the card.
   const fontSize = headline.length <= 52 ? 64 : headline.length <= 104 ? 56 : 50
   const lineHeight = Math.round(fontSize * 1.16)

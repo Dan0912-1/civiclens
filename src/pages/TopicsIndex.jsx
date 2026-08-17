@@ -31,7 +31,7 @@ export default function TopicsIndex() {
           <h1>Bills by topic</h1>
           <p className={styles.intro}>
             Pick a topic to see the legislation moving in Congress right now,
-            explained in plain language. Every page is nonpartisan and built for students.
+            explained in plain language. Every page is nonpartisan and free to read.
           </p>
         </header>
 

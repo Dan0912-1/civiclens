@@ -70,18 +70,25 @@ const INTERESTS = [
   { id: 'community',   label: 'Community',     emoji: '🤝' },
 ]
 
+// Household options cover both ends of the audience: a 16-year-old living at
+// home and a 40-year-old raising kids should each find themselves here. The
+// server's VALID_FAMILY whitelist has to match this list.
 const FAMILY_OPTIONS = [
-  { value: 'standard',    label: 'Living with parents/guardians' },
   { value: 'independent', label: 'Living independently' },
+  { value: 'partner',     label: 'Living with a partner or spouse' },
+  { value: 'caregiver',   label: 'Raising kids or caring for family' },
+  { value: 'standard',    label: 'Living with parents/guardians' },
   { value: 'low_income',  label: 'Low-income household' },
   { value: 'immigrant',   label: 'Immigrant family' },
   { value: 'foster',      label: 'Foster care / group home' },
 ]
 
 const EMPLOYMENT_OPTIONS = [
-  { value: 'none',      label: 'No job' },
-  { value: 'part_time', label: 'Part-time' },
-  { value: 'full_time', label: 'Full-time' },
+  { value: 'none',          label: 'Not working' },
+  { value: 'part_time',     label: 'Part-time' },
+  { value: 'full_time',     label: 'Full-time' },
+  { value: 'self_employed', label: 'Self-employed' },
+  { value: 'retired',       label: 'Retired' },
 ]
 
 const CAREER_OPTIONS = [
@@ -95,7 +102,7 @@ const CAREER_OPTIONS = [
   { value: 'military',       label: 'Military / Service' },
   { value: 'science',        label: 'Science / Research' },
   { value: 'sports',         label: 'Sports / Athletics' },
-  { value: 'undecided',      label: 'Undecided' },
+  { value: 'undecided',      label: 'Not sure yet' },
 ]
 
 const SUB_INTERESTS = {
@@ -417,7 +424,7 @@ export default function Profile() {
               </div>
 
               <div className={styles.field}>
-                <label className={styles.label}>What career are you thinking about? <span className={styles.optional}>(optional)</span></label>
+                <label className={styles.label}>What field are you in, or interested in? <span className={styles.optional}>(optional)</span></label>
                 <div className={styles.familyGrid}>
                   {CAREER_OPTIONS.map(opt => (
                     <button
@@ -435,7 +442,7 @@ export default function Profile() {
                 <label className={styles.label}>Anything else relevant? <span className={styles.optional}>(optional)</span></label>
                 <textarea
                   className={styles.textarea}
-                  placeholder="e.g. I'm on a school sports team, I'm applying to college, I volunteer regularly..."
+                  placeholder="e.g. I rent, I have kids in public school, I'm applying to college, I volunteer regularly..."
                   value={profile.additionalContext}
                   onChange={e => setProfile(p => ({ ...p, additionalContext: e.target.value }))}
                   rows={2}

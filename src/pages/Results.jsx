@@ -536,7 +536,9 @@ export default function Results() {
         <div className={styles.header}>
           <div className={styles.profilePill}>
             📍 {profile.state} · Age {getProfileAge(profile)}
-            {profile.employment && profile.employment !== 'none' ? ' · Works' : ''}
+            {profile.employment === 'retired'
+              ? ' · Retired'
+              : (profile.employment && profile.employment !== 'none' ? ' · Works' : '')}
           </div>
           <h1 className={styles.heading}>Your Legislation</h1>
           <p className={styles.subhead}>
