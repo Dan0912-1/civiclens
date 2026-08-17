@@ -682,9 +682,9 @@
 
 .footerActions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   justify-content: center;
-  margin-bottom: var(--space-md);
 }
 
 .footerBtn {
@@ -757,114 +757,198 @@
   background: var(--cream);
 }
 
-.congressLink {
-  display: inline-block;
-  background: var(--navy);
-  color: var(--white);
-  padding: 14px 28px;
-  border-radius: 1px;
-  font-family: var(--font-body);
-  font-weight: 700;
-  font-size: 0.78rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  transition: background 0.15s ease;
-  text-decoration: none;
-  border: 1px solid var(--navy);
-  cursor: pointer;
-}
-
-.congressLink:hover {
-  background: #15263a;
-}
-
 .billTextSection {
-  margin-top: var(--space-2xl);
-  padding: var(--space-lg);
   background: var(--white);
   border: 1px solid var(--border);
+  border-top: 2px solid var(--navy);
   border-radius: 1px;
+  margin-bottom: var(--space-xl);
+  overflow: hidden;
   animation: fadeUp var(--dur-slow) var(--ease-out) forwards;
 }
 
-.billTextHeaderRow {
+.billTextToggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: var(--space-sm);
-  flex-wrap: wrap;
+  gap: var(--space-lg);
+  width: 100%;
+  padding: var(--space-lg) var(--space-xl);
+  text-align: left;
+  color: var(--navy);
+  background: var(--white);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.billTextToggle:hover {
+  background: var(--cream);
+}
+
+.billTextToggle:disabled {
+  cursor: wait;
+}
+
+.billTextToggleTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.billTextEyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
 }
 
 .billTextHeading {
   font-family: var(--font-display);
   font-size: 1.1rem;
+  font-weight: 700;
   color: var(--navy);
-  margin: 0;
+  line-height: 1.25;
 }
 
-.billTextMeta {
+.billTextToggleAction {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--navy);
+  white-space: nowrap;
+}
+
+.billTextPanel {
+  padding: 0 var(--space-xl) var(--space-xl);
+  border-top: 1px solid var(--border-light);
+}
+
+.billTextDocumentMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) 0;
+  font-family: var(--font-mono);
+  font-size: 0.67rem;
   color: var(--text-muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
-.billTextCloseBtn {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
+.billTextDocumentMeta a,
+.billTextUnavailable a {
+  color: var(--amber-dark);
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border);
-  padding: 6px 12px;
-  border-radius: 1px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-.billTextCloseBtn:hover {
-  color: var(--navy);
-  border-color: var(--navy);
+.billTextChangeNote {
+  margin: 0 0 var(--space-md);
+  padding: 8px 12px;
+  border-left: 2px solid #8b5f5f;
+  background: #f6eeee;
+  font-size: 0.78rem;
+  color: #664848;
 }
 
 .billTextBody {
-  max-height: 600px;
+  max-height: min(68vh, 720px);
   overflow-y: auto;
-  padding: var(--space-md);
+  padding: clamp(1.25rem, 4vw, 2.5rem);
   background: var(--cream);
   border: 1px solid var(--border);
   border-radius: 1px;
+  color: var(--text-primary);
+  scrollbar-gutter: stable;
+}
+
+.billTextDocumentHeading {
+  margin: 1.75rem 0 0.65rem;
   font-family: var(--font-body);
-  font-size: 0.92rem;
-  line-height: 1.65;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--navy);
-  white-space: pre-wrap;
-  word-wrap: break-word;
 }
 
-.billTextFooter {
-  margin-top: var(--space-sm);
-  font-size: 0.78rem;
-  color: var(--text-muted);
+.billTextDocumentHeading:first-child {
+  margin-top: 0;
 }
 
-.billTextFooter a {
-  color: var(--amber);
-  text-decoration: underline;
+.billTextParagraph,
+.billTextProvision,
+.billTextEnacting {
+  margin: 0 0 1rem;
+  font-family: var(--font-serif);
+  font-size: 0.98rem;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+
+.billTextProvision {
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--border);
+}
+
+.billTextEnacting {
+  padding: var(--space-sm) 0 var(--space-sm) var(--space-md);
+  border-left: 2px solid var(--amber);
+  font-style: italic;
+  color: var(--navy);
+}
+
+.billTextDeleted {
+  color: #826f6f;
+  text-decoration: line-through;
+  text-decoration-color: rgba(107, 31, 31, 0.55);
+}
+
+.billTextUnavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding-top: var(--space-lg);
+  color: var(--text-secondary);
 }
 
 .billTextSkeleton {
-  min-height: 160px;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-muted);
   font-size: 0.9rem;
   gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .billTextToggle {
+    padding: var(--space-md);
+  }
+
+  .billTextPanel {
+    padding: 0 var(--space-md) var(--space-md);
+  }
+
+  .billTextDocumentMeta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .billTextBody {
+    margin: 0 calc(-1 * var(--space-md));
+    border-left: 0;
+    border-right: 0;
+  }
 }
 
 .error {
@@ -966,9 +1050,12 @@
    lookup form contradicted that, so the link becomes a button that opens the
    panel which can name the actual member. */
 .actionRepBtn {
-  display: inline-block;
-  margin-top: var(--space-sm);
-  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-height: 40px;
+  padding: 9px 14px;
   background: var(--navy);
   color: var(--white);
   border: 1px solid var(--navy);
@@ -983,3 +1070,22 @@
 }
 
 .actionRepBtn:hover { background: #0a1520; }
+
+.actionMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+@media (max-width: 480px) {
+  .actionMeta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actionRepBtn {
+    width: 100%;
+  }
+}
