@@ -432,6 +432,66 @@ test('bill text formatting keeps ordinary statutory numbers without GPO page fur
   ])
 })
 
+// The footer names the GPO operator who ran the typesetting job, and that
+// differs between documents. Anchoring on either operator leaves the whole
+// footer in the text of every bill set by the other, which is how the page
+// furniture came to sit mid-sentence in the House bills we serve.
+const HOUSE_FOOTER = 'VerDate Sep 11 2014 17:18 Feb 24, 2025 Jkt 059200 PO 00000 Frm 00005 '
+  + 'Fmt 6652 Sfmt 6201 E:\\BILLS\\H562.IH H562 ssavage on LAPJG3WLY3PROD with BILLS '
+  + '-- 5 of 65 -- 6 •HR 562 IH'
+
+test('bill text formatting removes the House variant of the GPO footer', () => {
+  const blocks = formatBillText(
+    '(3) The United States has vital interests, including— (A) protecting regional peace 21 '
+    + 'that respects the sovereignty of all nations; 22 (B) advancing economic prosperity free 23 '
+    + 'from coercion and unfair practices through 24 trade and sustainable development; and 25 '
+    + HOUSE_FOOTER
+    + ' (C) supporting democracy, good govern- 1 ance, the rule of law, and human rights and 2 '
+    + 'fundamental freedoms. 3'
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.doesNotMatch(joined, /VerDate|LAPJG3WLY3PROD|E:\\BILLS|•HR 562 IH|\d+ of \d+/)
+  assert.match(joined, /trade and sustainable development; and/)
+  assert.match(joined, /supporting democracy, good governance, the rule of law/)
+  // The conjunction closing a list item belongs to the item, not to the break.
+  assert.deepEqual(
+    blocks.filter(block => block.type === 'provision').map(block => [block.marker, block.depth]),
+    [['(3)', 0], ['(A)', 1], ['(B)', 1], ['(C)', 1]]
+  )
+})
+
+test('bill text formatting closes a word the margin number broke', () => {
+  // A hyphen at a line break is the printer's, unless the bill writes the pair
+  // hyphenated somewhere it did not have to break. The document is its own
+  // dictionary: "low-income" appears whole, "sec-ondary" never does.
+  const blocks = formatBillText(
+    '(a) Grants shall serve low-income communities. (1) each elementary or sec- 11 ondary school 12 '
+    + 'located in a low- 13 income area, as de-14 termined by the Secretary; 15 '
+    + '(2) any REPORT - ING requirement under this Act; 16 '
+    + '(3) each institu-17 tional partner named by Mr. S CHATZ on F EBRUARY 12, 2025. 18 '
+    + HOUSE_FOOTER
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /each elementary or secondary school located in a low-income area, as determined/)
+  assert.match(joined, /any REPORTING requirement/)
+  assert.match(joined, /each institutional partner named by Mr\. SCHATZ on FEBRUARY 12, 2025/)
+})
+
+test('bill text formatting keeps a citation printed beside the margin count', () => {
+  // "chapter 1 2 of such Code" is chapter 1, counted at line 2. Only one of
+  // two numbers standing side by side can be the line the printer numbered,
+  // because every printed line carries words.
+  const blocks = formatBillText(
+    '(b) CLERICAL AMENDMENT.—The table of sections 1 for subpart A of part IV of '
+    + 'subchapter A of chapter 1 2 of such Code is amended by inserting after the item relat- 3 '
+    + 'ing to section 25E the following new item. 4 ' + HOUSE_FOOTER
+  )
+  const joined = blocks.map(block => block.text).join(' ')
+  assert.match(joined, /subchapter A of chapter 1 of such Code is amended/)
+  assert.match(joined, /the table of sections for subpart A/i)
+  assert.match(joined, /inserting after the item relating to section 25E/)
+})
+
 // ── Reconstructed nesting ─────────────────────────────────────────────────
 // Our stored copies are whitespace-collapsed, so the indentation the printed
 // bill uses to show nesting is gone. Depth has to come back from the markers.
