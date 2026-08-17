@@ -2,9 +2,13 @@ const HEADING_RE = /^(?:(?:TITLE|SUBTITLE|CHAPTER|SUBCHAPTER|PART|SUBPART|DIVISI
 const PROVISION_RE = /^(?:``|["“])?(?:\([a-z0-9]{1,4}\)|\d+[.)])\s+/i
 const SECTION_RE = /^(SECTION|SEC)\.?\s+(\d+[A-Za-z0-9.-]*?)\.\s*(.*)$/i
 const CAPS_TITLE_RE = /^([A-Z][A-Z0-9 ,&'’()/.:-]*\.)(?:\s+(.+))?$/
-const FRONT_MATTER_RE = /^(IN THE (?:SENATE|HOUSE) OF THE UNITED STATES|A BILL|AN ACT)(?:\s+(.+))?$/
+// The House prints "IN THE HOUSE OF REPRESENTATIVES" where the Senate prints
+// "IN THE SENATE OF THE UNITED STATES".
+const FRONT_MATTER_RE = /^(IN THE (?:SENATE|HOUSE) OF (?:THE UNITED STATES|REPRESENTATIVES)|A BILL|AN ACT)(?:\s+(.+))?$/
 // "119th CONGRESS 2d Session S. 5178" — note Congress prints "2d", not "2nd".
-const MASTHEAD_RE = /^(\d+(?:st|nd|rd|th|d) CONGRESS)\s+(\d+(?:st|nd|rd|th|d) Session)\s+((?:[A-Z]\.\s?){1,4}\s*\d+)\b/
+// A PDF printing sets the whole line in caps and opens it with the document
+// class ("I", "III", "IV"), so both are allowed for here.
+const MASTHEAD_RE = /^(?:[IV]{1,4}\s+)?(\d+(?:st|nd|rd|th|d) CONGRESS)\s+(\d+(?:st|nd|rd|th|d) SESSION)\s+((?:[A-Z]{1,4}\.\s?){1,4}\s*\d+)\b/i
 
 /**
  * The enumerator ladder legislative drafters use, outermost first. Congress and
@@ -106,6 +110,49 @@ function createDepthTracker() {
   }
 }
 
+// The running document slug GPO prints at the head of every page: a bullet,
+// the bill's designation and its version code — "•S 2511 RS", "•HR 5442 IH",
+// "•HRES 100 IH". The designation is not one letter: matching only "S" left the
+// slug sitting mid-sentence on every House bill we serve.
+const GPO_SLUG = String.raw`[•●]\s*[A-Z]{1,6}\.?\s*\d+\s+[A-Z]{1,4}\b`
+// "-- 1 of 218 --" in the PDF extraction, "— 5 of 72 —" once the dashes have
+// been typeset. Both dashes double, so the count either side must be optional.
+const GPO_PAGE_COUNT = String.raw`[—–-]{1,2}\s*\d+\s+of\s+\d+\s*[—–-]{1,2}`
+/**
+ * The production footer that closes every printed page. Its middle names the
+ * GPO operator who ran the typesetting job, and that differs from document to
+ * document — "ssavage on LAPJG3WLY3PROD with BILLS" against "kjohnson on
+ * DSK5ZCZBW7PROD with $$_JOB" — so anchoring on any one of them silently
+ * leaves the whole footer in the text of every bill set by the other. Anchor
+ * instead on the two ends that never vary: VerDate opens the footer, and the
+ * print codes run through to the job path.
+ */
+const GPO_FOOTER = new RegExp(
+  // The page's own last margin number is printed flush against the footer.
+  String.raw`\s*(?:\d{1,2}\s+)?`
+  + String.raw`VerDate\b[\s\S]{0,200}?\bSfmt\s+\d+\b`
+  + String.raw`(?:\s+E:\\\S+\s+\S+)?`               // E:\BILLS\H5442.IH H5442
+  // "ssavage on LAPJG3WLY3PROD with BILLS". The operator's name can extract
+  // glued to the job name before it ("S2511kjohnson"), so it is optional here.
+  + String.raw`(?:(?:\s+\S+)?\s+on\s+\S+\s+with\s+\S+)?`
+  + String.raw`(?:\s*${GPO_PAGE_COUNT})?`
+  // The next page's printed number, taken only when its slug follows: with no
+  // slug to bound it this would eat the first real number on the page.
+  + String.raw`(?:\s*\d{1,4}(?=\s*[•●]))?`
+  + String.raw`(?:\s*${GPO_SLUG})?`,
+  'gi'
+)
+
+/** Whether this text came out of a GPO bill PDF rather than an HTML printing. */
+function isGpoPdfText(source) {
+  // Gate on markers only a GPO PDF export carries. A bare "— 4 of 11 —" page
+  // count is NOT one of them: state legislatures print the same counter, and
+  // the hyphen repair below then eats their margin numbers out of ordinary
+  // hyphenated words ("hand-harvesting of ... crabs or the eggs of 15").
+  return /\bVerDate\s+\w{3}\s+\d{1,2}\s+\d{4}\b/i.test(source)
+    || new RegExp(`${GPO_PAGE_COUNT}\\s*(?:\\d+\\s*)?${GPO_SLUG}`, 'i').test(source)
+}
+
 /**
  * Remove print-layout debris from text extracted from GPO bill PDFs. In those
  * files the margin line number can land inside a wrapped word ("Tech-18
@@ -114,52 +161,110 @@ function createDepthTracker() {
  * numbers in normal HTML/plain-text exports are never touched.
  */
 function cleanGpoPdfArtifacts(source) {
-  // Gate on markers only a GPO PDF export carries. A bare "— 4 of 11 —" page
-  // count is NOT one of them: state legislatures print the same counter, and
-  // the hyphen repair below then eats their margin numbers out of ordinary
-  // hyphenated words ("hand-harvesting of ... crabs or the eggs of 15").
-  const hasGpoPageFurniture = /\bVerDate\s+Sep\s+11\s+2014\b/i.test(source)
-    || /[—–-]\s*\d+\s+of\s+\d+\s*[—–-]\s*(?:\d+\s*)?[•●]\s*[A-Z]\s*\d+\s+[A-Z]{1,4}\b/i.test(source)
-  if (!hasGpoPageFurniture) return source
+  if (!isGpoPdfText(source)) return source
+  const compounds = collectCompounds(source)
+  const words = collectWords(source)
 
   return source
-    // Drop the complete GPO production footer, including the final line
-    // number printed immediately before it. Leave a marker temporarily: it
-    // bounds the page, whose line numbering starts over.
-    // The footer is followed by the printed page number and the running
-    // document slug ("3 •S 2511 RS"), which otherwise lands mid-sentence:
-    // "information for students and 26 •S 2511 RS families making decisions".
-    .replace(
-      /\s+\d{1,2}\s+VerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b(?:\s*\d{1,4})?(?:\s*[•●]\s*[A-Z]{1,2}\.?\s*\d+\s+[A-Z]{1,4}\b)?/gi,
-      ' <GPO_PAGE_BREAK> '
-    )
-    .replace(
-      /\bVerDate\b[\s\S]*?\bwith\s+\$\$_JOB\b(?:\s*\d{1,4})?(?:\s*[•●]\s*[A-Z]{1,2}\.?\s*\d+\s+[A-Z]{1,4}\b)?/gi,
-      ' <GPO_PAGE_BREAK> '
-    )
-    // Printed page count and document slug, for example
-    // "— 5 of 72 — 6 •S 2511 RS".
-    .replace(/[—–-]\s*\d+\s+of\s+\d+\s*[—–-]\s*(?:\d+\s*)?[•●]\s*[A-Z]\s*\d+\s+[A-Z]{1,4}\b/gi, ' ')
+    // Drop the complete footer, including the final line number printed
+    // immediately before it. Leave a marker temporarily: it bounds the page,
+    // whose line numbering starts over.
+    .replace(GPO_FOOTER, ' <GPO_PAGE_BREAK> ')
+    // A page can carry the count and slug without the footer, for example
+    // "— 5 of 72 — 6 •S 2511 RS". Either half alone still marks the boundary.
+    .replace(new RegExp(String.raw`${GPO_PAGE_COUNT}\s*(?:\d+\s*(?=[•●]))?(?:${GPO_SLUG})?`, 'gi'), ' <GPO_PAGE_BREAK> ')
+    .replace(new RegExp(GPO_SLUG, 'gi'), ' <GPO_PAGE_BREAK> ')
     // The last line of a page can break a word, leaving its halves on either
     // side of the footer: "equal representation be-25 <footer> tween 2-year".
     // Rejoin the word and keep the page boundary just past it.
     .replace(
-      /([A-Za-z])-\d{1,2}\s*<GPO_PAGE_BREAK>\s*([A-Za-z]+)/g,
-      '$1$2 <GPO_PAGE_BREAK> '
+      /([A-Za-z]+)-\s*(?:\d{1,2}\s*)?<GPO_PAGE_BREAK>\s*([A-Za-z]+)/g,
+      (whole, left, right) => (
+        `${left}${compounds.has(`${left.toLowerCase()}-${right.toLowerCase()}`) ? '-' : ''}${right} <GPO_PAGE_BREAK> `
+      )
     )
+    // The masthead's ordinal is typeset in small caps and extracts split from
+    // its number. Repair it before the count runs: left alone, the "1" of
+    // "1 ST SESSION" reads as a bare margin number sitting above the page's
+    // real first line.
+    .replace(/\b(\d{1,3})\s+(ST|ND|RD|TH|D)\s+(?=SESSION\b|CONGRESS\b)/gi, '$1$2 ')
     // Now that pages are bounded, take out the margin numbers themselves.
-    .replace(/[\s\S]+/, stripGpoMarginNumbers)
-    // Numbering restarts at 1 after the page furniture, which leaves the new
-    // page's first number too isolated to have joined a run above.
-    .replace(/<GPO_PAGE_BREAK>((?:(?![.!?;]).){0,180}?)\s+1\s+(?=[a-z])/gi, '$1 ')
+    .replace(/[\s\S]+/, text => stripGpoMarginNumbers(text, compounds))
     .replace(/<GPO_PAGE_BREAK>/g, ' ')
+    // Every number lifted out leaves the gap it sat in. Close them before the
+    // repairs below, which read the word on either side of a single space.
+    .replace(/[ \t]{2,}/g, ' ')
+    // A small-caps word broken across a line keeps the printer's hyphen with a
+    // space either side once extracted: "AVOIDING DUPLICATED REPORT - ING",
+    // "APPROPRIATE CONGRESSIONAL COMMIT - TEES". Close it up unless the bill
+    // writes the pair hyphenated somewhere it did not have to break.
+    .replace(/\b([A-Z]{2,})\s+-\s+([A-Z]{2,})\b/g, (whole, left, right) => (
+      compounds.has(`${left.toLowerCase()}-${right.toLowerCase()}`) ? `${left}-${right}` : left + right
+    ))
     // Provision headings are typeset in small caps with a full-size initial,
     // and the extraction splits that initial off and drifts the closing period:
     // "E STABLISHMENT OF SYSTEM .—". Both halves are wrong the same way. The
     // dash is still in either form here — this runs before the em dash is
     // normalised — so match it by lookahead rather than reproducing it.
     .replace(/([A-Z])\s+\.\s*(?=—|--)/g, '$1.')
-    .replace(/\b([A-Z]) ([A-Z][A-Z ]*?)\s*\.(?=—|--)/g, '$1$2.')
+    .replace(/\b([A-Z]) ([A-Z][A-Z0-9 ,’'()–-]{0,80}?)\s*\.(?=—|--)/g, '$1$2.')
+    // The same split outside a heading, where there is no "—" to bound it. A
+    // member's name and a date are the two places it always lands, and both
+    // sit in a shape too specific to catch anything else — "A BILL" has to
+    // survive, so a bare capital before a word is not enough to go on.
+    .replace(/\b(M(?:r|s|rs|essrs|iss)\.)\s+([A-Z])\s+([A-Z]{2,})/g, '$1 $2$3')
+    .replace(/\b(M(?:r|s|rs|essrs|iss)\.\s+[A-Z]+)\s+([A-Z])\s+([A-Z]{2,})/g, '$1 $2$3')
+    // A hyphenated surname splits at the hyphen as well: "Mrs. MILLER -M EEKS".
+    .replace(/\b([A-Z]{2,})\s*-\s*([A-Z])\s+([A-Z]{2,})\b/g, '$1-$2$3')
+    .replace(
+      /\b([JFMASOND])\s+(ANUARY|EBRUARY|ARCH|PRIL|AY|UNE|ULY|UGUST|EPTEMBER|CTOBER|OVEMBER|ECEMBER)\b/g,
+      '$1$2'
+    )
+    // Anywhere else inside a small-caps run, the bill itself decides: join the
+    // initial back on only when the result is a word the document uses. That
+    // keeps "COMPETITIVE W AGE" and "P ART C" whole while leaving the real
+    // subpart letter in "PART D OF IDEA" alone.
+    .replace(/(?<=\b[A-Z]{2,}\s|[“‘"]|\)\s|[.;:]\s)([A-Z])\s+([A-Z]{2,})\b/g, (whole, initial, rest) => (
+      isKnownWord(initial + rest, words) ? initial + rest : whole
+    ))
+}
+
+/**
+ * Every hyphenated word the document writes out in full on one line.
+ *
+ * A margin number printed inside a broken word is the only evidence that the
+ * hyphen before it is the printer's rather than the drafter's: "sec- 2 ondary"
+ * has to close up to "secondary", while "low- 5 income" must keep its hyphen.
+ * Bills are repetitive enough that a genuine compound almost always appears
+ * unbroken somewhere else in the same document, which makes the document its
+ * own dictionary and keeps the decision off a hardcoded word list.
+ */
+function collectCompounds(source) {
+  const compounds = new Set()
+  for (const match of source.matchAll(/\b([A-Za-z]{2,}|\d{1,4})-([A-Za-z]{2,})\b/g)) {
+    compounds.add(`${match[1].toLowerCase()}-${match[2].toLowerCase()}`)
+  }
+  return compounds
+}
+
+/** Every word the document writes whole, for the same reason as above. */
+function collectWords(source) {
+  const words = new Set()
+  for (const match of source.matchAll(/[A-Za-z]{3,}/g)) words.add(match[0].toLowerCase())
+  return words
+}
+
+/**
+ * Whether the document uses this word. A heading sets a term in small caps
+ * where the prose inflects it — "R EPORT DATA" against "reporting" — so a few
+ * endings are tried before giving up, which is enough to tell a broken word
+ * from a subpart letter that only looks like one ("PART D OF IDEA" → "dof").
+ */
+function isKnownWord(candidate, words) {
+  const word = candidate.toLowerCase()
+  if (words.has(word)) return true
+  if (word.endsWith('s') && words.has(word.slice(0, -1))) return true
+  return ['s', 'd', 'ed', 'es', 'ing', 'ion', 'ions'].some(suffix => words.has(word + suffix))
 }
 
 /**
@@ -167,9 +272,9 @@ function cleanGpoPdfArtifacts(source) {
  *
  * The numbers come in two forms and both have to be counted together: a bare
  * number between two words ("programs; 24 (iii) provide"), and one swallowed by
- * a word that wrapped across the line ("institu-22 tional"). Counting only the
- * bare ones leaves a run too broken to recognise, which used to leave a scatter
- * of stray numbers behind on PDF-sourced bills.
+ * a word that wrapped across the line ("institu-22 tional", "sec- 2 ondary").
+ * Counting only the bare ones leaves a run too broken to recognise, which used
+ * to leave a scatter of stray numbers behind on PDF-sourced bills.
  *
  * A page numbers its lines 1..~25, so the run is long and strictly ascending.
  * Whether the document is numbered at all is decided across every page at once:
@@ -177,20 +282,45 @@ function cleanGpoPdfArtifacts(source) {
  * a few lines under the masthead, or the last — is trusted on a couple of
  * numbers rather than left alone for want of its own evidence.
  */
-function stripGpoMarginNumbers(text) {
-  const pages = text.split('<GPO_PAGE_BREAK>').map(findMarginRun)
+function stripGpoMarginNumbers(text, compounds) {
+  const pages = text.split('<GPO_PAGE_BREAK>').map(page => findMarginRun(page, compounds))
+  // One page counting most of its lines is enough to settle that the printer
+  // numbered this document; the rest of the pages are then trusted on much
+  // less, including the single number a page-final fragment carries.
   const numbered = pages.filter(page => page.run.length >= 8).length >= 3
+    || pages.some(page => page.run.length >= 5)
   const required = numbered ? 2 : 6
   return pages
-    .map(page => (page.run.length >= required ? removeRun(page) : page.text))
+    .map(page => (
+      page.run.length >= required
+        || countsFromOne(page.run)
+        || (numbered && page.run[0]?.value === 1)
+        ? removeRun(page)
+        : page.text
+    ))
     .join(' <GPO_PAGE_BREAK> ')
 }
 
+/**
+ * A run that opens at 1 and steps by exactly 1 is the printer counting lines.
+ * Two-page resolutions never show enough numbered lines to prove the document
+ * is numbered at all, and their handful of numbers used to survive into the
+ * one paragraph the resolution consists of. Prose cannot fake this: a bare
+ * "1 2 3" spaced like printed lines is not a sentence, and enumerators are
+ * parenthesised or followed by a period, so they are not bare numbers here.
+ */
+function countsFromOne(run) {
+  return run.length >= 3 && run.every((hit, index) => hit.value === index + 1)
+}
+
 /** The longest ascending count of margin numbers on one printed page. */
-function findMarginRun(text) {
+function findMarginRun(text, compounds = new Set()) {
   // The bare form has to match at a page edge too: the last number on a page
-  // sits flush against the footer that was just cut away.
-  const CANDIDATE = /([A-Za-z])-(\d{1,2})\s+(?=[A-Za-z])|(?<=^|\s)(\d{1,2})(?=\s|$)/g
+  // sits flush against the footer that was just cut away. The wrapped form
+  // keeps its space optional: the extraction sets "institu-22 tional" tight and
+  // "sec- 2 ondary" loose, page by page, with no pattern to either.
+  // The broken half can be a figure as well as a word: "the 5- 11 cent coin".
+  const CANDIDATE = /([A-Za-z]+|\d{1,4})-\s*(\d{1,2})\s+(?=[A-Za-z])|(?<=^|\s)(\d{1,2})(?=\s|$)/g
   const tokens = text.split(' ')
   const hits = []
   for (const match of text.matchAll(CANDIDATE)) {
@@ -205,22 +335,46 @@ function findMarginRun(text) {
       start: match.index,
       end: match.index + match[0].length,
       value: Number(wrapped ? match[2] : match[3]),
-      // A wrapped number leaves the two halves of its word to be rejoined.
-      replacement: wrapped ? match[1] : '',
+      // A wrapped number leaves the two halves of its word to be rejoined,
+      // with the hyphen only if the document uses it away from a line break.
+      replacement: wrapped ? match[1] + (joinsHyphenated(match, text, compounds) ? '-' : '') : '',
     })
   }
 
-  // Longest ascending run, allowing one number to have gone missing.
+  // Longest ascending run, allowing one number to have gone missing. Where two
+  // starts tie, the later one wins: a number in the prose that happens to sit
+  // above the page's first printed line only ever prepends itself to the real
+  // count, and taking it would cut a word out of the bill ("119TH CONGRESS 1
+  // ST SESSION" ahead of a page numbered 1, 2, 3...).
   let run = []
-  for (let start = 0; start + run.length < hits.length; start++) {
+  for (let start = 0; start < hits.length && start + run.length <= hits.length; start++) {
     const candidate = [hits[start]]
     for (let next = start + 1; next < hits.length; next++) {
-      const step = hits[next].value - candidate[candidate.length - 1].value
-      if (step >= 1 && step <= 2) candidate.push(hits[next])
+      const last = candidate[candidate.length - 1]
+      const step = hits[next].value - last.value
+      if (step < 1 || step > 2) continue
+      // Every printed line carries words, so two numbers with nothing between
+      // them are not two lines. That is the whole of what separates the count
+      // from the citation in "chapter 1 2 of such Code" — they sit side by
+      // side, and only one of them can be the line the printer numbered.
+      if (!text.slice(last.end, hits[next].start).trim()) continue
+      candidate.push(hits[next])
     }
-    if (candidate.length > run.length) run = candidate
+    if (candidate.length >= run.length) run = candidate
   }
   return { text, run }
+}
+
+/**
+ * Whether the word a margin number broke keeps its hyphen once rejoined.
+ * "low- 5 income" does, because the bill writes "low-income" elsewhere;
+ * "sec- 2 ondary" does not, because "sec-ondary" appears nowhere.
+ */
+function joinsHyphenated(match, text, compounds) {
+  const rest = text.slice(match.index + match[0].length)
+  const right = rest.match(/^[A-Za-z]+/)
+  if (!right) return false
+  return compounds.has(`${match[1].toLowerCase()}-${right[0].toLowerCase()}`)
 }
 
 function removeRun({ text, run }) {
@@ -263,8 +417,16 @@ function cleanStatePageFurniture(source) {
 
 // Words that make the number after them part of the law rather than part of
 // the printing, and units that do the same from the other side.
-const CITES_A_NUMBER = /^(?:sections?|subsections?|subdivisions?|subparagraphs?|paragraphs?|clauses?|subclauses?|chapters?|subchapters?|titles?|parts?|subparts?|divisions?|items?|articles?|amendments?|rules?|forms?|no|nos|number|numbers|U\.?S\.?C|C\.?F\.?R|Pub|law|act|code|note|table|figure|column|line|page|volume|vol|§+)$/i
-const NUMBER_UNITS = /^(?:percent|per|percentage|days?|weeks?|months?|years?|hours?|minutes?|dollars?|cents?|U\.?S\.?C\.?|C\.?F\.?R\.?|Stat|billion|million|thousand|times)$/i
+// "Act" is deliberately absent: no citation reads "Act 5 of", while a bill's
+// own short title breaks across a printed line exactly there — "the ''Inspired
+// to Serve Act 4 of 2025''" is the margin number sitting inside the title.
+const CITES_A_NUMBER = /^(?:sections?|subsections?|subdivisions?|subparagraphs?|paragraphs?|clauses?|subclauses?|chapters?|subchapters?|titles?|parts?|subparts?|divisions?|items?|articles?|amendments?|rules?|forms?|no|nos|number|numbers|U\.?S\.?C|C\.?F\.?R|Pub|law|code|note|table|figure|column|line|page|volume|vol|§+)$/i
+// Units of measure count too: a bill that sets the weight of a coin prints
+// "(A) 5 grams" on the line whose margin number is also 5, and the printed
+// count must not be allowed to swallow the figure the law turns on.
+const NUMBER_UNITS = /^(?:percent|per|percentage|days?|weeks?|months?|years?|hours?|minutes?|dollars?|cents?|U\.?S\.?C\.?|C\.?F\.?R\.?|Stat|billion|million|thousand|times|grams?|kilograms?|pounds?|ounces?|tons?|miles?|feet|inches|acres?|gallons?|liters?)$/i
+
+const SPELLED_NUMBER = /^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|[a-z]+-(?:one|two|three|four|five|six|seven|eight|nine))$/i
 
 // Abbreviations that carry a period and still cite the number after them,
 // unlike an ordinary word whose period simply ends the sentence.
@@ -283,6 +445,10 @@ function isCitedNumber(tokens, index) {
   // is only the word this line happened to break after, and the number is the
   // margin: "described in this paragraph 3 shall not include".
   if (!endsSentence && CITES_A_NUMBER.test(trimmed) && /^of$/i.test(after)) return true
+  // A unit only vouches for the number in front of it. Where the quantity is
+  // spelled out the figure is already complete, and anything printed between
+  // it and the unit is the margin: "one hundred forty 29 grams".
+  if (SPELLED_NUMBER.test(trimmed)) return false
   return NUMBER_UNITS.test(after)
 }
 
@@ -458,8 +624,12 @@ function splitBracketedRuns(text, openBefore) {
  */
 export function formatBillText(text = '') {
   const raw = String(text)
-  const looksStatePrinted = /[-–—]{1,2}\s*\d+\s+of\s+\d+\s*[-–—]{1,2}/.test(raw)
-    || /\bLCO\s+(?:No\.\s*)?\d+\b/i.test(raw)
+  // A GPO PDF prints the same "-- 4 of 11 --" page counter a state legislature
+  // does, so the counter alone cannot decide this. Federal text taken for state
+  // text gets its brackets restyled as repeals, which they are not.
+  const looksStatePrinted = !isGpoPdfText(raw)
+    && (/[-–—]{1,2}\s*\d+\s+of\s+\d+\s*[-–—]{1,2}/.test(raw)
+      || /\bLCO\s+(?:No\.\s*)?\d+\b/i.test(raw))
   // Bracketed repeals are a state drafting convention. Gate on it so federal
   // text, where brackets mean something else entirely, is never restyled.
   const usesBracketedRepeals = looksStatePrinted
@@ -494,7 +664,15 @@ export function formatBillText(text = '') {
     // strongest structural boundaries before doing the normal line pass.
     // The printed masthead sits on the same collapsed line as the export
     // header that precedes it.
-    .replace(/\s+(?=\d+(?:st|nd|rd|th) CONGRESS\b)/g, '\n')
+    // The masthead opens with the GPO document class ("I", "III", "IV"), which
+    // names the printing series and means nothing to a reader. Take it with the
+    // break rather than leaving it stranded as a one-letter paragraph.
+    // Only the masthead pairs the Congress with its session; "for the 120th
+    // Congress" in the middle of a sentence must not be broken out of it.
+    .replace(
+      /(?:^|\s)(?:[IV]{1,4}\s+)?(?=\d+(?:st|nd|rd|th) CONGRESS\s+\d+(?:st|nd|rd|th|d) SESSION\b)/gi,
+      '\n'
+    )
     .replace(/\s+(?=(?:SECTION|SEC\.)\s+\d+[A-Z0-9.-]*[.\s])/g, '\n')
     // States print the same label in mixed case. Requiring both a sentence
     // boundary before it and a period straight after the number keeps ordinary
@@ -507,8 +685,10 @@ export function formatBillText(text = '') {
     // A marker that follows sentence-ending punctuation, a dash, or a colon
     // opens a new provision. References inside a sentence ("subsection (k) the
     // following") are preceded by a word, so they stay put. A state repeal
-    // bracket can sit between the two.
-    .replace(new RegExp(String.raw`(?<=[—:;.])\s+(?:(?:and|or)\s+)?(?=\[?\((?:${ENUM})\)\s+)`, 'g'), '\n')
+    // bracket can sit between the two. The conjunction that closes a list item
+    // stays with the item it closes: whether a list reads "and" or "or" decides
+    // whether every condition binds or any one of them does.
+    .replace(new RegExp(String.raw`(?<=[—:;.])(\s+(?:and|or))?\s+(?=\[?\((?:${ENUM})\)\s+)`, 'g'), '$1\n')
     .replace(new RegExp(String.raw`\s+(?=\[?\((?:${ENUM})\)\s+[A-Z])`, 'g'), '\n')
     .replace(/\s+(?=(?:IN THE (?:SENATE|HOUSE)|A BILL\b|AN ACT\b|Be it enacted\b))/g, '\n')
 
