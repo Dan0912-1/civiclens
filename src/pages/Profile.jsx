@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { loadProfile, saveProfile } from '../lib/userProfile'
+import { loadProfile, saveProfile, normalizeProfileAge } from '../lib/userProfile'
 import { phCapture } from '../lib/posthog'
 import AuthModal from '../components/AuthModal.jsx'
 import styles from './Profile.module.css'
@@ -151,6 +151,7 @@ export default function Profile() {
     const stored = sessionStorage.getItem('civicProfile')
     const base = {
       state: '',
+      age: '',
       grade: '',
       employment: 'none',
       familySituation: [],
@@ -168,7 +169,7 @@ export default function Profile() {
     const familySituation = Array.isArray(parsed.familySituation)
       ? parsed.familySituation
       : (parsed.familySituation ? [parsed.familySituation] : [])
-    return { ...base, ...parsed, employment, familySituation }
+    return normalizeProfileAge({ ...base, ...parsed, employment, familySituation })
   })
   const [error, setError] = useState('')
   const [showAuth, setShowAuth] = useState(false)
@@ -195,8 +196,8 @@ export default function Profile() {
     }))
   }
 
-  const ageNum = Number(profile.grade)
-  const ageValid = profile.grade !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
+  const ageNum = Number(profile.age)
+  const ageValid = profile.age !== '' && !isNaN(ageNum) && Number.isInteger(ageNum) && ageNum > 0
   const isUnder13 = ageValid && ageNum < 13
 
   // The COPPA lock is a device-scoped anonymous-bypass deterrent. Once a
@@ -215,7 +216,7 @@ export default function Profile() {
     ;(async () => {
       const saved = await loadProfile(user.id)
       if (cancelled || !saved) return
-      setProfile(prev => ({ ...prev, ...saved }))
+      setProfile(prev => normalizeProfileAge({ ...prev, ...saved }))
     })()
     return () => { cancelled = true }
   }, [user])
@@ -241,7 +242,7 @@ export default function Profile() {
     if (!canAdvance()) {
       if (step === 1 && coppaLocked) {
         setError('Account creation is temporarily unavailable.')
-      } else if (step === 1 && profile.grade && !ageValid) {
+      } else if (step === 1 && profile.age && !ageValid) {
         setError('Please enter a valid age.')
       } else {
         setError('Please fill in the required fields.')
@@ -258,8 +259,21 @@ export default function Profile() {
       // made the "Show me my legislation" button appear dead. Results.jsx
       // reads sessionStorage as a fallback, so cross-device sync is nice
       // to have, not required to proceed.
-      sessionStorage.setItem('civicProfile', JSON.stringify(profile))
-      if (user) saveProfile(user.id, profile)
+      const savedProfile = normalizeProfileAge(profile)
+      sessionStorage.setItem('civicProfile', JSON.stringify(savedProfile))
+      // Still fire-and-forget (awaiting it can wedge, per above), but no
+      // longer silent: saveProfile reports whether the write landed, and a
+      // failure gets one retry. Before this, a dropped write left the profile
+      // in sessionStorage only — fine until the student opened a new tab,
+      // where the cloud fallback found nothing and asked them to start over.
+      if (user) {
+        saveProfile(user.id, savedProfile).then(ok => {
+          if (!ok) return saveProfile(user.id, savedProfile)
+          return true
+        }).then(ok => {
+          if (!ok) console.warn('[profile] could not persist to Supabase; kept in session only')
+        })
+      }
       // Funnel step: onboarding complete. Counts only, no profile contents.
       phCapture('profile_completed', { interest_count: profile.interests.length, has_account: !!user })
       navigate(returnTo || '/results', returnState ? { state: returnState } : undefined)
@@ -326,9 +340,9 @@ export default function Profile() {
                   min={13}
                   max={99}
                   step={1}
-                  value={coppaLocked ? '' : profile.grade}
+                  value={coppaLocked ? '' : profile.age}
                   disabled={coppaLocked}
-                  onChange={e => setProfile(p => ({ ...p, grade: e.target.value }))}
+                  onChange={e => setProfile(p => ({ ...p, age: e.target.value, grade: e.target.value }))}
                 />
                 {coppaLocked && (
                   <div className={styles.ageWarning}>
@@ -362,7 +376,7 @@ export default function Profile() {
           {step === 2 && (
             <div className={styles.stepContent}>
               <h2 className={styles.stepHeading}>Your situation</h2>
-              <p className={styles.stepSub}>Helps us personalize which bills matter to your life.</p>
+              <p className={styles.stepSub}>Used for more specific explanations when you open or personalize a bill.</p>
 
               <div className={styles.field}>
                 <label className={styles.label}>Are you working?</label>

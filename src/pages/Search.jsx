@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   getBookmarks, addBookmark, removeBookmark,
@@ -54,6 +54,7 @@ const SUGGESTION_CHIPS = [
 export default function Search() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { user, loading: authLoading } = useAuth()
 
   // Seeded synchronously from this tab's cache (the old code read it in a
@@ -116,11 +117,20 @@ export default function Search() {
 
   useEffect(() => {
     if (!activeQuery) return
+    if (activeTab === 'state' && !(selectedState || profile?.state)) {
+      abortRef.current?.abort()
+      setBills([])
+      setTotalResults(0)
+      setHasMore(false)
+      setHasSearched(false)
+      setLoading(false)
+      return
+    }
     setInputValue(activeQuery)
     fetchResults(activeQuery, 1, true, activeTab)
     return () => abortRef.current?.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeQuery, activeTab])
+  }, [activeQuery, activeTab, selectedState, profile?.state])
 
   async function fetchResults(query, pageNum, reset = false, tab = activeTab, stateOverride) {
     abortRef.current?.abort()
@@ -207,7 +217,12 @@ export default function Search() {
     // questionnaire they already filled out is the bug we're fixing.
     const resolved = profile || (authLoading ? null : await resolveProfile(user))
     if (!resolved) {
-      navigate('/profile', { state: { returnTo: `/search?${searchParams.toString()}` } })
+      navigate('/profile', {
+        state: {
+          returnTo: `/search?${searchParams.toString()}`,
+          returnState: { personalizeBill: stripBillForPersonalize(bill) },
+        },
+      })
       return
     }
     const billId = makeBillId(bill)
@@ -216,16 +231,15 @@ export default function Search() {
     // Single attempt; returns true if analysis came back successfully
     const attempt = async () => {
       try {
-        const resp = await fetch(`${API_BASE}/api/personalize-batch`, {
+        const resp = await fetch(`${API_BASE}/api/personalize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bills: [stripBillForPersonalize(bill)], profile: resolved })
+          body: JSON.stringify({ bill: stripBillForPersonalize(bill), profile: resolved })
         })
         if (!resp.ok) return false
         const data = await resp.json()
-        const result = data?.results?.[billId]
-        if (result?.analysis) {
-          setAnalyses(prev => ({ ...prev, [billId]: result.analysis }))
+        if (data?.analysis) {
+          setAnalyses(prev => ({ ...prev, [billId]: data.analysis }))
           return true
         }
         return false
@@ -252,6 +266,18 @@ export default function Search() {
       })
     }
   }, [profile, authLoading, user, navigate, searchParams])
+
+  // Completing a profile resumes the exact action the student initiated.
+  // Clear the route state first so rerenders and back/forward navigation
+  // cannot accidentally trigger another LLM request.
+  const resumedPersonalizationRef = useRef(false)
+  useEffect(() => {
+    const pendingBill = location.state?.personalizeBill
+    if (!pendingBill || !profile || resumedPersonalizationRef.current) return
+    resumedPersonalizationRef.current = true
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
+    personalizeBill(pendingBill)
+  }, [location.pathname, location.search, location.state, navigate, personalizeBill, profile])
 
   const handleTrackInteraction = useCallback(async ({ billId, actionType, topicTag }) => {
     let token = null
@@ -349,7 +375,6 @@ export default function Search() {
                   const code = e.target.value
                   setSelectedState(code)
                   setChamberFilter('All')
-                  if (activeQuery) fetchResults(activeQuery, 1, true, 'state', code)
                 }}
               >
                 <option value="">Select a state</option>
@@ -463,19 +488,28 @@ export default function Search() {
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
-            <p className={styles.promptHeading}>What legislation are you looking for?</p>
-            <p className={styles.promptSub}>Search by topic, keyword, or bill number.</p>
-            <div className={styles.suggestionChips}>
-              {SUGGESTION_CHIPS.map(chip => (
-                <button
-                  key={chip}
-                  className={styles.suggestionChip}
-                  onClick={() => handleChipClick(chip)}
-                >
-                  {chip}
-                </button>
-              ))}
-            </div>
+            {activeTab === 'state' && !(selectedState || profile?.state) ? (
+              <>
+                <p className={styles.promptHeading}>Select a state to search</p>
+                <p className={styles.promptSub}>Choose the legislature you want to search from the menu above.</p>
+              </>
+            ) : (
+              <>
+                <p className={styles.promptHeading}>What legislation are you looking for?</p>
+                <p className={styles.promptSub}>Search by topic, keyword, or bill number.</p>
+                <div className={styles.suggestionChips}>
+                  {SUGGESTION_CHIPS.map(chip => (
+                    <button
+                      key={chip}
+                      className={styles.suggestionChip}
+                      onClick={() => handleChipClick(chip)}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 

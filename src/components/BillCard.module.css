@@ -563,3 +563,25 @@
   pointer-events: none;
   z-index: -1;
 }
+
+/* See BillDetail.module.css — an AI action's generic "find your representative"
+   link becomes an in-app button that opens the panel, which knows the student's
+   state and can name the member from a ZIP. */
+.actionRepBtn {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 7px 12px;
+  background: var(--navy);
+  color: var(--white);
+  border: 1px solid var(--navy);
+  border-radius: 1px;
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.actionRepBtn:hover { background: #0a1520; }

@@ -57,6 +57,49 @@ export const SENATE_FINDER = 'https://www.senate.gov/senators/senators-contact.h
 export const STATE_LEGISLATOR_FINDER = 'https://openstates.org/find_your_legislator/'
 
 /**
+ * Drop the preposition left dangling when a URL is removed from mid-sentence.
+ *
+ * "Email your representative at <url>." becomes "Email your representative at ."
+ * once the finder link is pulled out, so trim the trailing connector and
+ * re-terminate the sentence. Operates on the parts array produced by
+ * splitActionText.
+ */
+export function trimDanglingConnector(parts) {
+  const out = parts.slice()
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].href) break
+    // Strip the existing terminator first, then the connector, then put a
+    // single period back. Trimming the connector before the punctuation left
+    // "representative.." on prose that already ended in a full stop, and a
+    // fragment that was nothing but "." was treated as real text, so the scan
+    // stopped there and never reached the "via" it was meant to remove.
+    const stripped = out[i].text
+      .replace(/[\s.,;:]+$/, '')
+      .replace(/\s*\b(at|via|through|on|here)\b$/i, '')
+      .replace(/[\s,;:]+$/, '')
+    out[i] = { ...out[i], text: stripped ? `${stripped}.` : '' }
+    if (stripped) break
+  }
+  return out
+}
+
+/**
+ * Is this one of the generic "go find your own lawmaker" pages?
+ *
+ * The sanitizer rewrites every contact URL in an AI-written civic action to one
+ * of these, which is safe but a dead end: the action's own prose says "email
+ * your Connecticut representative" and then hands the student a national lookup
+ * form that knows nothing about Connecticut. We already know their state, and
+ * with a ZIP we can name the actual person — so the app should answer the
+ * question itself instead of linking out to have it asked again.
+ */
+export function isRepFinderUrl(url) {
+  const u = String(url || '').replace(/\/+$/, '').toLowerCase()
+  return [HOUSE_FINDER, SENATE_FINDER, STATE_LEGISLATOR_FINDER]
+    .some(f => u === f.replace(/\/+$/, '').toLowerCase())
+}
+
+/**
  * Which body votes on this bill, in the vocabulary /api/representatives speaks.
  *
  * Chamber is the whole point: a Senate bill is decided by senators and a House

@@ -14,9 +14,11 @@
     "check:dupes": "node scripts/ci-duplicate-scan.mjs",
     "smoke:backend": "node scripts/ci-boot-smoke.mjs",
     "test:links": "node scripts/test-civic-links.mjs",
+    "test:search": "node scripts/test-bill-search.mjs",
+    "test:personalization": "node scripts/test-personalization-validation.mjs",
     "refresh:legislators": "node scripts/refresh-legislators.mjs",
     "check:sessions": "node scripts/check-session-freshness.mjs",
-    "verify": "npm run check:backend && npm run check:dupes && npm run test:links && npm run check:sessions && npm run smoke:backend && npm run build",
+    "verify": "npm run check:backend && npm run check:dupes && npm run test:links && npm run test:search && npm run test:personalization && npm run check:sessions && npm run smoke:backend && npm run build",
     "postinstall": "bash scripts/patch-apple-signin.sh"
   },
   "dependencies": {

@@ -6,12 +6,12 @@ const SLIDES = [
   {
     eyebrow: 'Mission',
     title: 'The Definitive Record of American Legislation.',
-    body: 'CapitolKey tracks active bills across Congress and state legislatures, sourced directly from primary government records.',
+    body: 'CapitolKey tracks active bills using government bill text plus verified legislative data providers.',
   },
   {
     eyebrow: 'Method',
     title: 'Data-Driven Analysis. Verified Sources.',
-    body: 'Every bill is filtered by jurisdiction, status, sponsor, and committee, then contextualized for your state and grade level.',
+    body: 'Every bill is filtered by jurisdiction, status, sponsor, and committee, then contextualized for your state and age.',
   },
   {
     eyebrow: 'Standard',
