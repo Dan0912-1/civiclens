@@ -7121,13 +7121,35 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
 
     // User stats
     if (supabase) {
-      const [authUsers, profiles, bookmarks, pushTokens] = await Promise.all([
-        supabase.auth.admin.listUsers({ perPage: 1000 }),
-        supabase.from('user_profiles').select('id, state, grade, interests, created_at, push_notifications, email_notifications', { count: 'exact' }),
+      // listUsers pages at 1000 max, so a single call silently undercounted
+      // every account past the first page. Walk the pages instead.
+      const listAllAuthUsers = async () => {
+        const out = []
+        for (let page = 1; page <= 100; page++) {
+          const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+          if (error) {
+            console.error('[admin/stats] listUsers page', page, 'failed:', error.message)
+            break
+          }
+          const batch = data?.users || []
+          out.push(...batch)
+          if (batch.length < 1000) break
+        }
+        return out
+      }
+
+      // user_profiles keeps the questionnaire in a single `profile` jsonb
+      // column (see supabase/create_profiles_table.sql) — state/grade/
+      // interests/created_at are NOT columns. Selecting them made PostgREST
+      // reject the whole query, so every profile-derived number below silently
+      // reported 0 while the rows were sitting in the table untouched.
+      const [allAuthUsers, profiles, bookmarks, pushTokens] = await Promise.all([
+        listAllAuthUsers(),
+        supabase.from('user_profiles').select('id, profile, push_notifications, email_notifications', { count: 'exact' }),
         supabase.from('bookmarks').select('id', { count: 'exact' }),
         supabase.from('push_tokens').select('id, platform', { count: 'exact' }),
       ])
-      const allAuthUsers = authUsers?.data?.users || []
+      if (profiles.error) console.error('[admin/stats] user_profiles query failed:', profiles.error.message)
       stats.users.totalAccounts = allAuthUsers.length
       stats.users.totalProfiles = profiles.count || 0
       stats.users.bookmarks = bookmarks.count || 0
@@ -7137,21 +7159,47 @@ app.get('/api/admin/stats', requireAdmin, async (req, res) => {
       const stateMap = {}
       const gradeMap = {}
       const interestMap = {}
-      let last24h = 0, last7d = 0, last30d = 0
+      let last24h = 0, last7d = 0, last14d = 0, last30d = 0
+      let neverSignedIn = 0
+      let lastSignupAt = null
       const now = Date.now()
       // Count signups from auth users (more accurate than profiles)
       for (const u of allAuthUsers) {
-        const age = now - new Date(u.created_at).getTime()
+        const created = new Date(u.created_at)
+        const age = now - created.getTime()
         if (age < 86400000) last24h++
         if (age < 604800000) last7d++
+        if (age < 1209600000) last14d++
         if (age < 2592000000) last30d++
+        if (!lastSignupAt || created > lastSignupAt) lastSignupAt = created
+        // A signup that never confirmed its email never fires the client's
+        // SIGNED_IN handler, which is the only thing that writes user_profiles.
+        // A growing count here is the signature of "accounts exist but no new
+        // profile rows".
+        if (!u.last_sign_in_at) neverSignedIn++
       }
-      for (const p of (profiles.data || [])) {
+      for (const row of (profiles.data || [])) {
+        const p = row.profile || {}
         if (p.state) stateMap[p.state] = (stateMap[p.state] || 0) + 1
-        if (p.grade) gradeMap[p.grade] = (gradeMap[p.grade] || 0) + 1
+        const reportedAge = p.age ?? p.grade
+        if (reportedAge) gradeMap[reportedAge] = (gradeMap[reportedAge] || 0) + 1
         for (const i of (p.interests || [])) interestMap[i] = (interestMap[i] || 0) + 1
       }
-      stats.users.signups = { last24h, last7d, last30d }
+      stats.users.signups = { last24h, last7d, last14d, last30d }
+      stats.users.lastSignupAt = lastSignupAt ? lastSignupAt.toISOString() : null
+      stats.users.neverSignedIn = neverSignedIn
+      // Most recent accounts, newest first — answers "did anyone new sign up"
+      // directly instead of leaving it to be inferred from the buckets.
+      stats.users.recent = [...allAuthUsers]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 20)
+        .map(u => ({
+          email: u.email || null,
+          created_at: u.created_at,
+          last_sign_in_at: u.last_sign_in_at || null,
+          confirmed: Boolean(u.email_confirmed_at || u.confirmed_at),
+          provider: u.app_metadata?.provider || null,
+        }))
       stats.users.byState = Object.entries(stateMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
       stats.users.byGrade = Object.entries(gradeMap).sort((a, b) => b[1] - a[1])
       stats.users.byInterest = Object.entries(interestMap).sort((a, b) => b[1] - a[1]).slice(0, 10)
