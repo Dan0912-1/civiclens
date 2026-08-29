@@ -55,3 +55,42 @@ union all
 select 'push_tokens', count(*), max(created_at) from public.push_tokens
 union all
 select 'feedback', count(*), max(created_at) from public.feedback;
+
+-- 6. Newest profiles. user_profiles has no created_at, so this orders by the
+--    last profile WRITE and joins auth.users for the real account dates.
+select
+  u.email,
+  p.updated_at                                     as profile_last_saved,
+  u.created_at                                     as account_created,
+  u.last_sign_in_at,
+  p.profile->>'state'                              as state,
+  coalesce(p.profile->>'age', p.profile->>'grade') as age,
+  jsonb_array_length(coalesce(p.profile->'interests', '[]'::jsonb)) as interests
+from public.user_profiles p
+join auth.users u on u.id = p.id
+order by p.updated_at desc
+limit 25;
+
+-- 7. Usage by people who never made an account. Anonymous visitors leave no
+--    row in auth.users, user_profiles, or bill_interactions (its user_id is
+--    NOT NULL with an FK to auth.users), so none of the queries above can see
+--    them. The personalization and search caches are written on the anonymous
+--    path too, which makes them the only DB-visible trace of that traffic.
+--
+--    Two caveats: the cache upserts on cache_key, so created_at is when a
+--    bill+profile combo was FIRST personalized (a repeat hit adds no row), and
+--    a nightly cron reaps rows past their 30-day TTL. Read it as a floor on
+--    activity, not a visitor count.
+select date_trunc('day', created_at)::date as day,
+       count(*) as new_personalizations
+from public.personalization_cache
+where created_at > now() - interval '30 days'
+group by 1
+order by 1 desc;
+
+select date_trunc('day', created_at)::date as day,
+       count(*) as new_searches
+from public.search_cache
+where created_at > now() - interval '30 days'
+group by 1
+order by 1 desc;
