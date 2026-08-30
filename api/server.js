@@ -267,9 +267,22 @@ function userOrIpKey(req, res) {
   return ipBucket
 }
 
+// NOTE ON THE ANONYMOUS CEILINGS (legislation / personalize / classroom).
+//
+// userOrIpKey keys signed-in users as `IP + user-id`, so they never collide.
+// Anonymous users fall back to the bare IP — and a school NATs its whole
+// building behind one address, so a class reading together shares a single
+// bucket. Measured against the old limits, the 16th anonymous student hit a
+// 429 on the feed and the 31st on personalization: a normal class size.
+//
+// These are sized for one full class plus retries (~35 students x 2-3 calls).
+// A school running several classes in the same period on one NAT can still
+// reach them; the durable fix is keying anonymous traffic by the
+// ck_anon_student_id we already store, with a per-IP backstop, rather than
+// raising these further.
 const legislationLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute
-  max: 15,                  // 15 requests per minute per user (or per IP if anonymous)
+  max: 150,                 // ~one class period of anonymous students, with retries
   keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -278,7 +291,11 @@ const legislationLimiter = rateLimit({
 
 const personalizeLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute
-  max: 30,                  // 30 personalizations per minute per user
+  // The LLM call, so this is the one with real cost exposure. Responses are
+  // cached in Supabase per bill+profile, and students in one class share a
+  // state and grade, so a class's requests collapse onto far fewer model calls
+  // than this ceiling implies.
+  max: 150,
   keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -5740,7 +5757,10 @@ app.get('/api/featured', featuredLimiter, async (req, res) => {
 
 const classroomLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 30,
+  // Same shared-NAT problem, and these are plain indexed reads with no model
+  // cost — a class joining or opening assignments together was hitting 429s at
+  // the 31st student.
+  max: 150,
   keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
