@@ -85,6 +85,24 @@ export async function createGoogleCoursework(token, payload) {
   return data
 }
 
+// What the student page needs before it decides whether to auto-submit:
+// the teacher's title/instructions and their credit preference. Auth is
+// optional server-side; passing a token also reports whether this student has
+// already completed it. Never throws — the banner falls back to automatic,
+// which is how every assignment behaved before the setting existed.
+export async function getGoogleAssignmentMeta(assignmentId, token) {
+  try {
+    const resp = await fetch(`${API}/api/google/coursework/${assignmentId}/meta`, {
+      headers: token ? await authHeaders(token) : { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+    if (!resp.ok) return null
+    return await resp.json()
+  } catch {
+    return null
+  }
+}
+
 // Student submits a Google-linked assignment for credit. Returns
 // { completed, graded, gradeReason? }.
 export async function completeGoogleAssignment(token, assignmentId, timeSpentSec) {

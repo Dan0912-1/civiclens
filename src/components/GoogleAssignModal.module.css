@@ -216,3 +216,15 @@
   padding-left: 10px;
   border-left: 2px solid var(--border);
 }
+
+/* Standing caveat under the credit toggle — true for both options, so it sits
+   apart from the per-option hint rather than being repeated in each. */
+.note {
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--cream, #f8f4ed);
+  border-radius: 1px;
+}

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getSessionSafe } from '../lib/supabase'
 import { makeBillId } from '../lib/billId'
 import { listGoogleCourses, createGoogleCoursework, getGoogleConnectUrl, googleErrorMessage } from '../lib/googleClassroom'
+import { defaultCourseworkTitle, COURSEWORK_TITLE_MAX } from '../lib/courseworkTitle'
 import { Capacitor } from '@capacitor/core'
 import { Browser } from '@capacitor/browser'
 import { App } from '@capacitor/app'
@@ -22,7 +23,13 @@ export default function GoogleAssignModal({ bill, onClose }) {
   const [publish, setPublish] = useState(false) // default: Save as draft
   const [points, setPoints] = useState(100)
   const [instructions, setInstructions] = useState('')
-  const [dueAt, setDueAt] = useState('') // local "YYYY-MM-DDTHH:MM"
+  const [title, setTitle] = useState(() => defaultCourseworkTitle(bill))
+  // Date and time are separate on purpose. A single datetime-local forces a
+  // teacher who only cares about "due Friday" to also dial in a time, and
+  // leaving it blank silently dropped the due date entirely.
+  const [dueDay, setDueDay] = useState('')   // local "YYYY-MM-DD"
+  const [dueTime, setDueTime] = useState('23:59') // local "HH:MM", end of day
+  const [autoSubmit, setAutoSubmit] = useState(true)
   const [busy, setBusy] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
@@ -32,6 +39,13 @@ export default function GoogleAssignModal({ bill, onClose }) {
   const [result, setResult] = useState(null)
 
   useEffect(() => { loadCourses() }, [])
+
+  // BillDetail can open this before the bill's full title has loaded; refresh
+  // the prefill until the teacher starts editing it themselves.
+  const titleDirty = useRef(false)
+  useEffect(() => {
+    if (!titleDirty.current) setTitle(defaultCourseworkTitle(bill))
+  }, [bill?.title, bill?.type, bill?.number])
 
   // Native: the consent flow runs in an in-app browser and comes back as a
   // custom-scheme deep link. Catch it here so the modal picks up the new
@@ -111,39 +125,66 @@ export default function GoogleAssignModal({ bill, onClose }) {
     }
   }
 
+  // The teacher's local date + time as an absolute instant. Classroom stores
+  // due dates in UTC and renders them in each viewer's local time, so an
+  // instant is the only thing that survives the round trip — sending the bare
+  // calendar day is what made Classroom show 7:59 PM for an 11:59 PM due date.
+  function localDue() {
+    if (!dueDay) return null
+    const d = new Date(`${dueDay}T${dueTime || '23:59'}`)
+    return isNaN(d.getTime()) ? null : d
+  }
+
   async function handlePush() {
     if (!courseId) { setError('Pick a class.'); return }
+    if (!title.trim()) { setError('Give the assignment a title.'); return }
+    const due = localDue()
+    if (due && due.getTime() <= Date.now()) {
+      setError('That due date has already passed. Google Classroom needs a time in the future.')
+      return
+    }
     setBusy(true); setError('')
     try {
       const session = await getSessionSafe()
       const token = session?.access_token
       if (!token) { setError('Please sign in again.'); setBusy(false); return }
       const course = (courses || []).find(c => c.id === courseId)
-      // Convert the teacher's local datetime to a UTC timestamp for Google;
-      // keep the local date for the CapitolKey assignment row.
-      let dueDate, dueDateTime
-      if (dueAt) {
-        const d = new Date(dueAt)
-        if (!isNaN(d.getTime())) { dueDate = dueAt.slice(0, 10); dueDateTime = d.toISOString() }
-      }
       const res = await createGoogleCoursework(token, {
         courseId,
         courseName: course?.name || '',
         billId: makeBillId(bill),
         billData: billData(),
+        title: title.trim(),
         instructions: instructions.trim() || undefined,
-        dueDate,
-        dueDateTime,
+        dueDate: dueDay || undefined,
+        dueDateTime: due ? due.toISOString() : undefined,
         maxPoints: Number(points) || 100,
         publish,
+        autoSubmit,
       })
-      setResult({ alternateLink: res.alternateLink, state: res.state, alreadyPushed: res.alreadyPushed })
+      setResult({
+        alternateLink: res.alternateLink,
+        isDraftLink: res.isDraftLink,
+        state: res.state,
+        alreadyPushed: res.alreadyPushed,
+      })
     } catch (err) {
       if (err.code === 'not_connected' || err.code === 'reconnect') setConnectNeeded(err.code)
       else setError(err.message || 'Could not reach Google Classroom.')
     } finally {
       setBusy(false)
     }
+  }
+
+  // Shown under the due inputs so the teacher can confirm the time before it
+  // reaches Classroom, rather than discovering the mismatch there.
+  function duePreview() {
+    const d = localDue()
+    if (!d) return 'No due date — optional.'
+    const when = d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    return d.getTime() <= Date.now()
+      ? `${when} — already passed, Google will reject it.`
+      : `Shows in Google Classroom as ${when}.`
   }
 
   return (
@@ -167,8 +208,11 @@ export default function GoogleAssignModal({ bill, onClose }) {
             </p>
             {result.alternateLink && (
               <a className={styles.openBtn} href={result.alternateLink} target="_blank" rel="noopener noreferrer">
-                Open in Google Classroom
+                {result.isDraftLink ? 'Open the class in Google Classroom' : 'Open in Google Classroom'}
               </a>
+            )}
+            {result.isDraftLink && (
+              <p className={styles.hint}>Google only links directly to posted assignments. Look under Classwork for the draft.</p>
             )}
             <button className={styles.doneBtn} onClick={onClose}>Done</button>
           </div>
@@ -207,6 +251,17 @@ export default function GoogleAssignModal({ bill, onClose }) {
               </select>
             )}
 
+            <label className={styles.label} htmlFor="gc-title">Assignment title</label>
+            <input
+              id="gc-title"
+              className={styles.input}
+              value={title}
+              maxLength={COURSEWORK_TITLE_MAX}
+              onChange={e => { titleDirty.current = true; setTitle(e.target.value) }}
+              placeholder="What students will see in Google Classroom"
+            />
+            <p className={styles.hint}>This is the title students see in Classroom. Edit it to whatever fits your unit.</p>
+
             <label className={styles.label} htmlFor="gc-instructions">Instructions (optional)</label>
             <textarea
               id="gc-instructions"
@@ -219,16 +274,38 @@ export default function GoogleAssignModal({ bill, onClose }) {
 
             <div className={styles.row}>
               <div className={styles.col}>
-                <label className={styles.label} htmlFor="gc-due">Due (optional)</label>
-                <input id="gc-due" type="datetime-local" className={styles.input} value={dueAt} onChange={e => setDueAt(e.target.value)} />
+                <label className={styles.label} htmlFor="gc-due-day">Due date</label>
+                <input id="gc-due-day" type="date" className={styles.input} value={dueDay} onChange={e => setDueDay(e.target.value)} />
+              </div>
+              <div className={styles.col}>
+                <label className={styles.label} htmlFor="gc-due-time">Time</label>
+                <input id="gc-due-time" type="time" className={styles.input} value={dueTime} disabled={!dueDay} onChange={e => setDueTime(e.target.value)} />
               </div>
               <div className={styles.col}>
                 <label className={styles.label} htmlFor="gc-points">Points</label>
                 <input id="gc-points" type="number" min="1" max="1000" className={styles.input} value={points} onChange={e => setPoints(e.target.value)} />
               </div>
             </div>
+            <p className={styles.hint}>{duePreview()}</p>
+
+            <label className={styles.label}>Credit</label>
+            <div className={styles.toggle}>
+              <button type="button" className={autoSubmit ? styles.toggleActive : styles.toggleBtn} onClick={() => setAutoSubmit(true)}>
+                Automatic
+              </button>
+              <button type="button" className={!autoSubmit ? styles.toggleActive : styles.toggleBtn} onClick={() => setAutoSubmit(false)}>
+                Student submits
+              </button>
+            </div>
             <p className={styles.hint}>
-              Students earn full points once they read the bill. The grade lands in Google Classroom on its own.
+              {autoSubmit
+                ? `Students get all ${Number(points) || 100} points as soon as they finish reading the bill.`
+                : 'Students read the bill, then click Submit for credit themselves.'}
+            </p>
+            <p className={styles.note}>
+              Either way a student has to sign in with the Google account on your
+              Classroom roster — that is what tells us whose grade to send. Students
+              who read without signing in still see the bill, but earn no credit.
             </p>
 
             <label className={styles.label}>Post as</label>

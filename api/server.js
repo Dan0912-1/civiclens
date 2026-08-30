@@ -44,6 +44,10 @@ import {
   getClassroomClient,
   buildBillUrl,
   billLinkIsResolvable,
+  buildDueFields,
+  classroomFallbackLink,
+  defaultCourseworkTitle,
+  COURSEWORK_TITLE_MAX,
   isGoogleAuthError,
   classifyGoogleError,
   withGoogleRetry,
@@ -6637,6 +6641,20 @@ app.get('/api/classroom/:id/export', classroomLimiter, async (req, res) => {
 // per teacher for asynchronous grade passback. Tokens are encrypted at rest in
 // google_oauth_tokens; all crypto + OAuth lives in api/googleClassroom.js.
 
+// A whole class opens the Classroom link inside the same few minutes, from one
+// school network. Anonymous readers key on IP, so the 30/min classroom limiter
+// is roughly one class period's worth of students — a second reload, or a
+// 31st student, would start failing. This endpoint is a single indexed row
+// read, so it can afford a much higher ceiling.
+const googleStudentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  keyGenerator: userOrIpKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests — please slow down.' },
+})
+
 // Public limiter for the OAuth callback (Google redirects here with no auth
 // header). Default key generator is IP-based and IPv6-safe.
 const googleOAuthLimiter = rateLimit({
@@ -6809,6 +6827,17 @@ async function hasGoogleHealthCols() {
   return googleHealthCols
 }
 
+let courseworkOptionCols = null
+
+async function hasCourseworkOptionCols() {
+  if (!supabase) return false
+  if (courseworkOptionCols !== null) return courseworkOptionCols
+  const { error } = await supabase.from('classroom_assignments').select('google_auto_submit').limit(1)
+  courseworkOptionCols = !error
+  if (error) console.warn('[google] coursework-option columns missing — run supabase/add_google_coursework_options.sql')
+  return courseworkOptionCols
+}
+
 async function hasGradeRetryCols() {
   if (!supabase) return false
   if (gradeRetryCols !== null) return gradeRetryCols
@@ -6972,9 +7001,22 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
     if (!googleConfigured() || !supabase) return res.status(503).json({ error: 'Service unavailable' })
-    const { courseId, courseName, billId, billData, instructions, dueDate, dueDateTime, maxPoints, publish } = req.body || {}
+    const { courseId, courseName, billId, billData, instructions, dueDate, dueDateTime, maxPoints, publish, title, autoSubmit } = req.body || {}
     if (!courseId || typeof courseId !== 'string') return res.status(400).json({ error: 'courseId is required' })
     if (!billId || typeof billId !== 'string' || billId.length > 80) return res.status(400).json({ error: 'Valid billId is required' })
+
+    // Google requires a future due date and rejects anything else with an
+    // opaque 400 that we used to report as "make sure the course is active" —
+    // sending the teacher to check the wrong thing entirely.
+    const due = buildDueFields(dueDateTime)
+    if (due?.past) return res.status(400).json({ error: 'That due date has already passed. Pick a time in the future.', code: 'due_past' })
+
+    // The teacher's title wins; the default is a readable bill label rather
+    // than 165 characters of legislative boilerplate.
+    const courseworkTitle = (typeof title === 'string' && title.trim())
+      ? title.trim().slice(0, COURSEWORK_TITLE_MAX)
+      : defaultCourseworkTitle(billData)
+    const autoSubmitFlag = autoSubmit !== false
 
     // The Link material is the ONLY way a student reaches the bill. billHref
     // degrades to an unroutable path when type/number/session are missing, so
@@ -7063,9 +7105,16 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     } else if (existingA) {
       assignment = existingA
     } else {
-      const row = { classroom_id: classroomId, bill_id: billId, bill_data: billData || {}, assigned_by: user.id }
+      const row = {
+        classroom_id: classroomId, bill_id: billId, bill_data: billData || {}, assigned_by: user.id,
+        google_title: courseworkTitle, google_auto_submit: autoSubmitFlag,
+      }
       if (instructions && typeof instructions === 'string') row.instructions = instructions.slice(0, 500)
       if (dueDate) row.due_date = dueDate
+      if (dueDateTime) row.due_at = dueDateTime
+      if (!(await hasCourseworkOptionCols())) {
+        delete row.google_title; delete row.google_auto_submit; delete row.due_at
+      }
       const { data: created, error: aErr } = await supabase.from('classroom_assignments')
         .insert(row).select('id, bill_id, bill_data, instructions, due_date, created_at').single()
       if (aErr) throw aErr
@@ -7077,26 +7126,23 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     const url = buildBillUrl(billData, assignment.id)
     const points = Number.isFinite(maxPoints) ? Math.max(0, Math.min(1000, Math.round(maxPoints))) : 100
     const body = {
-      title: (billData?.title || billId).slice(0, 3000),
+      title: courseworkTitle,
       description: (instructions || '').slice(0, 30000) || undefined,
       materials: [{ link: { url } }],
       workType: 'ASSIGNMENT',
       state: publish ? 'PUBLISHED' : 'DRAFT',
       maxPoints: points,
     }
-    // Google stores due date + time in UTC. The frontend sends an absolute UTC
-    // timestamp (dueDateTime) derived from the teacher's local datetime picker,
-    // so Google shows the right local time to every viewer. Fall back to a
-    // date-only value (end of day) for older payloads.
-    if (dueDateTime) {
-      const dt = new Date(dueDateTime)
-      if (!isNaN(dt.getTime())) {
-        body.dueDate = { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() }
-        body.dueTime = { hours: dt.getUTCHours(), minutes: dt.getUTCMinutes() }
-      }
-    } else if (dueDate) {
-      const [y, m, d] = String(dueDate).split('-').map(Number)
-      if (y && m && d) { body.dueDate = { year: y, month: m, day: d }; body.dueTime = { hours: 23, minutes: 59 } }
+    // Only an absolute instant can be converted correctly. The old date-only
+    // branch stamped 23:59 UTC on the teacher's local calendar day, which is
+    // 7:59 PM Eastern — the bug that made Classroom disagree with the picker.
+    // A client that sends a bare date now gets no due date rather than a wrong
+    // one; ours always sends dueDateTime.
+    if (due && !due.past) {
+      body.dueDate = due.dueDate
+      body.dueTime = due.dueTime
+    } else if (dueDate && !dueDateTime) {
+      console.warn('[google] date-only dueDate ignored — client must send an absolute dueDateTime')
     }
     let cw
     try {
@@ -7111,17 +7157,79 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     }
     await markGoogleHealth(user.id, null)
 
+    const patch = { google_course_id: courseId, google_coursework_id: cw.data.id, google_alternate_link: cw.data.alternateLink || null, google_max_points: points }
+    if (await hasCourseworkOptionCols()) {
+      patch.google_title = courseworkTitle
+      patch.google_auto_submit = autoSubmitFlag
+      if (dueDateTime) patch.due_at = dueDateTime
+    }
     const { data: updated } = await supabase.from('classroom_assignments')
-      .update({ google_course_id: courseId, google_coursework_id: cw.data.id, google_alternate_link: cw.data.alternateLink || null, google_max_points: points })
+      .update(patch)
       .eq('id', assignment.id)
       .select('id, bill_id, bill_data, instructions, due_date, created_at, google_course_id, google_coursework_id, google_alternate_link, google_max_points').single()
 
-    res.json({ assignment: updated || assignment, alternateLink: cw.data.alternateLink || null, classroomId, state: body.state })
+    // Google only populates alternateLink once the post is PUBLISHED, so a
+    // draft — our default — came back with no link at all and the success
+    // screen dropped its "Open in Google Classroom" button. Point drafts at the
+    // course itself, which is where the teacher goes to review and post it.
+    res.json({
+      assignment: updated || assignment,
+      alternateLink: cw.data.alternateLink || classroomFallbackLink(course, courseId),
+      isDraftLink: !cw.data.alternateLink,
+      classroomId,
+      state: body.state,
+      title: courseworkTitle,
+      autoSubmit: autoSubmitFlag,
+    })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
     console.error('[google] coursework error:', err.message)
     res.status(500).json({ error: 'Failed to push to Google Classroom' })
+  }
+})
+
+// What the student page needs to know about a Google assignment before it does
+// anything: the teacher's title and instructions, and — the reason this exists —
+// whether the teacher chose automatic credit or wants a deliberate Submit click.
+//
+// Auth is optional. The assignment id already travels in the Classroom link, so
+// returning the teacher's own framing to anyone holding that link leaks nothing
+// new; a signed-in student additionally learns whether they've already finished.
+app.get('/api/google/coursework/:assignmentId/meta', googleStudentLimiter, async (req, res) => {
+  try {
+    if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
+    const options = await hasCourseworkOptionCols()
+    const cols = 'id, classroom_id, instructions, due_date, google_coursework_id, google_max_points'
+      + (options ? ', google_title, google_auto_submit, due_at' : '')
+    const { data: a } = await supabase.from('classroom_assignments')
+      .select(cols).eq('id', req.params.assignmentId).maybeSingle()
+    if (!a || !a.google_coursework_id) return res.status(404).json({ error: 'Assignment not found' })
+
+    let completed = false
+    try {
+      const user = await requireAuth(req)
+      const { data: done } = await supabase.from('assignment_completions')
+        .select('completed_at, google_grade_sent_at')
+        .eq('assignment_id', a.id).eq('user_id', user.id).maybeSingle()
+      completed = !!done?.completed_at
+    } catch { /* anonymous reader — everything below still applies */ }
+
+    res.json({
+      title: a.google_title || null,
+      instructions: a.instructions || null,
+      maxPoints: a.google_max_points ?? null,
+      dueAt: a.due_at || null,
+      dueDate: a.due_date || null,
+      // Pre-migration rows have no stored preference. Automatic matches the
+      // behaviour those assignments were created under, so nothing changes for
+      // a class mid-semester.
+      autoSubmit: options ? a.google_auto_submit !== false : true,
+      completed,
+    })
+  } catch (err) {
+    console.error('[google] coursework meta error:', err.message)
+    res.status(500).json({ error: 'Failed to load assignment' })
   }
 })
 
@@ -7205,13 +7313,43 @@ async function recordGradeOutcome(assignmentId, userId, result) {
   }
 }
 
+// Re-read the coursework from Google and reconcile what we cached.
+//
+// Two things drift after we create the post, both of which quietly corrupt
+// grading: a teacher publishes a draft (alternateLink only exists once
+// PUBLISHED, so ours stayed null and the "Open in Classroom" link never
+// appeared), or edits the point value in Classroom (we would keep awarding the
+// old maxPoints, so a 50-point assignment kept getting 100s).
+//
+// Returns the possibly-updated assignment. Never throws.
+async function refreshCourseworkState(classroomClient, assignment) {
+  try {
+    const out = await withGoogleRetry(() => classroomClient.courses.courseWork.get({
+      courseId: assignment.google_course_id, id: assignment.google_coursework_id,
+    }))
+    const d = out.data || {}
+    const patch = {}
+    if (d.alternateLink && d.alternateLink !== assignment.google_alternate_link) patch.google_alternate_link = d.alternateLink
+    if (Number.isFinite(d.maxPoints) && d.maxPoints !== assignment.google_max_points) patch.google_max_points = d.maxPoints
+    if (Object.keys(patch).length) {
+      await supabase.from('classroom_assignments').update(patch).eq('id', assignment.id)
+      return { ...assignment, ...patch }
+    }
+  } catch (e) {
+    // A missing post is handled by the caller's own error path; a transient
+    // failure just means we grade with what we already had.
+    console.warn('[google] coursework refresh skipped:', e.message)
+  }
+  return assignment
+}
+
 // Teacher re-pushes grades for every completer of a Google-linked assignment.
 app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, async (req, res) => {
   try {
     await requireAuth(req)
     if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
-    const { data: assignment } = await supabase.from('classroom_assignments')
-      .select('id, classroom_id, assigned_by, google_course_id, google_coursework_id, google_max_points')
+    let { data: assignment } = await supabase.from('classroom_assignments')
+      .select('id, classroom_id, assigned_by, google_course_id, google_coursework_id, google_max_points, google_alternate_link')
       .eq('id', req.params.assignmentId).maybeSingle()
     if (!assignment || !assignment.google_coursework_id) return res.status(404).json({ error: 'Assignment not found' })
     await requireClassroomTeacher(req, assignment.classroom_id)
@@ -7219,6 +7357,10 @@ app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, a
     const { data: teacherTok } = await supabase.from('google_oauth_tokens').select('refresh_token_enc').eq('user_id', assignment.assigned_by).maybeSingle()
     if (!teacherTok?.refresh_token_enc) return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
     const refresh = decryptSecret(teacherTok.refresh_token_enc)
+
+    // Pick up a published draft's link and any point change the teacher made in
+    // Classroom before we grade against a stale maxPoints.
+    assignment = await refreshCourseworkState(getClassroomClient(refresh), assignment)
 
     const { data: completions } = await supabase.from('assignment_completions')
       .select('user_id').eq('assignment_id', assignment.id).not('user_id', 'is', null)
@@ -7247,7 +7389,7 @@ app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, a
       }
     }
     if (graded > 0) await markGoogleHealth(assignment.assigned_by, null)
-    res.json({ graded, skipped, failed, total: rows.length, reasons })
+    res.json({ graded, skipped, failed, total: rows.length, reasons, alternateLink: assignment.google_alternate_link || null, maxPoints: assignment.google_max_points })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
@@ -7273,7 +7415,7 @@ async function sweepPendingGoogleGrades() {
   const cutoff = new Date(Date.now() - GRADE_SWEEP_LOOKBACK_DAYS * 86400_000).toISOString()
 
   const { data: assignments } = await supabase.from('classroom_assignments')
-    .select('id, assigned_by, google_course_id, google_coursework_id, google_max_points')
+    .select('id, assigned_by, google_course_id, google_coursework_id, google_max_points, google_alternate_link')
     .not('google_coursework_id', 'is', null)
     .gte('created_at', cutoff)
     .limit(500)
@@ -7306,11 +7448,21 @@ async function sweepPendingGoogleGrades() {
   const deadTokens = new Set()
   let graded = 0, stillPending = 0
 
+  // Reconcile each assignment once per sweep, not once per student: a draft
+  // published since the last run now has submissions to grade, and its point
+  // value may have changed.
+  const reconciled = new Set()
+
   for (const p of pending) {
-    const assignment = byId.get(p.assignment_id)
+    let assignment = byId.get(p.assignment_id)
     if (!assignment?.assigned_by || deadTokens.has(assignment.assigned_by)) { stillPending++; continue }
     const refresh = await refreshFor(assignment.assigned_by)
     if (!refresh) { stillPending++; continue }
+    if (!reconciled.has(assignment.id)) {
+      reconciled.add(assignment.id)
+      assignment = await refreshCourseworkState(getClassroomClient(refresh), assignment)
+      byId.set(assignment.id, assignment)
+    }
     const email = emails.get(p.user_id)
     if (!email) {
       await recordGradeOutcome(p.assignment_id, p.user_id, { graded: false, reason: 'no_email' })
