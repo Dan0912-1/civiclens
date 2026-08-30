@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { getSessionSafe } from '../lib/supabase'
 import { useToast } from '../context/ToastContext'
 import {
   getClassroomDetail, getAssignments, removeAssignment,
@@ -15,7 +14,7 @@ import styles from './ClassroomDetail.module.css'
 export default function ClassroomDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading: authLoading, getToken } = useAuth()
   const { showToast } = useToast()
   const [classroom, setClassroom] = useState(null)
   const [assignments, setAssignments] = useState([])
@@ -25,7 +24,6 @@ export default function ClassroomDetail() {
   const [showAssign, setShowAssign] = useState(false)
   const [syncingId, setSyncingId] = useState(null)
   const [codeCopied, setCodeCopied] = useState(false)
-  const [token, setToken] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [completionsData, setCompletionsData] = useState(null)
   const [completionsLoading, setCompletionsLoading] = useState(false)
@@ -45,15 +43,6 @@ export default function ClassroomDetail() {
       statsAbortRef.current?.abort()
     }
   }, [user, authLoading, id])
-
-  async function getToken() {
-    try {
-      const session = await getSessionSafe()
-      const t = session?.access_token || null
-      setToken(t)
-      return t
-    } catch { return null }
-  }
 
   async function loadData() {
     setLoading(true)
@@ -223,7 +212,7 @@ export default function ClassroomDetail() {
   async function loadCompletions() {
     setCompletionsLoading(true)
     setCompletionsError('')
-    const t = token || await getToken()
+    const t = await getToken()
     if (!t) {
       setCompletionsLoading(false)
       setCompletionsError('Your session expired. Please sign in again.')

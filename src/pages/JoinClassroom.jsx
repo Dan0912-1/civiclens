@@ -2,14 +2,13 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import * as Sentry from '@sentry/react'
 import { useAuth } from '../context/AuthContext'
-import { getSessionSafe } from '../lib/supabase'
 import { joinClassroom, peekClassroom, addJoinedClassroom, joinClassroomAnon } from '../lib/classroom'
 import styles from './JoinClassroom.module.css'
 
 export default function JoinClassroom() {
   const navigate = useNavigate()
   const { code: codeParam } = useParams()
-  const { user } = useAuth()
+  const { user, getToken } = useAuth()
   const [code, setCode] = useState(() => {
     const c = (codeParam || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
     return c
@@ -32,8 +31,7 @@ export default function JoinClassroom() {
     setError('')
     try {
       if (user) {
-        const session = await getSessionSafe()
-        const token = session?.access_token
+        const token = await getToken()
         if (!token) { setError('Please sign in first'); setLoading(false); return }
         await joinClassroom(token, trimmed)
         navigate('/classroom')

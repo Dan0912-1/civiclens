@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { getSessionSafe } from '../lib/supabase'
 import { getMyClassrooms, getJoinedClassrooms } from '../lib/classroom'
 import { getGoogleStatus, getGoogleConnectUrl, disconnectGoogle, googleErrorMessage } from '../lib/googleClassroom'
 import CreateClassroomModal from '../components/CreateClassroomModal.jsx'
@@ -14,7 +13,7 @@ const isNative = Capacitor.getPlatform() !== 'web'
 
 export default function TeacherDashboard() {
   const navigate = useNavigate()
-  const { user } = useAuth()
+  const { user, getToken } = useAuth()
   const [classrooms, setClassrooms] = useState([])
   const [anonClassrooms, setAnonClassrooms] = useState([])
   const [loading, setLoading] = useState(true)
@@ -38,8 +37,7 @@ export default function TeacherDashboard() {
     // Load server-side classrooms for logged-in users
     if (user) {
       try {
-        const session = await getSessionSafe()
-        const token = session?.access_token
+        const token = await getToken()
         if (token) {
           const data = await getMyClassrooms(token)
           setClassrooms(data)
@@ -86,8 +84,7 @@ export default function TeacherDashboard() {
 
   async function refreshGoogleStatus() {
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) return
       setGoogleStatus(await getGoogleStatus(token))
     } catch {}
@@ -97,8 +94,7 @@ export default function TeacherDashboard() {
     setGoogleBusy(true)
     setGoogleNotice(null)
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) {
         setGoogleNotice({ type: 'error', msg: 'Please sign in first.' })
         setGoogleBusy(false)
@@ -121,8 +117,7 @@ export default function TeacherDashboard() {
     if (!window.confirm('Disconnect Google Classroom? Assignments already pushed stay in Google Classroom, but CapitolKey can no longer send grades.')) return
     setGoogleBusy(true)
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (token) {
         await disconnectGoogle(token)
         setGoogleNotice({ type: 'success', msg: 'Google Classroom disconnected.' })

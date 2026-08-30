@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react'
+import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
 import { supabase, getSessionSafe, withAuthTimeout, broadcastAuthChange, onAuthBroadcast } from '../lib/supabase'
 import {
   saveProfile, readProfileRow, seedProfileIfAbsent, PROFILE_READ_FAILED,
@@ -35,6 +35,7 @@ const AuthContext = createContext({
   signUpWithEmail: () => {},
   resetPassword: () => {},
   signOut: () => {},
+  getToken: async () => null,
 })
 
 export function useAuth() {
@@ -48,6 +49,46 @@ export function AuthProvider({ children }) {
   // mount-time getSession race doesn't clobber a valid user with null when
   // its 3s timeout arm fires.
   const authResolvedRef = useRef(false)
+  // Cached access token, so every page doesn't independently pay
+  // getSessionSafe()'s lock race (up to 2s when Supabase's navigator.locks
+  // wedges). onAuthStateChange hands us a fresh session on sign-in and on
+  // every token refresh, so this stays current for free.
+  const tokenRef = useRef({ token: null, expiresAt: 0 })
+  // De-dupes concurrent refreshes: two components mounting at once share one
+  // getSessionSafe() call instead of racing two.
+  const tokenInflightRef = useRef(null)
+
+  function cacheSession(session) {
+    if (session?.access_token) {
+      tokenRef.current = {
+        token: session.access_token,
+        expiresAt: session.expires_at || Math.floor(Date.now() / 1000) + 3600,
+      }
+    } else {
+      tokenRef.current = { token: null, expiresAt: 0 }
+    }
+  }
+
+  // The single place the app reads an access token. Returns the cached one
+  // while it's still good, otherwise falls back to getSessionSafe() once and
+  // caches the result. Callers that used to do their own getSessionSafe() on
+  // every page mount now hit memory instead of the auth lock.
+  const getToken = useCallback(async () => {
+    const { token, expiresAt } = tokenRef.current
+    // 60s margin so a token doesn't expire in flight.
+    if (token && expiresAt > Math.floor(Date.now() / 1000) + 60) return token
+
+    if (!tokenInflightRef.current) {
+      tokenInflightRef.current = getSessionSafe()
+        .then((session) => {
+          cacheSession(session)
+          return session?.access_token || null
+        })
+        .catch(() => null)
+        .finally(() => { tokenInflightRef.current = null })
+    }
+    return tokenInflightRef.current
+  }, [])
 
   useEffect(() => {
     if (!supabase) {
@@ -75,6 +116,7 @@ export function AuthProvider({ children }) {
       if (!authResolvedRef.current) {
         setUser(session?.user ?? null)
       }
+      if (session?.access_token) cacheSession(session)
       setLoading(false)
       cleanOAuthParams()
     })
@@ -91,6 +133,7 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       authResolvedRef.current = true
       setUser(session?.user ?? null)
+      cacheSession(session)
       // Once supabase has fired any event we trust its view — flip loading off
       // even if the mount-time race is still in flight.
       setLoading(false)
@@ -397,6 +440,9 @@ export function AuthProvider({ children }) {
     // setUser(null), which left the UI in a signed-in state for up to 4s
     // while the Supabase auth lock drained.
     setUser(null)
+    // Drop the cached access token immediately — a stale one here would let a
+    // page fire an authenticated request after the user signed out.
+    cacheSession(null)
     sessionStorage.removeItem('civicProfile')
     sessionStorage.removeItem('civicInteractions')
     sessionStorage.removeItem('ck_joined_classrooms')
@@ -454,6 +500,7 @@ export function AuthProvider({ children }) {
       signUpWithEmail,
       resetPassword,
       signOut: handleSignOut,
+      getToken,
     }}>
       {children}
     </AuthContext.Provider>
