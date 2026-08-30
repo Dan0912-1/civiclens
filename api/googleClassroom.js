@@ -180,3 +180,123 @@ export function hasRequiredScopes(grantedScopeStr) {
   const granted = new Set((grantedScopeStr || '').split(/\s+/).filter(Boolean))
   return REQUIRED_CLASSROOM_SCOPES.every((s) => granted.has(s))
 }
+
+// ─── Error classification ────────────────────────────────────────────────────
+// googleapis (gaxios) surfaces HTTP failures inconsistently: sometimes
+// err.response.status, sometimes err.status, sometimes a numeric err.code, and
+// for token-endpoint failures only err.response.data.error ('invalid_grant').
+// Reading all of them keeps a revoked token from being misread as a transient
+// blip (and vice versa).
+export function googleStatus(err) {
+  const raw = err?.response?.status ?? err?.status ?? err?.code
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+// The teacher must re-run consent: the refresh token was revoked, expired, or
+// the grant was removed at myaccount.google.com.
+export function isGoogleAuthError(err) {
+  const m = String(err?.message || '')
+  const data = err?.response?.data
+  const dataErr = String(data?.error || data?.error_description || '')
+  if (/invalid_grant|invalid_token|unauthorized_client|Token has been expired or revoked/i.test(m + ' ' + dataErr)) return true
+  return googleStatus(err) === 401
+}
+
+// A single reason code per failure so callers can render an ACTIONABLE message
+// instead of a generic "something went wrong".
+export function classifyGoogleError(err) {
+  if (isGoogleAuthError(err)) return 'reconnect'
+  const status = googleStatus(err)
+  if (status === 404) return 'not_found'
+  if (status === 403) return 'forbidden'
+  if (status === 429) return 'rate_limited'
+  if (status && status >= 500) return 'google_down'
+  return 'error'
+}
+
+// Transient failures worth one more try. 404/403 never are — they mean the
+// resource or the permission genuinely isn't there.
+const RETRYABLE = new Set([429, 500, 502, 503, 504])
+
+export async function withGoogleRetry(fn, { attempts = 3, baseDelayMs = 400 } = {}) {
+  let lastErr
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      const status = googleStatus(err)
+      const networkBlip = !status && /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(String(err?.message || ''))
+      if (i === attempts - 1 || (!RETRYABLE.has(status) && !networkBlip)) throw err
+      const backoff = baseDelayMs * 2 ** i + Math.floor(Math.random() * 150)
+      await new Promise((r) => setTimeout(r, backoff))
+    }
+  }
+  throw lastErr
+}
+
+// ─── Course listing ──────────────────────────────────────────────────────────
+// courses.list is paginated. A teacher with more than one page of active
+// classes would silently lose the rest from the assign picker, so walk the
+// pages (bounded, so a pathological account can't spin here forever).
+export async function listAllTeacherCourses(classroom, { maxPages = 5, pageSize = 100 } = {}) {
+  const courses = []
+  let pageToken
+  for (let page = 0; page < maxPages; page++) {
+    const out = await withGoogleRetry(() => classroom.courses.list({
+      teacherId: 'me',
+      courseStates: ['ACTIVE'],
+      pageSize,
+      ...(pageToken ? { pageToken } : {}),
+    }))
+    for (const c of (out.data.courses || [])) {
+      courses.push({ id: c.id, name: c.name, section: c.section || '' })
+    }
+    pageToken = out.data.nextPageToken
+    if (!pageToken) break
+  }
+  return courses
+}
+
+// Does this coursework still exist in Google? A teacher who deletes the post in
+// Google Classroom leaves us holding a dead google_coursework_id; without this
+// check a re-push just returns the dead alternateLink as "already assigned".
+export async function courseWorkExists(classroom, courseId, courseWorkId) {
+  try {
+    const out = await withGoogleRetry(() => classroom.courses.courseWork.get({ courseId, id: courseWorkId }))
+    return out?.data?.state !== 'DELETED'
+  } catch (err) {
+    if (googleStatus(err) === 404) return false
+    // 403/network/etc: assume it's still there rather than duplicating a post.
+    return true
+  }
+}
+
+// ─── Bill link validation ────────────────────────────────────────────────────
+// buildBillUrl feeds Google Classroom the ONE link students follow. billHref
+// degrades gracefully on missing fields ('/bill/0//'), which would ship a dead
+// assignment to a real class, so validate the shape before we push it.
+// A federal bill resolves from /bill/:congress/:type/:number, so congress must
+// be a real number — billHref falls back to 0, which only routes when a
+// legiscan_id rides along (the state-bill fallback shape).
+const FEDERAL_PATH_RE = /^\/bill\/([1-9]\d*)\/[a-z]+\/[A-Za-z0-9.-]+$/
+const FEDERAL_FALLBACK_RE = /^\/bill\/0\/[a-z]+\/[A-Za-z0-9.-]+\?legiscan_id=\d+$/
+const STATE_PATH_RE = /^\/states\/[a-z]{2}\/[a-z0-9-]+\/[a-z]+\/[A-Za-z0-9.-]+$/
+
+export function isResolvableBillPath(path) {
+  if (typeof path !== 'string' || !path.startsWith('/')) return false
+  // billHref interpolates missing fields straight into the path, so a bill with
+  // no number yields '/bill/0/hr/undefined' — a well-formed-looking 404.
+  if (/\/(undefined|null)(\?|$)/.test(path)) return false
+  return FEDERAL_PATH_RE.test(path) || FEDERAL_FALLBACK_RE.test(path) || STATE_PATH_RE.test(path)
+}
+
+// True when billData is complete enough to produce a link a student can open.
+export function billLinkIsResolvable(billData) {
+  if (!billData || typeof billData !== 'object') return false
+  const type = String(billData.type ?? billData.bill_type ?? '').trim()
+  const number = billData.number ?? billData.bill_number
+  if (!type || number == null || String(number).trim() === '') return false
+  return isResolvableBillPath(billHref(billData, { canonical: true }))
+}

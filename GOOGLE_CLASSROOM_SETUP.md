@@ -64,9 +64,36 @@ endpoints return `503`. Nothing else in the app is affected.
 
 ## Database
 
-Apply `supabase/create_google_oauth_tokens_table.sql` in the Supabase SQL editor.
-Phases 2 and 3 add a few more migrations (course/coursework links, grade
-bookkeeping); each is a separate file in `supabase/`.
+Apply these in the Supabase SQL editor, in order. Each is idempotent
+(`if not exists` throughout), so re-running one is harmless.
+
+| File | Adds |
+| --- | --- |
+| `create_google_oauth_tokens_table.sql` | The encrypted per-teacher token store (Phase 1). |
+| `add_google_classroom_columns.sql` | Course/coursework links on classrooms + assignments, grade bookkeeping on completions (Phases 2–3). |
+| `add_google_health_and_grade_retry.sql` | Connection-health columns + grade-retry bookkeeping for the nightly sweep. |
+
+The backend tolerates a pending migration rather than breaking: it probes for
+the newer columns once and degrades (status drops `needsReconnect`, the nightly
+sweep skips with a warning) instead of failing the whole query. Watch the boot
+log for `run supabase/add_google_health_and_grade_retry.sql` to know it's still
+outstanding.
+
+### Grade passback, and why a grade can be missing
+
+Passback runs when a student finishes reading, matching their submission by
+passing their email as the Classroom `userId` filter. It legitimately misses:
+
+| Reason | What happened | Who fixes it |
+| --- | --- | --- |
+| `not_in_course` | The student signed into CapitolKey with an account that isn't on the Google roster (usually a personal Gmail). | Student re-signs in with the school account. |
+| `no_submission` | Coursework is still a DRAFT, or Google hasn't created the submission yet. | Resolves itself; the nightly sweep retries. |
+| `reconnect` | The teacher's refresh token was revoked or expired. | Teacher reconnects. |
+| `ungraded` | The assignment's maxPoints is 0. | Nothing to send. |
+
+A nightly sweep (03:20 UTC) retries everything still pending, up to 8 nights,
+looking back 45 days. Teachers can also force it from a classroom with
+**Sync grades**.
 
 ## Endpoints (Phase 1)
 
@@ -74,7 +101,7 @@ bookkeeping); each is a separate file in `supabase/`.
 | --- | --- | --- | --- |
 | GET | `/api/google/oauth/start` | teacher JWT | Returns the Google consent URL (signed `state` binds the user). |
 | GET | `/api/google/oauth/callback` | public (signed state) | Exchanges the code, stores the encrypted refresh token, redirects back. |
-| GET | `/api/google/status` | teacher JWT | `{ connected, configured, email, needsReconsent }`. |
+| GET | `/api/google/status` | teacher JWT | `{ connected, configured, email, needsReconsent, needsReconnect }`. |
 | POST | `/api/google/disconnect` | teacher JWT | Revokes at Google and deletes the stored token. |
 
 ## Verification

@@ -9,7 +9,7 @@ import {
   updateClassroom, leaveClassroom
 } from '../lib/classroom'
 import AssignBillModal from '../components/AssignBillModal.jsx'
-import { syncGoogleGrades } from '../lib/googleClassroom'
+import { syncGoogleGrades, syncSummary } from '../lib/googleClassroom'
 import styles from './ClassroomDetail.module.css'
 
 export default function ClassroomDetail() {
@@ -131,8 +131,10 @@ export default function ClassroomDetail() {
       const t = await getToken()
       if (!t) { showToast('Please sign in again', 'error'); return }
       const res = await syncGoogleGrades(t, assignmentId)
-      const pending = res.failed ? `, ${res.failed} pending` : ''
-      showToast(`Synced ${res.graded} grade${res.graded === 1 ? '' : 's'} to Google Classroom${pending}`)
+      // "N pending" told the teacher a number but not what to do about it.
+      // syncSummary names the actual blocker — most often a student signed in
+      // with an account that isn't on the Google Classroom roster.
+      showToast(syncSummary(res), res.graded === 0 && res.total > 0 ? 'error' : 'success')
     } catch (err) {
       showToast(err.message || 'Could not sync grades', 'error')
     } finally {
