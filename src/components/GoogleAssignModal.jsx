@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { getSessionSafe } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 import { makeBillId } from '../lib/billId'
 import { listGoogleCourses, createGoogleCoursework, getGoogleConnectUrl, googleErrorMessage } from '../lib/googleClassroom'
 import { defaultCourseworkTitle, COURSEWORK_TITLE_MAX } from '../lib/courseworkTitle'
@@ -18,6 +18,7 @@ const isNative = Capacitor.getPlatform() !== 'web'
 // find it, then find their way back to this bill — the modal now runs the
 // consent flow itself and returns to this same bill with the modal reopened.
 export default function GoogleAssignModal({ bill, onClose }) {
+  const { getToken } = useAuth()
   const [courses, setCourses] = useState(null) // null = loading
   const [courseId, setCourseId] = useState('')
   const [publish, setPublish] = useState(false) // default: Save as draft
@@ -71,8 +72,7 @@ export default function GoogleAssignModal({ bill, onClose }) {
     setConnectNeeded(null)
     setCourses(null)
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) { setError('Please sign in again.'); setCourses([]); return }
       const list = await listGoogleCourses(token)
       setCourses(list)
@@ -89,8 +89,7 @@ export default function GoogleAssignModal({ bill, onClose }) {
     setConnecting(true)
     setError('')
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) { setError('Please sign in again.'); setConnecting(false); return }
       const params = new URLSearchParams(window.location.search)
       params.set('gassign', '1')
@@ -145,8 +144,7 @@ export default function GoogleAssignModal({ bill, onClose }) {
     }
     setBusy(true); setError('')
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) { setError('Please sign in again.'); setBusy(false); return }
       const course = (courses || []).find(c => c.id === courseId)
       const res = await createGoogleCoursework(token, {

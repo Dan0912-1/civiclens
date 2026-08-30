@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { getSessionSafe } from '../lib/supabase'
 import { createClassroom } from '../lib/classroom'
 import styles from './CreateClassroomModal.module.css'
 
 export default function CreateClassroomModal({ onClose, onCreated }) {
-  const { user } = useAuth()
+  const { user, getToken } = useAuth()
   const [name, setName] = useState('')
   const [requireName, setRequireName] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -51,8 +50,7 @@ export default function CreateClassroomModal({ onClose, onCreated }) {
     setLoading(true)
     setError('')
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) { setError('Please sign in'); setLoading(false); return }
       await createClassroom(token, name.trim(), requireName)
       onCreated()

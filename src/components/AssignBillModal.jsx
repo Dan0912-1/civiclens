@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
-import { getSessionSafe } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 import { getApiBase } from '../lib/api'
 import { createAssignment } from '../lib/classroom'
 import { makeBillId } from '../lib/billId'
@@ -41,6 +41,7 @@ const TOPIC_CHIPS = [
 ]
 
 export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
+  const { getToken } = useAuth()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
@@ -139,8 +140,7 @@ export default function AssignBillModal({ classroomId, onClose, onAssigned }) {
     setAssigning(true)
     setError('')
     try {
-      const session = await getSessionSafe()
-      const token = session?.access_token
+      const token = await getToken()
       if (!token) { setError('Please sign in'); setAssigning(false); return }
 
       const billId = makeBillId(selected)

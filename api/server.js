@@ -22,6 +22,7 @@ import { runDailySync, runBackfill, fetchBillText, backfillStateTexts, refreshHo
 import { runRanker } from './billRanker.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
+import { verifyAccessToken } from './authVerify.js'
 import { registerSitemapRoutes } from './sitemap.js'
 import { registerBillRenderRoutes } from './billRenderer.js'
 import { registerTopicRoutes } from './topics.js'
@@ -3435,12 +3436,25 @@ app.post('/api/share-post', personalizeLimiter, async (req, res) => {
 })
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
+// Verifies the access token locally against Supabase's published JWKS. That
+// replaces a ~150-300ms network round trip to the Auth API on EVERY request
+// with local ECDSA verification. supabase.auth.getUser stays as the fallback
+// for tokens we can't judge locally (legacy HS256 signing keys, an unknown kid
+// mid-rotation) — never as a fallback to "allow".
+async function resolveUserFromToken(token) {
+  const verdict = await verifyAccessToken(token, SUPABASE_URL)
+  if (verdict.ok) return verdict.user
+  if (verdict.reason === 'invalid') return null
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+  return error ? null : (user || null)
+}
+
 async function requireAuth(req) {
   const authHeader = req.headers.authorization
   if (!authHeader || !supabase) throw new Error('Unauthorized')
   const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error } = await supabase.auth.getUser(token)
-  if (error || !user) throw new Error('Invalid token')
+  const user = await resolveUserFromToken(token)
+  if (!user) throw new Error('Invalid token')
   return user
 }
 
@@ -5408,9 +5422,7 @@ async function getOptionalUser(req) {
   const authHeader = req.headers.authorization
   if (!authHeader || !supabase) return null
   try {
-    const token = authHeader.replace('Bearer ', '')
-    const { data: { user }, error } = await supabase.auth.getUser(token)
-    return error ? null : user
+    return await resolveUserFromToken(authHeader.replace('Bearer ', ''))
   } catch { return null }
 }
 
@@ -5775,28 +5787,47 @@ function generateJoinCode() {
   return code
 }
 
-async function requireClassroomTeacher(req, classroomId) {
+// Resolves auth + this user's role in the classroom, and hands back the
+// classroom row so callers don't re-fetch it. requireAuth is local crypto now,
+// so the two remaining reads are the only network work — and they're
+// independent, so they go out together rather than one after the other.
+//
+// The service key bypasses RLS, so this helper IS the authorization boundary
+// for every classroom route. Owner always counts as a teacher, even if the
+// classroom_members row is missing.
+// Wraps a read that is fired in parallel with the authorization check. If
+// authorization fails the result is thrown away, so this must never reject on
+// its own. PostgREST already reports query failure in-band via `error`.
+function speculative(query) {
+  return Promise.resolve(query).catch(() => ({ data: null }))
+}
+
+async function loadClassroomAccess(req, classroomId) {
   const user = await requireAuth(req)
   if (!supabase) throw new Error('Service unavailable')
-  const { data: classroom } = await supabase
-    .from('classrooms').select('id, owner_id').eq('id', classroomId).single()
+  const [classroomRes, membershipRes] = await Promise.all([
+    supabase.from('classrooms')
+      .select('id, owner_id, name, join_code, archived, created_at')
+      .eq('id', classroomId).maybeSingle(),
+    supabase.from('classroom_members').select('role')
+      .eq('classroom_id', classroomId).eq('user_id', user.id).maybeSingle(),
+  ])
+  const classroom = classroomRes.data
   if (!classroom) throw new Error('Not found')
-  if (classroom.owner_id === user.id) return user
-  const { data: membership } = await supabase
-    .from('classroom_members').select('role')
-    .eq('classroom_id', classroomId).eq('user_id', user.id).eq('role', 'teacher').single()
-  if (!membership) throw new Error('Forbidden')
+  const role = classroom.owner_id === user.id ? 'teacher' : (membershipRes.data?.role || null)
+  if (!role) throw new Error('Forbidden')
+  return { user: { ...user, classroomRole: role }, classroom, role }
+}
+
+async function requireClassroomTeacher(req, classroomId) {
+  const { user, role } = await loadClassroomAccess(req, classroomId)
+  if (role !== 'teacher') throw new Error('Forbidden')
   return user
 }
 
 async function requireClassroomMember(req, classroomId) {
-  const user = await requireAuth(req)
-  if (!supabase) throw new Error('Service unavailable')
-  const { data: membership } = await supabase
-    .from('classroom_members').select('role')
-    .eq('classroom_id', classroomId).eq('user_id', user.id).single()
-  if (!membership) throw new Error('Forbidden')
-  return { ...user, classroomRole: membership.role }
+  const { user } = await loadClassroomAccess(req, classroomId)
+  return user
 }
 
 // Create classroom
@@ -5846,25 +5877,27 @@ app.get('/api/classroom', classroomLimiter, async (req, res) => {
     const ids = memberships.map(m => m.classroom_id)
     const roleMap = Object.fromEntries(memberships.map(m => [m.classroom_id, m.role]))
 
-    const { data: classrooms } = await supabase.from('classrooms')
-      .select('id, owner_id, name, join_code, archived, created_at')
-      .in('id', ids)
-      .order('created_at', { ascending: false })
+    // Classroom rows and the two count rollups are independent — one wave
+    // instead of three sequential round trips.
+    const [classroomsRes, memberCountsRes, assignmentCountsRes] = await Promise.all([
+      supabase.from('classrooms')
+        .select('id, owner_id, name, join_code, archived, created_at')
+        .in('id', ids)
+        .order('created_at', { ascending: false }),
+      supabase.from('classroom_members')
+        .select('classroom_id').in('classroom_id', ids).eq('role', 'student'),
+      supabase.from('classroom_assignments')
+        .select('classroom_id').in('classroom_id', ids),
+    ])
 
-    // Get member counts
-    const { data: memberCounts } = await supabase.from('classroom_members')
-      .select('classroom_id').in('classroom_id', ids).eq('role', 'student')
-
+    const classrooms = classroomsRes.data
     const countMap = {}
-    for (const m of (memberCounts || [])) {
+    for (const m of (memberCountsRes.data || [])) {
       countMap[m.classroom_id] = (countMap[m.classroom_id] || 0) + 1
     }
 
-    // Get assignment counts
-    const { data: assignmentCounts } = await supabase.from('classroom_assignments')
-      .select('classroom_id').in('classroom_id', ids)
     const assignMap = {}
-    for (const a of (assignmentCounts || [])) {
+    for (const a of (assignmentCountsRes.data || [])) {
       assignMap[a.classroom_id] = (assignMap[a.classroom_id] || 0) + 1
     }
 
@@ -5917,16 +5950,18 @@ app.get('/api/classroom/peek/:code', classroomLimiter, async (req, res) => {
 // Get classroom detail
 app.get('/api/classroom/:id', classroomLimiter, async (req, res) => {
   try {
-    const user = await requireClassroomMember(req, req.params.id)
-    const { data: classroom } = await supabase.from('classrooms')
-      .select('id, owner_id, name, join_code, archived, created_at')
-      .eq('id', req.params.id).single()
-    if (!classroom) return res.status(404).json({ error: 'Classroom not found' })
+    // loadClassroomAccess already returns the classroom row as part of the
+    // authorization check, so there's no second fetch for it. The roster read
+    // goes out in the SAME wave as that check rather than waiting on it —
+    // measured, an exact head-count costs ~2x a plain row select here, so we
+    // count rows client-side.
+    const rosterPromise = speculative(supabase.from('classroom_members')
+      .select('id').eq('classroom_id', req.params.id).eq('role', 'student'))
 
-    const { data: members } = await supabase.from('classroom_members')
-      .select('role').eq('classroom_id', req.params.id).eq('role', 'student')
+    const { classroom, role } = await loadClassroomAccess(req, req.params.id)
+    const { data: students } = await rosterPromise
 
-    res.json({ classroom: { ...classroom, role: user.classroomRole, studentCount: (members || []).length } })
+    res.json({ classroom: { ...classroom, role, studentCount: (students || []).length } })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
@@ -6267,33 +6302,45 @@ app.delete('/api/classroom/:id/assignments/:assignmentId', classroomLimiter, asy
 // List assignments (member — includes completion status for the current user)
 app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => {
   try {
-    const user = await requireClassroomMember(req, req.params.id)
-    const { data: assignments } = await supabase.from('classroom_assignments')
+    // The assignment list doesn't depend on the authorization result, so it
+    // rides along in the same wave instead of waiting a full round trip for it.
+    const assignmentsPromise = speculative(supabase.from('classroom_assignments')
       .select('id, bill_id, bill_data, instructions, due_date, created_at, google_coursework_id, google_alternate_link')
       .eq('classroom_id', req.params.id)
       .order('created_at', { ascending: false })
-      .limit(500)
+      .limit(500))
 
-    // Check which assignments the current user has completed
+    const { user, role } = await loadClassroomAccess(req, req.params.id)
+    const isTeacher = role === 'teacher'
+
+    const { data: assignments } = await assignmentsPromise
     const assignmentIds = (assignments || []).map(a => a.id)
-    let completedSet = new Set()
-    if (assignmentIds.length > 0) {
-      const { data: completions } = await supabase.from('assignment_completions')
-        .select('assignment_id').eq('user_id', user.id).in('assignment_id', assignmentIds)
-      completedSet = new Set((completions || []).map(c => c.assignment_id))
-    }
 
-    // For teachers, also get aggregate completion counts
+    // The three follow-up reads don't depend on each other, so they go out as
+    // one wave instead of three sequential round trips. Teachers additionally
+    // need the roster size and the aggregate completion counts; students only
+    // need their own completions.
+    let completedSet = new Set()
     let completionCounts = {}
     let totalStudents = 0
-    if (user.classroomRole === 'teacher' && assignmentIds.length > 0) {
-      const { data: members } = await supabase.from('classroom_members')
-        .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
-      totalStudents = (members || []).length
 
-      const { data: allCompletions } = await supabase.from('assignment_completions')
-        .select('assignment_id').in('assignment_id', assignmentIds)
-      for (const c of (allCompletions || [])) {
+    if (assignmentIds.length > 0) {
+      const [mineRes, rosterRes, allRes] = await Promise.all([
+        supabase.from('assignment_completions')
+          .select('assignment_id').eq('user_id', user.id).in('assignment_id', assignmentIds),
+        isTeacher
+          ? supabase.from('classroom_members')
+              .select('id').eq('classroom_id', req.params.id).eq('role', 'student')
+          : Promise.resolve({ data: [] }),
+        isTeacher
+          ? supabase.from('assignment_completions')
+              .select('assignment_id').in('assignment_id', assignmentIds)
+          : Promise.resolve({ data: [] }),
+      ])
+
+      completedSet = new Set((mineRes.data || []).map(c => c.assignment_id))
+      totalStudents = (rosterRes.data || []).length
+      for (const c of (allRes.data || [])) {
         completionCounts[c.assignment_id] = (completionCounts[c.assignment_id] || 0) + 1
       }
     }
@@ -6301,7 +6348,7 @@ app.get('/api/classroom/:id/assignments', classroomLimiter, async (req, res) => 
     const result = (assignments || []).map(a => ({
       ...a,
       completed: completedSet.has(a.id),
-      ...(user.classroomRole === 'teacher' ? {
+      ...(isTeacher ? {
         completions: completionCounts[a.id] || 0,
         totalStudents,
       } : {}),
@@ -6410,75 +6457,84 @@ app.get('/api/classroom/:id/stats', classroomLimiter, async (req, res) => {
   try {
     await requireClassroomTeacher(req, req.params.id)
 
-    // Total students — includes both authenticated (user_id) and anonymous
+    // Roster and assignment list are independent — fetch together.
+    //
+    // Students include both authenticated (user_id) and anonymous
     // (anonymous_id) members. Only authenticated ids are usable for the
     // topic-engagement join on bill_interactions (anonymous students never
-    // create server-side interaction rows), so we keep studentUserIds
-    // separate from the overall count.
-    const { data: students } = await supabase.from('classroom_members')
-      .select('user_id, anonymous_id').eq('classroom_id', req.params.id).eq('role', 'student')
+    // create server-side interaction rows), so studentUserIds stays separate
+    // from the overall count.
+    const [studentsRes, assignmentsRes] = await Promise.all([
+      supabase.from('classroom_members')
+        .select('user_id, anonymous_id').eq('classroom_id', req.params.id).eq('role', 'student'),
+      supabase.from('classroom_assignments')
+        .select('id, bill_id, bill_data, due_date, created_at')
+        .eq('classroom_id', req.params.id)
+        .order('created_at', { ascending: false })
+        .limit(500),
+    ])
+    const students = studentsRes.data
+    const assignments = assignmentsRes.data
     const totalStudents = (students || []).length
     const studentUserIds = (students || []).filter(s => s.user_id).map(s => s.user_id)
-
-    // Assignments with aggregate completion counts
-    const { data: assignments } = await supabase.from('classroom_assignments')
-      .select('id, bill_id, bill_data, due_date, created_at')
-      .eq('classroom_id', req.params.id)
-      .order('created_at', { ascending: false })
-      .limit(500)
 
     const assignmentIds = (assignments || []).map(a => a.id)
     let completionMap = {}
     let timeMap = {}
     let activeThisWeek = new Set()
-
-    if (assignmentIds.length > 0) {
-      const { data: completions } = await supabase.from('assignment_completions')
-        .select('assignment_id, user_id, anonymous_id, time_spent_sec, completed_at')
-        .in('assignment_id', assignmentIds)
-
-      const weekAgo = Date.now() - 7 * 86400000
-      for (const c of (completions || [])) {
-        completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
-        if (c.time_spent_sec) {
-          if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
-          timeMap[c.assignment_id].push(c.time_spent_sec)
-        }
-        if (new Date(c.completed_at).getTime() > weekAgo) {
-          // Namespace the anon key so an anonymous_id that coincidentally
-          // matches a uuid-shaped user_id from another row can't double-count.
-          activeThisWeek.add(c.user_id || `anon:${c.anonymous_id}`)
-        }
-      }
-    }
-
-    // Topic engagement — aggregate only, scoped to authenticated students.
-    // Anonymous students don't create bill_interactions rows on the server.
     let topicEngagement = {}
-    if (studentUserIds.length > 0) {
-      const { data: interactions } = await supabase.from('bill_interactions')
-        .select('topic_tag').in('user_id', studentUserIds)
-      for (const i of (interactions || [])) {
-        if (i.topic_tag) topicEngagement[i.topic_tag] = (topicEngagement[i.topic_tag] || 0) + 1
+    const weeklyActivity = []
+
+    // Completions and topic engagement are independent too. Note there is only
+    // ONE completions read now: the weekly-activity bucketing used to re-query
+    // the same rows with the same filter for a column this result already has.
+    const [completionsRes, interactionsRes] = await Promise.all([
+      assignmentIds.length > 0
+        ? supabase.from('assignment_completions')
+            .select('assignment_id, user_id, anonymous_id, time_spent_sec, completed_at')
+            .in('assignment_id', assignmentIds)
+        : Promise.resolve({ data: [] }),
+      studentUserIds.length > 0
+        ? supabase.from('bill_interactions')
+            .select('topic_tag')
+            .in('user_id', studentUserIds)
+            // Topic engagement is a rolling picture, not all-time. Bounding it
+            // keeps a long-running class from dragging tens of thousands of
+            // rows over the wire to be counted in JS.
+            .gte('created_at', new Date(Date.now() - 90 * 86400000).toISOString())
+            .limit(5000)
+        : Promise.resolve({ data: [] }),
+    ])
+
+    const completions = completionsRes.data || []
+    const weekAgo = Date.now() - 7 * 86400000
+    const weekBuckets = {}
+    for (const c of completions) {
+      completionMap[c.assignment_id] = (completionMap[c.assignment_id] || 0) + 1
+      if (c.time_spent_sec) {
+        if (!timeMap[c.assignment_id]) timeMap[c.assignment_id] = []
+        timeMap[c.assignment_id].push(c.time_spent_sec)
       }
+      const completedMs = new Date(c.completed_at).getTime()
+      if (completedMs > weekAgo) {
+        // Namespace the anon key so an anonymous_id that coincidentally
+        // matches a uuid-shaped user_id from another row can't double-count.
+        activeThisWeek.add(c.user_id || `anon:${c.anonymous_id}`)
+      }
+      // Weekly activity (last 8 weeks) — bucketed from the same rows.
+      const d = new Date(c.completed_at)
+      const weekStart = new Date(d)
+      weekStart.setDate(d.getDate() - d.getDay())
+      const weekKey = weekStart.toISOString().slice(0, 10)
+      weekBuckets[weekKey] = (weekBuckets[weekKey] || 0) + 1
     }
 
-    // Weekly activity (last 8 weeks)
-    const weeklyActivity = []
-    if (assignmentIds.length > 0) {
-      const { data: completions } = await supabase.from('assignment_completions')
-        .select('completed_at').in('assignment_id', assignmentIds)
-      const weekBuckets = {}
-      for (const c of (completions || [])) {
-        const d = new Date(c.completed_at)
-        const weekStart = new Date(d)
-        weekStart.setDate(d.getDate() - d.getDay())
-        const key = weekStart.toISOString().slice(0, 10)
-        weekBuckets[key] = (weekBuckets[key] || 0) + 1
-      }
-      const sorted = Object.entries(weekBuckets).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8)
-      for (const [week, count] of sorted) weeklyActivity.push({ week, completions: count })
+    for (const i of (interactionsRes.data || [])) {
+      if (i.topic_tag) topicEngagement[i.topic_tag] = (topicEngagement[i.topic_tag] || 0) + 1
     }
+
+    const sortedWeeks = Object.entries(weekBuckets).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 8)
+    for (const [week, count] of sortedWeeks) weeklyActivity.push({ week, completions: count })
 
     const assignmentStats = (assignments || []).map(a => {
       const times = timeMap[a.id] || []
