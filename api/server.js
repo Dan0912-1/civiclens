@@ -43,6 +43,12 @@ import {
   hasRequiredScopes,
   getClassroomClient,
   buildBillUrl,
+  billLinkIsResolvable,
+  isGoogleAuthError,
+  classifyGoogleError,
+  withGoogleRetry,
+  listAllTeacherCourses,
+  courseWorkExists,
 } from './googleClassroom.js'
 import compression from 'compression'
 import { readFileSync } from 'fs'
@@ -6726,8 +6732,12 @@ app.get('/api/google/status', classroomLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
     if (!googleConfigured() || !supabase) return res.json({ connected: false, configured: false })
+    const health = await hasGoogleHealthCols()
+    const cols = health
+      ? 'google_email, scopes, connected_at, last_error, last_error_at, last_success_at'
+      : 'google_email, scopes, connected_at'
     const { data: row } = await supabase.from('google_oauth_tokens')
-      .select('google_email, scopes, connected_at').eq('user_id', user.id).maybeSingle()
+      .select(cols).eq('user_id', user.id).maybeSingle()
     if (!row) return res.json({ connected: false, configured: true })
     res.json({
       connected: true,
@@ -6736,6 +6746,12 @@ app.get('/api/google/status', classroomLimiter, async (req, res) => {
       connectedAt: row.connected_at,
       // If a scope was added since they connected, the UI prompts a reconnect.
       needsReconsent: !hasRequiredScopes(row.scopes),
+      // A stored token Google has since rejected. The row still exists, so
+      // without this the dashboard would keep claiming "Connected" while every
+      // assign and grade sync quietly failed.
+      needsReconnect: row.last_error === 'reconnect',
+      lastErrorAt: row.last_error_at || null,
+      lastSuccessAt: row.last_success_at || null,
     })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
@@ -6765,14 +6781,6 @@ app.post('/api/google/disconnect', classroomLimiter, async (req, res) => {
 
 // ─── Google Classroom: assign + grade passback (Phase 2/3) ───────────────────
 
-// True for Google API errors that mean the teacher must reconnect (revoked /
-// expired refresh token).
-function isGoogleAuthError(err) {
-  const m = String(err?.message || '')
-  return m.includes('invalid_grant') || m.includes('invalid_token')
-    || err?.response?.status === 401 || err?.code === 401
-}
-
 // Load a teacher's stored Google connection and return an authed Classroom
 // client + the row. Throws 'GoogleNotConnected' if they haven't connected.
 async function loadGoogleClientForUser(userId) {
@@ -6783,34 +6791,139 @@ async function loadGoogleClientForUser(userId) {
   return { classroom: getClassroomClient(decryptSecret(row.refresh_token_enc)), row }
 }
 
+// The health + grade-retry columns arrive in their own migration
+// (supabase/add_google_health_and_grade_retry.sql). A Railway deploy and a
+// Supabase migration are separate steps, so this code has to work on either
+// side of that gap: PostgREST fails the WHOLE select when one column is
+// missing, which would have made /api/google/status report every connected
+// teacher as disconnected until the SQL was run. Probe once, cache, degrade.
+let googleHealthCols = null      // null = not yet probed
+let gradeRetryCols = null
+
+async function hasGoogleHealthCols() {
+  if (!supabase) return false
+  if (googleHealthCols !== null) return googleHealthCols
+  const { error } = await supabase.from('google_oauth_tokens').select('last_error').limit(1)
+  googleHealthCols = !error
+  if (error) console.warn('[google] connection-health columns missing — run supabase/add_google_health_and_grade_retry.sql')
+  return googleHealthCols
+}
+
+async function hasGradeRetryCols() {
+  if (!supabase) return false
+  if (gradeRetryCols !== null) return gradeRetryCols
+  const { error } = await supabase.from('assignment_completions').select('google_grade_attempts').limit(1)
+  gradeRetryCols = !error
+  if (error) console.warn('[google] grade-retry columns missing — run supabase/add_google_health_and_grade_retry.sql')
+  return gradeRetryCols
+}
+
+// Record whether the teacher's Google connection is actually working.
+//
+// Without this a teacher who revoked CapitolKey in their Google account still
+// saw "Connected" on the dashboard forever — the only symptom was assign and
+// grade-sync failing later, with no hint that re-consent was the fix. `reason`
+// is null on success.
+async function markGoogleHealth(userId, reason) {
+  if (!supabase || !userId) return
+  if (!(await hasGoogleHealthCols())) return
+  const patch = reason
+    ? { last_error: reason, last_error_at: new Date().toISOString() }
+    : { last_error: null, last_error_at: null, last_success_at: new Date().toISOString() }
+  try {
+    await supabase.from('google_oauth_tokens').update(patch).eq('user_id', userId)
+  } catch (e) {
+    console.error('[google] health update error:', e.message)
+  }
+}
+
 // Grade one student's submission for a Google-linked assignment. Best-effort,
 // never throws. Classroom's studentSubmissions.list accepts the student's email
 // as the `userId` filter, so we match the submission without any roster scope.
+//
+// The returned `reason` is the whole point of this function's contract: the
+// student and the teacher both need to know WHY a grade didn't land, and the
+// three real-world causes need different fixes:
+//   not_in_course  — the email they signed into CapitolKey with isn't the
+//                    Google account on the class roster (very common: personal
+//                    Gmail vs school account). The student must re-sign in.
+//   no_submission  — the coursework is still a DRAFT, or Google hasn't created
+//                    the submission yet. Resolves itself; the sweep retries.
+//   reconnect      — the teacher's token is dead. Only the teacher can fix it.
 async function passbackGrade(teacherRefreshToken, assignment, studentEmail) {
+  const courseId = assignment.google_course_id
+  const courseWorkId = assignment.google_coursework_id
+  if (!courseId || !courseWorkId) return { graded: false, reason: 'not_linked' }
+  if (!studentEmail) return { graded: false, reason: 'no_email' }
+
+  // maxPoints 0 is Google's "ungraded" assignment. There is no grade to send,
+  // so completion is the whole story — don't report that as a failure.
+  const points = assignment.google_max_points == null ? 100 : Number(assignment.google_max_points)
+  if (!Number.isFinite(points) || points <= 0) return { graded: false, reason: 'ungraded' }
+
   try {
     const classroom = getClassroomClient(teacherRefreshToken)
-    const courseId = assignment.google_course_id
-    const courseWorkId = assignment.google_coursework_id
-    const points = assignment.google_max_points || 100
     let sub = null
     try {
-      const list = await classroom.courses.courseWork.studentSubmissions.list({ courseId, courseWorkId, userId: studentEmail })
+      const list = await withGoogleRetry(() => classroom.courses.courseWork.studentSubmissions.list({
+        courseId, courseWorkId, userId: studentEmail,
+      }))
       sub = (list.data.studentSubmissions || [])[0] || null
     } catch (e) {
-      if (isGoogleAuthError(e)) return { graded: false, reason: 'reconnect' }
+      const reason = classifyGoogleError(e)
+      // 404 here means Google couldn't resolve that email to a student in the
+      // course — not a transient miss. Naming it lets the UI tell the student
+      // to sign in with their school account instead of "try again later".
+      if (reason === 'not_found') return { graded: false, reason: 'not_in_course' }
+      if (reason === 'forbidden') return { graded: false, reason: 'forbidden' }
+      if (reason === 'reconnect') return { graded: false, reason: 'reconnect' }
+      return { graded: false, reason }
     }
     if (!sub) return { graded: false, reason: 'no_submission' }
-    await classroom.courses.courseWork.studentSubmissions.patch({
+
+    // Already graded at full marks and handed back: patching again would burn
+    // quota and re-notify the student for nothing.
+    if (Number(sub.assignedGrade) === points && sub.state === 'RETURNED') {
+      return { graded: true, points, unchanged: true }
+    }
+
+    await withGoogleRetry(() => classroom.courses.courseWork.studentSubmissions.patch({
       courseId, courseWorkId, id: sub.id, updateMask: 'assignedGrade,draftGrade',
       requestBody: { assignedGrade: points, draftGrade: points },
-    })
+    }))
     try {
       await classroom.courses.courseWork.studentSubmissions.return({ courseId, courseWorkId, id: sub.id, requestBody: {} })
     } catch { /* already returned / not returnable — grade still set */ }
     return { graded: true, points }
   } catch (e) {
-    return { graded: false, reason: isGoogleAuthError(e) ? 'reconnect' : 'error' }
+    return { graded: false, reason: classifyGoogleError(e) }
   }
+}
+
+// A failure the sweep should stop retrying. 'no_submission' and the transient
+// classes stay retryable; a student whose email will never match, or an
+// ungraded assignment, will never succeed no matter how often we ask.
+const TERMINAL_GRADE_REASONS = new Set(['ungraded', 'not_linked', 'no_email'])
+
+// Resolve auth user ids -> emails with bounded concurrency. sync-grades used to
+// await one getUserById per student in series; a 30-student class meant 30
+// sequential round-trips before the Google calls even started, which pushed the
+// request past the client's 30s timeout.
+async function resolveUserEmails(userIds, { concurrency = 6 } = {}) {
+  const out = new Map()
+  const ids = [...new Set(userIds.filter(Boolean))]
+  let cursor = 0
+  async function worker() {
+    while (cursor < ids.length) {
+      const id = ids[cursor++]
+      try {
+        const u = await supabase.auth.admin.getUserById(id)
+        if (u.data?.user?.email) out.set(id, u.data.user.email)
+      } catch { /* unresolvable id — reported as skipped */ }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, ids.length) }, worker))
+  return out
 }
 
 // List the teacher's active Google courses (for the assign picker).
@@ -6824,8 +6937,19 @@ app.get('/api/google/courses', classroomLimiter, async (req, res) => {
       if (e.message === 'GoogleNotConnected') return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
       throw e
     }
-    const out = await classroom.courses.list({ teacherId: 'me', courseStates: ['ACTIVE'], pageSize: 100 })
-    const courses = (out.data.courses || []).map(c => ({ id: c.id, name: c.name, section: c.section || '' }))
+    let courses
+    try {
+      courses = await listAllTeacherCourses(classroom)
+    } catch (e) {
+      if (isGoogleAuthError(e)) {
+        await markGoogleHealth(user.id, 'reconnect')
+        return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      }
+      throw e
+    }
+    // Listing courses is the cheapest proof the stored token still works, so
+    // it doubles as the health check that clears a stale `reconnect` flag.
+    await markGoogleHealth(user.id, null)
     res.json({ courses })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
@@ -6838,6 +6962,12 @@ app.get('/api/google/courses', classroomLimiter, async (req, res) => {
 // Push a bill into a Google course as coursework (DRAFT by default). Lazily
 // finds/creates the CapitolKey classroom backing the course + a linked
 // classroom_assignment, then creates the Google courseWork with a Link to the bill.
+//
+// Ordering matters here: everything that can fail on Google's side is checked
+// BEFORE we write any CapitolKey rows. The first cut created the classroom and
+// the assignment first, so a teacher who wasn't connected — or who picked a
+// course they no longer teach — was left with an orphan classroom and a
+// phantom assignment for a bill that never reached Google.
 app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
   try {
     const user = await requireAuth(req)
@@ -6845,6 +6975,45 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     const { courseId, courseName, billId, billData, instructions, dueDate, dueDateTime, maxPoints, publish } = req.body || {}
     if (!courseId || typeof courseId !== 'string') return res.status(400).json({ error: 'courseId is required' })
     if (!billId || typeof billId !== 'string' || billId.length > 80) return res.status(400).json({ error: 'Valid billId is required' })
+
+    // The Link material is the ONLY way a student reaches the bill. billHref
+    // degrades to an unroutable path when type/number/session are missing, so
+    // refuse rather than post a dead assignment to a real class.
+    if (!billLinkIsResolvable(billData)) {
+      return res.status(400).json({ error: 'This bill is missing the details needed to build a student link. Please reopen the bill and try again.' })
+    }
+
+    // Fail fast on the Google side, before touching our own tables.
+    let classroom
+    try { ({ classroom } = await loadGoogleClientForUser(user.id)) }
+    catch (e) {
+      if (e.message === 'GoogleNotConnected') return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
+      throw e
+    }
+
+    // Confirm the teacher still teaches this course and it's still active. This
+    // turns an opaque 403 from courseWork.create into a precise message, and
+    // gives us Google's own course name instead of trusting the client's copy.
+    let course
+    try {
+      const got = await withGoogleRetry(() => classroom.courses.get({ id: courseId }))
+      course = got.data
+    } catch (e) {
+      const reason = classifyGoogleError(e)
+      if (reason === 'reconnect') {
+        await markGoogleHealth(user.id, 'reconnect')
+        return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      }
+      if (reason === 'not_found') return res.status(404).json({ error: 'That Google class no longer exists.', code: 'course_missing' })
+      if (reason === 'forbidden') return res.status(403).json({ error: 'You do not have teacher access to that Google class.', code: 'not_teacher' })
+      console.error('[google] course get error:', e.message)
+      return res.status(502).json({ error: 'Google Classroom is not responding. Please try again.' })
+    }
+    if (course.courseState && course.courseState !== 'ACTIVE') {
+      return res.status(400).json({ error: `That Google class is ${String(course.courseState).toLowerCase()}. Reactivate it in Google Classroom first.`, code: 'course_inactive' })
+    }
+    const resolvedName = course.name || courseName || 'Google Classroom'
+
     let classroomId = req.body.classroomId || null
 
     // Resolve / lazily create the CapitolKey classroom backing this Google course.
@@ -6859,29 +7028,39 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
         let join_code
         for (let i = 0; i < 5; i++) {
           join_code = generateJoinCode()
-          const { data: dup } = await supabase.from('classrooms').select('id').eq('join_code', join_code).single()
+          const { data: dup } = await supabase.from('classrooms').select('id').eq('join_code', join_code).maybeSingle()
           if (!dup) break
           if (i === 4) return res.status(500).json({ error: 'Failed to generate unique code — please retry' })
         }
         const { data: created, error: cErr } = await supabase.from('classrooms')
-          .insert({ owner_id: user.id, name: (courseName || 'Google Classroom').slice(0, 100), join_code, google_course_id: courseId, google_course_name: courseName || null })
+          .insert({ owner_id: user.id, name: resolvedName.slice(0, 100), join_code, google_course_id: courseId, google_course_name: resolvedName })
           .select('id').single()
         if (cErr) throw cErr
         classroomId = created.id
         await supabase.from('classroom_members').insert({ classroom_id: classroomId, user_id: user.id, role: 'teacher' })
       }
     }
-    await supabase.from('classrooms').update({ google_course_id: courseId, google_course_name: courseName || null }).eq('id', classroomId)
+    await supabase.from('classrooms').update({ google_course_id: courseId, google_course_name: resolvedName }).eq('id', classroomId)
 
     // Create or reuse the CapitolKey assignment (dedupe by classroom+bill).
     let assignment
     const { data: existingA } = await supabase.from('classroom_assignments')
-      .select('id, bill_id, bill_data, instructions, due_date, created_at, google_coursework_id, google_alternate_link')
+      .select('id, bill_id, bill_data, instructions, due_date, created_at, google_course_id, google_coursework_id, google_alternate_link')
       .eq('classroom_id', classroomId).eq('bill_id', billId).maybeSingle()
+
     if (existingA?.google_coursework_id) {
-      return res.json({ assignment: existingA, alternateLink: existingA.google_alternate_link, classroomId, alreadyPushed: true })
-    }
-    if (existingA) {
+      // "Already assigned" is only true if the post still exists. A teacher who
+      // deleted it in Google Classroom and came back to re-push used to get a
+      // cheerful success message pointing at a dead link.
+      const stillThere = await courseWorkExists(classroom, existingA.google_course_id || courseId, existingA.google_coursework_id)
+      if (stillThere) {
+        return res.json({ assignment: existingA, alternateLink: existingA.google_alternate_link, classroomId, alreadyPushed: true })
+      }
+      await supabase.from('classroom_assignments')
+        .update({ google_coursework_id: null, google_alternate_link: null })
+        .eq('id', existingA.id)
+      assignment = existingA
+    } else if (existingA) {
       assignment = existingA
     } else {
       const row = { classroom_id: classroomId, bill_id: billId, bill_data: billData || {}, assigned_by: user.id }
@@ -6895,12 +7074,6 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     }
 
     // Create the Google coursework with a Link material back to the bill.
-    let classroom
-    try { ({ classroom } = await loadGoogleClientForUser(user.id)) }
-    catch (e) {
-      if (e.message === 'GoogleNotConnected') return res.status(400).json({ error: 'Connect Google Classroom first', code: 'not_connected' })
-      throw e
-    }
     const url = buildBillUrl(billData, assignment.id)
     const points = Number.isFinite(maxPoints) ? Math.max(0, Math.min(1000, Math.round(maxPoints))) : 100
     const body = {
@@ -6927,12 +7100,16 @@ app.post('/api/google/coursework', classroomLimiter, async (req, res) => {
     }
     let cw
     try {
-      cw = await classroom.courses.courseWork.create({ courseId, requestBody: body })
+      cw = await withGoogleRetry(() => classroom.courses.courseWork.create({ courseId, requestBody: body }))
     } catch (e) {
-      if (isGoogleAuthError(e)) return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      if (isGoogleAuthError(e)) {
+        await markGoogleHealth(user.id, 'reconnect')
+        return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      }
       console.error('[google] coursework create error:', e.message)
       return res.status(502).json({ error: 'Google rejected the assignment. Make sure the course is active and you teach it.' })
     }
+    await markGoogleHealth(user.id, null)
 
     const { data: updated } = await supabase.from('classroom_assignments')
       .update({ google_course_id: courseId, google_coursework_id: cw.data.id, google_alternate_link: cw.data.alternateLink || null, google_max_points: points })
@@ -6976,19 +7153,57 @@ app.post('/api/google/coursework/:assignmentId/complete', classroomLimiter, asyn
     const { data: teacherTok } = await supabase.from('google_oauth_tokens').select('refresh_token_enc').eq('user_id', assignment.assigned_by).maybeSingle()
     if (teacherTok?.refresh_token_enc && user.email) {
       graded = await passbackGrade(decryptSecret(teacherTok.refresh_token_enc), assignment, user.email)
-      if (graded.graded) {
-        await supabase.from('assignment_completions')
-          .update({ google_grade_sent_at: new Date().toISOString(), google_assigned_grade: graded.points })
-          .eq('assignment_id', assignment.id).eq('user_id', user.id)
-      }
+      await recordGradeOutcome(assignment.id, user.id, graded)
+      if (graded.reason === 'reconnect') await markGoogleHealth(assignment.assigned_by, 'reconnect')
+      else if (graded.graded) await markGoogleHealth(assignment.assigned_by, null)
+    } else if (!user.email) {
+      graded = { graded: false, reason: 'no_email' }
+      await recordGradeOutcome(assignment.id, user.id, graded)
     }
-    res.json({ completed: true, graded: graded.graded, gradeReason: graded.graded ? undefined : graded.reason })
+    res.json({
+      completed: true,
+      graded: graded.graded,
+      gradeReason: graded.graded ? undefined : graded.reason,
+      // The student can only act on one of these themselves: signing in with
+      // the Google account that's actually on the class roster.
+      studentActionable: graded.reason === 'not_in_course' || graded.reason === 'no_email',
+    })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     console.error('[google] complete error:', err.message)
     res.status(500).json({ error: 'Failed to submit for credit' })
   }
 })
+
+// Persist the outcome of one passback attempt so the nightly sweep knows what
+// to retry and the teacher can see why a grade is missing.
+async function recordGradeOutcome(assignmentId, userId, result) {
+  if (!supabase) return
+  const retryCols = await hasGradeRetryCols()
+  try {
+    if (result.graded) {
+      const patch = { google_grade_sent_at: new Date().toISOString(), google_assigned_grade: result.points }
+      if (retryCols) { patch.google_grade_error = null; patch.google_grade_error_at = null }
+      await supabase.from('assignment_completions')
+        .update(patch).eq('assignment_id', assignmentId).eq('user_id', userId)
+      return
+    }
+    // The failure bookkeeping is what the nightly sweep reads. Without those
+    // columns the grade still records fine on success; we just can't retry.
+    if (!retryCols) return
+    const { data: row } = await supabase.from('assignment_completions')
+      .select('google_grade_attempts').eq('assignment_id', assignmentId).eq('user_id', userId).maybeSingle()
+    await supabase.from('assignment_completions')
+      .update({
+        google_grade_error: result.reason || 'error',
+        google_grade_error_at: new Date().toISOString(),
+        google_grade_attempts: (row?.google_grade_attempts || 0) + 1,
+      })
+      .eq('assignment_id', assignmentId).eq('user_id', userId)
+  } catch (e) {
+    console.error('[google] grade outcome record error:', e.message)
+  }
+}
 
 // Teacher re-pushes grades for every completer of a Google-linked assignment.
 app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, async (req, res) => {
@@ -7007,20 +7222,32 @@ app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, a
 
     const { data: completions } = await supabase.from('assignment_completions')
       .select('user_id').eq('assignment_id', assignment.id).not('user_id', 'is', null)
+    const rows = completions || []
+
+    // Resolve every email up front, in parallel. Doing it inside the loop meant
+    // a 30-student class made 30 sequential Supabase admin calls before the
+    // first Google request, which blew past the client's timeout.
+    const emails = await resolveUserEmails(rows.map(c => c.user_id))
+
     let graded = 0, skipped = 0, failed = 0
-    for (const c of (completions || [])) {
-      let email = null
-      try { const u = await supabase.auth.admin.getUserById(c.user_id); email = u.data.user?.email || null } catch { /* skip */ }
-      if (!email) { skipped++; continue }
+    const reasons = {}
+    for (const c of rows) {
+      const email = emails.get(c.user_id)
+      if (!email) { skipped++; reasons.no_email = (reasons.no_email || 0) + 1; continue }
       const r = await passbackGrade(refresh, assignment, email)
-      if (r.graded) {
-        graded++
-        await supabase.from('assignment_completions')
-          .update({ google_grade_sent_at: new Date().toISOString(), google_assigned_grade: r.points })
-          .eq('assignment_id', assignment.id).eq('user_id', c.user_id)
-      } else { failed++ }
+      await recordGradeOutcome(assignment.id, c.user_id, r)
+      if (r.graded) { graded++; continue }
+      failed++
+      reasons[r.reason || 'error'] = (reasons[r.reason || 'error'] || 0) + 1
+      // A dead token fails identically for every remaining student; stop early
+      // instead of hammering Google with calls we know will fail.
+      if (r.reason === 'reconnect') {
+        await markGoogleHealth(assignment.assigned_by, 'reconnect')
+        return res.status(400).json({ error: 'Google connection expired — please reconnect', code: 'reconnect' })
+      }
     }
-    res.json({ graded, skipped, failed, total: (completions || []).length })
+    if (graded > 0) await markGoogleHealth(assignment.assigned_by, null)
+    res.json({ graded, skipped, failed, total: rows.length, reasons })
   } catch (err) {
     if (err.message === 'Unauthorized' || err.message === 'Invalid token') return res.status(401).json({ error: err.message })
     if (err.message === 'Not found' || err.message === 'Forbidden') return res.status(err.message === 'Not found' ? 404 : 403).json({ error: err.message })
@@ -7028,6 +7255,95 @@ app.post('/api/google/coursework/:assignmentId/sync-grades', classroomLimiter, a
     res.status(500).json({ error: 'Failed to sync grades' })
   }
 })
+
+// ─── Nightly grade-passback sweep ────────────────────────────────────────────
+// Passback at completion time is best-effort and legitimately misses: a student
+// who finishes while the coursework is still a DRAFT has no submission for us
+// to grade yet. Before this sweep, "your grade will sync shortly" was a promise
+// nothing kept — the teacher had to notice and click "Sync grades" by hand.
+const GRADE_SWEEP_MAX_ATTEMPTS = 8   // ~8 nights before we stop retrying a student
+const GRADE_SWEEP_LOOKBACK_DAYS = 45 // don't chase completions from last semester
+
+async function sweepPendingGoogleGrades() {
+  if (!supabase || !googleConfigured()) return
+  if (!(await hasGradeRetryCols())) {
+    console.warn('[google-grade-sweep] skipped — run supabase/add_google_health_and_grade_retry.sql')
+    return
+  }
+  const cutoff = new Date(Date.now() - GRADE_SWEEP_LOOKBACK_DAYS * 86400_000).toISOString()
+
+  const { data: assignments } = await supabase.from('classroom_assignments')
+    .select('id, assigned_by, google_course_id, google_coursework_id, google_max_points')
+    .not('google_coursework_id', 'is', null)
+    .gte('created_at', cutoff)
+    .limit(500)
+  if (!assignments?.length) return
+
+  const byId = new Map(assignments.map(a => [a.id, a]))
+  const { data: pending } = await supabase.from('assignment_completions')
+    .select('assignment_id, user_id, google_grade_attempts')
+    .in('assignment_id', [...byId.keys()])
+    .is('google_grade_sent_at', null)
+    .not('user_id', 'is', null)
+    .lt('google_grade_attempts', GRADE_SWEEP_MAX_ATTEMPTS)
+    .gte('completed_at', cutoff)
+    .limit(1000)
+  if (!pending?.length) return
+
+  // One decrypt per teacher, not per student.
+  const tokenCache = new Map()
+  async function refreshFor(teacherId) {
+    if (tokenCache.has(teacherId)) return tokenCache.get(teacherId)
+    const { data: row } = await supabase.from('google_oauth_tokens')
+      .select('refresh_token_enc').eq('user_id', teacherId).maybeSingle()
+    let tok = null
+    try { tok = row?.refresh_token_enc ? decryptSecret(row.refresh_token_enc) : null } catch { tok = null }
+    tokenCache.set(teacherId, tok)
+    return tok
+  }
+
+  const emails = await resolveUserEmails(pending.map(p => p.user_id))
+  const deadTokens = new Set()
+  let graded = 0, stillPending = 0
+
+  for (const p of pending) {
+    const assignment = byId.get(p.assignment_id)
+    if (!assignment?.assigned_by || deadTokens.has(assignment.assigned_by)) { stillPending++; continue }
+    const refresh = await refreshFor(assignment.assigned_by)
+    if (!refresh) { stillPending++; continue }
+    const email = emails.get(p.user_id)
+    if (!email) {
+      await recordGradeOutcome(p.assignment_id, p.user_id, { graded: false, reason: 'no_email' })
+      stillPending++
+      continue
+    }
+    const r = await passbackGrade(refresh, assignment, email)
+    await recordGradeOutcome(p.assignment_id, p.user_id, r)
+    if (r.graded) { graded++; continue }
+    stillPending++
+    if (r.reason === 'reconnect') {
+      // Skip this teacher's remaining rows for tonight — every one would fail.
+      deadTokens.add(assignment.assigned_by)
+      await markGoogleHealth(assignment.assigned_by, 'reconnect')
+    }
+    if (TERMINAL_GRADE_REASONS.has(r.reason)) {
+      await supabase.from('assignment_completions')
+        .update({ google_grade_attempts: GRADE_SWEEP_MAX_ATTEMPTS })
+        .eq('assignment_id', p.assignment_id).eq('user_id', p.user_id)
+    }
+  }
+  console.log(`[google-grade-sweep] ${graded} graded, ${stillPending} still pending of ${pending.length} checked`)
+}
+
+if (supabase && googleConfigured()) {
+  // Daily at 3:20 AM UTC — off-peak, and clear of the other crons.
+  cron.schedule('20 3 * * *', () => {
+    sweepPendingGoogleGrades().catch(err => console.error('[google-grade-sweep] Unhandled error:', err))
+  })
+  console.log('   Google grade sweep: ✓ scheduled (daily 3:20 AM UTC)')
+} else {
+  console.log(`   Google grade sweep: ✗ disabled (${!supabase ? 'no Supabase' : 'Google not configured'})`)
+}
 
 // ─── Feedback endpoint ───────────────────────────────────────────────────────
 app.post('/api/feedback', feedbackLimiter, async (req, res) => {

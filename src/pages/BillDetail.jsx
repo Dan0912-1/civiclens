@@ -10,7 +10,7 @@ import {
 } from '../lib/userProfile'
 import { useToast } from '../context/ToastContext'
 import { markComplete, markCompleteAnon, getMyClassrooms, createAssignment } from '../lib/classroom'
-import { completeGoogleAssignment } from '../lib/googleClassroom'
+import { completeGoogleAssignment, gradeReasonMessage, googleErrorMessage } from '../lib/googleClassroom'
 import GoogleAssignModal from '../components/GoogleAssignModal.jsx'
 import { makeBillId, makeCongressBillId, sameBillId } from '../lib/billId'
 import { billHref, congressGovUrl, congressGovTextUrl, isRepFinderUrl, trimDanglingConnector } from '../lib/billUrl'
@@ -172,7 +172,12 @@ export default function BillDetail() {
   const [gcrCompleted, setGcrCompleted] = useState(false)
   const [gcrBusy, setGcrBusy] = useState(false)
   const [gcrError, setGcrError] = useState(false)
+  // Why the grade didn't reach Google, when it didn't. Kept separate from
+  // gcrError: the work IS recorded, so this is a status note, not a failure.
+  const [gcrGradeNote, setGcrGradeNote] = useState('')
+  const [gcrNeedsSchoolAccount, setGcrNeedsSchoolAccount] = useState(false)
   const gcrAutoRef = useRef(false)
+  const gassignPendingRef = useRef(false)
   const [fullText, setFullText] = useState(null) // { text, wordCount, version }
   const [fullTextLoading, setFullTextLoading] = useState(false)
   const [fullTextUnavailable, setFullTextUnavailable] = useState(false)
@@ -287,6 +292,30 @@ export default function BillDetail() {
     assignmentTimerRef.current = Date.now()
     return () => { assignmentTimerRef.current = null }
   }, [assignmentId, assignmentClassroomId])
+
+  // A teacher who connected Google from inside the assign modal comes back to
+  // this same bill carrying ?gassign=1. Record the intent and strip the OAuth
+  // params immediately so a refresh doesn't reopen the modal forever.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('gassign') !== '1') return
+    if (params.get('google') === 'error') showToast(googleErrorMessage(params.get('reason')), 'error')
+    else gassignPendingRef.current = true
+    params.delete('gassign'); params.delete('google'); params.delete('reason')
+    const qs = params.toString()
+    window.history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Open it only once auth has actually rehydrated. Supabase restores the
+  // session asynchronously after the OAuth redirect, so opening on mount raced
+  // it and greeted the returning teacher with "Please sign in again" — and it
+  // popped the modal for anonymous visitors who happened to hit the URL.
+  useEffect(() => {
+    if (!gassignPendingRef.current || !user) return
+    gassignPendingRef.current = false
+    setShowGoogleAssign(true)
+  }, [user])
 
   // Same time-on-task timer for the Google Classroom (?gcr=) flow.
   useEffect(() => {
@@ -446,9 +475,20 @@ export default function BillDetail() {
         : null
       const res = await completeGoogleAssignment(token, gcrAssignmentId, elapsed)
       setGcrCompleted(true)
-      showToast(res.graded
-        ? 'Submitted! Your grade is in Google Classroom.'
-        : 'Marked complete. Your grade will sync shortly.')
+      if (res.graded) {
+        setGcrGradeNote('')
+        setGcrNeedsSchoolAccount(false)
+        showToast('Submitted! Your grade is in Google Classroom.')
+      } else {
+        // "Your grade will sync shortly" was a lie when the real problem was a
+        // personal Gmail that isn't on the class roster — nothing would ever
+        // sync. Say which case it is, and keep it on screen rather than in a
+        // toast the student can miss.
+        const note = gradeReasonMessage(res.gradeReason)
+        setGcrGradeNote(note)
+        setGcrNeedsSchoolAccount(!!res.studentActionable)
+        showToast(note, res.studentActionable ? 'error' : 'success')
+      }
     } catch (err) {
       setGcrError(true)
       showToast(err.message || 'Could not submit for credit', 'error')
@@ -730,7 +770,7 @@ export default function BillDetail() {
             <div className={styles.assignmentBannerMain}>
               <span className={styles.assignmentBannerText}>
                 {gcrCompleted
-                  ? '✓ Submitted for credit in Google Classroom'
+                  ? (gcrGradeNote || '✓ Submitted for credit in Google Classroom')
                   : !user
                     ? 'This is your Google Classroom assignment. Sign in with your school Google account to get credit.'
                     : gcrError
@@ -753,6 +793,14 @@ export default function BillDetail() {
                   {gcrBusy ? 'Submitting...' : 'Submit for credit'}
                 </button>
               ) : null)}
+              {/* The one failure the student can fix themselves: they're signed
+                  in with an account that isn't on the Google Classroom roster.
+                  Re-running Google sign-in lets them pick the school one. */}
+              {gcrCompleted && gcrNeedsSchoolAccount && (
+                <button className={styles.markCompleteBtn} onClick={handleGoogleSignInForCredit}>
+                  Switch Google account
+                </button>
+              )}
             </div>
           </div>
         )}

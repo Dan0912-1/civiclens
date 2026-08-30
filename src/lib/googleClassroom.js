@@ -120,6 +120,48 @@ export function googleErrorMessage(reason) {
     case 'bad_state': return 'That connection link expired. Please try connecting again.'
     case 'not_configured': return 'Google Classroom is not set up yet.'
     case 'store_failed': return 'We could not save your Google connection. Please try again.'
+    case 'no_code': return 'Google did not send us an authorization code. Please try connecting again.'
     default: return 'Could not connect Google Classroom. Please try again.'
   }
+}
+
+// Why a student's grade did not reach Google, in words the student can act on.
+//
+// The distinction that matters: `not_in_course` is the student's to fix (they
+// signed into CapitolKey with an account that isn't on the class roster —
+// usually a personal Gmail instead of the school one), while everything else
+// resolves on its own or needs the teacher. Telling a student to "wait" when
+// they actually need to switch accounts is the failure mode this replaces.
+export function gradeReasonMessage(reason) {
+  switch (reason) {
+    case 'not_in_course':
+    case 'no_email':
+      return 'Your work is saved, but this account is not on the class roster in Google Classroom. Sign in with your school Google account to get the grade.'
+    case 'no_submission':
+      return 'Marked complete. Your teacher has not posted this assignment yet, so the grade will sync once they do.'
+    case 'ungraded':
+      return 'Marked complete. This assignment is ungraded, so there is no score to send.'
+    case 'reconnect':
+    case 'no_teacher_token':
+      return 'Marked complete. Your teacher needs to reconnect Google Classroom before grades can sync.'
+    case 'rate_limited':
+    case 'google_down':
+      return 'Marked complete. Google is busy right now, so the grade will sync shortly.'
+    default:
+      return 'Marked complete. Your grade will sync shortly.'
+  }
+}
+
+// Teacher-facing summary of a "Sync grades" run. `reasons` is a count per
+// failure code, so the teacher learns WHICH problem to chase rather than just
+// seeing a number that didn't move.
+export function syncSummary({ graded = 0, skipped = 0, failed = 0, total = 0, reasons = {} } = {}) {
+  if (total === 0) return 'No students have completed this assignment yet.'
+  const parts = [`Synced ${graded} grade${graded === 1 ? '' : 's'} to Google Classroom`]
+  const stuck = (reasons.not_in_course || 0) + (reasons.no_email || 0) + skipped
+  if (stuck > 0) parts.push(`${stuck} student${stuck === 1 ? '' : 's'} not matched to the class roster`)
+  if (reasons.no_submission) parts.push(`${reasons.no_submission} waiting on Google to create a submission`)
+  const other = failed - (reasons.not_in_course || 0) - (reasons.no_email || 0) - (reasons.no_submission || 0)
+  if (other > 0) parts.push(`${other} failed`)
+  return parts.join(' · ')
 }

@@ -193,8 +193,13 @@ export default function TeacherDashboard() {
               <span className={styles.googleTitle}>Google Classroom</span>
               {googleStatus.connected ? (
                 <span className={styles.googleMeta}>
-                  Connected{googleStatus.email ? ` as ${googleStatus.email}` : ''}.
-                  {googleStatus.needsReconsent ? ' Reconnect to finish enabling grade passback.' : ''}
+                  {/* A stored token Google has since rejected — usually the
+                      teacher removed CapitolKey in their Google account. The
+                      card used to keep saying "Connected" while every assign
+                      and grade sync silently failed. */}
+                  {googleStatus.needsReconnect
+                    ? `Your Google connection stopped working${googleStatus.email ? ` (${googleStatus.email})` : ''}. Reconnect to post assignments and send grades again.`
+                    : `Connected${googleStatus.email ? ` as ${googleStatus.email}` : ''}.${googleStatus.needsReconsent ? ' Reconnect to finish enabling grade passback.' : ''}`}
                 </span>
               ) : (
                 <span className={styles.googleMeta}>
@@ -205,7 +210,7 @@ export default function TeacherDashboard() {
             <div className={styles.googleActions}>
               {googleStatus.connected ? (
                 <>
-                  {googleStatus.needsReconsent && (
+                  {(googleStatus.needsReconsent || googleStatus.needsReconnect) && (
                     <button className={styles.btnPrimary} disabled={googleBusy} onClick={handleConnectGoogle}>
                       Reconnect
                     </button>
