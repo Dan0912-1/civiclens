@@ -72,12 +72,27 @@ Apply these in the Supabase SQL editor, in order. Each is idempotent
 | `create_google_oauth_tokens_table.sql` | The encrypted per-teacher token store (Phase 1). |
 | `add_google_classroom_columns.sql` | Course/coursework links on classrooms + assignments, grade bookkeeping on completions (Phases 2–3). |
 | `add_google_health_and_grade_retry.sql` | Connection-health columns + grade-retry bookkeeping for the nightly sweep. |
+| `add_google_coursework_options.sql` | Teacher-set coursework title, auto-submit preference, and the absolute due instant. |
 
 The backend tolerates a pending migration rather than breaking: it probes for
 the newer columns once and degrades (status drops `needsReconnect`, the nightly
 sweep skips with a warning) instead of failing the whole query. Watch the boot
 log for `run supabase/add_google_health_and_grade_retry.sql` to know it's still
 outstanding.
+
+### Due dates
+
+Classroom stores `dueDate` + `dueTime` as **UTC** and renders them in each
+viewer's local time, so the only correct input is an absolute instant. Sending
+the teacher's calendar day with a literal `23:59` stamps 23:59 *UTC* — 7:59 PM
+Eastern — which is what a live assignment in a real course was holding before
+this was fixed. The assign modal therefore takes a date plus a time (defaulting
+to 11:59 PM local), converts to an instant, and previews the result back to the
+teacher before posting.
+
+Google also **requires the due date to be in the future** and rejects anything
+else with an opaque 400. Both the modal and the server check this up front so
+the teacher gets told the actual problem.
 
 ### Grade passback, and why a grade can be missing
 
@@ -93,7 +108,24 @@ passing their email as the Classroom `userId` filter. It legitimately misses:
 
 A nightly sweep (03:20 UTC) retries everything still pending, up to 8 nights,
 looking back 45 days. Teachers can also force it from a classroom with
-**Sync grades**.
+**Sync grades**. Both paths first re-read the coursework from Google, which
+picks up a draft that has since been published (its `alternateLink` only exists
+once `PUBLISHED`) and any point value the teacher changed in Classroom.
+
+Grading only works on coursework **we** created: "Student submissions may only
+be modified by the Developer Console project that created the corresponding
+CourseWork resource." A teacher who deletes our post and rebuilds it by hand in
+Classroom puts it permanently out of our reach — which is why a re-push checks
+whether the original still exists rather than trusting our stored id.
+
+### Auto-submit
+
+Each assignment carries `google_auto_submit`. Automatic (the default, and how
+every pre-existing assignment behaved) records credit as soon as the student
+finishes reading. "Student submits" requires a deliberate click. Either way the
+student must be signed in with the Google account on the class roster — an
+anonymous reader has no identity to attach a grade to — so the modal states
+that under both options rather than implying the choice affects it.
 
 ## Endpoints (Phase 1)
 
@@ -102,6 +134,7 @@ looking back 45 days. Teachers can also force it from a classroom with
 | GET | `/api/google/oauth/start` | teacher JWT | Returns the Google consent URL (signed `state` binds the user). |
 | GET | `/api/google/oauth/callback` | public (signed state) | Exchanges the code, stores the encrypted refresh token, redirects back. |
 | GET | `/api/google/status` | teacher JWT | `{ connected, configured, email, needsReconsent, needsReconnect }`. |
+| GET | `/api/google/coursework/:id/meta` | optional | Title, instructions, due time and the auto-submit preference for the student page. |
 | POST | `/api/google/disconnect` | teacher JWT | Revokes at Google and deletes the stored token. |
 
 ## Verification

@@ -110,6 +110,14 @@ export default function ClassroomDetail() {
   }
 
   async function handleRemoveAssignment(assignmentId) {
+    // Removing a Google-linked assignment only removes OUR copy — the post and
+    // any grades already in Google Classroom stay put, and we deliberately
+    // don't delete a teacher's real classwork out from under them. Say so,
+    // because "Remove" reads like it removes everything.
+    const a = assignments.find(x => x.id === assignmentId)
+    if (a?.google_coursework_id && !window.confirm(
+      'Remove this from CapitolKey?\n\nThe assignment and any grades already in Google Classroom stay there — delete it in Classroom too if you want it gone. Students following the Classroom link will no longer earn credit.'
+    )) return
     const t = await getToken()
     if (!t) return
     // Optimistic remove — preserve the previous list so we can roll back if
@@ -131,6 +139,13 @@ export default function ClassroomDetail() {
       const t = await getToken()
       if (!t) { showToast('Please sign in again', 'error'); return }
       const res = await syncGoogleGrades(t, assignmentId)
+      // A draft published in Classroom since we posted it finally has a direct
+      // link; reflect it without making the teacher reload.
+      if (res.alternateLink) {
+        setAssignments(prev => prev.map(x => x.id === assignmentId
+          ? { ...x, google_alternate_link: res.alternateLink, google_max_points: res.maxPoints ?? x.google_max_points }
+          : x))
+      }
       // "N pending" told the teacher a number but not what to do about it.
       // syncSummary names the actual blocker — most often a student signed in
       // with an account that isn't on the Google Classroom roster.

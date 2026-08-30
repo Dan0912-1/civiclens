@@ -14,6 +14,9 @@
 import crypto from 'crypto'
 import { google } from 'googleapis'
 import { billHref } from '../src/lib/billUrl.js'
+import { defaultCourseworkTitle, COURSEWORK_TITLE_MAX } from '../src/lib/courseworkTitle.js'
+
+export { defaultCourseworkTitle, COURSEWORK_TITLE_MAX }
 
 const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID
 const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET
@@ -299,4 +302,36 @@ export function billLinkIsResolvable(billData) {
   const number = billData.number ?? billData.bill_number
   if (!type || number == null || String(number).trim() === '') return false
   return isResolvableBillPath(billHref(billData, { canonical: true }))
+}
+
+// ─── Due date ────────────────────────────────────────────────────────────────
+// Classroom stores dueDate + dueTime as separate UTC fields and renders them in
+// the viewer's local time. So the ONLY correct input is an absolute instant.
+//
+// This was live-wrong. A real assignment in a real course held
+// dueDate {2026,6,24} + dueTime {23,59} — which is 23:59 UTC, i.e. 7:59 PM
+// Eastern. The teacher had picked a date meaning "end of that day" and the old
+// date-only path stamped 23:59 UTC onto it, shifting every US due time earlier
+// by the UTC offset (and, east of UTC, onto the wrong day entirely).
+//
+// Takes an ISO instant. Returns null when there's no usable date, and
+// { past: true } when Google would reject it — the API requires a future due
+// date, and its rejection is an opaque 400 that we used to blame on the course.
+export function buildDueFields(dueDateTime, { now = Date.now() } = {}) {
+  if (!dueDateTime) return null
+  const dt = new Date(dueDateTime)
+  if (isNaN(dt.getTime())) return null
+  if (dt.getTime() <= now) return { past: true }
+  return {
+    dueDate: { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() },
+    dueTime: { hours: dt.getUTCHours(), minutes: dt.getUTCMinutes() },
+  }
+}
+
+// A DRAFT courseWork has no alternateLink — Google only populates it once the
+// post is PUBLISHED. Since "Save as draft" is our default, the success screen's
+// "Open in Google Classroom" button was missing exactly when most teachers
+// needed it. Fall back to the course page, which always exists.
+export function classroomFallbackLink(course, courseId) {
+  return course?.alternateLink || (courseId ? `https://classroom.google.com/c/${courseId}` : null)
 }

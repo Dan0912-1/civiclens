@@ -328,27 +328,99 @@ checkAsync('courseWorkExists assumes present on a non-404 error', async () => {
   eq(await gc.courseWorkExists(fake, 'c1', 'cw1'), true)
 })
 
-// ─── Due-date conversion (mirrors the server's dueDateTime handling) ─────────
-function dueFields(dueDateTime) {
-  const dt = new Date(dueDateTime)
-  return {
-    dueDate: { year: dt.getUTCFullYear(), month: dt.getUTCMonth() + 1, day: dt.getUTCDate() },
-    dueTime: { hours: dt.getUTCHours(), minutes: dt.getUTCMinutes() },
-  }
-}
+// ─── Due dates ───────────────────────────────────────────────────────────────
+// Regression cases for a bug that was live in a real course: Google held
+// dueDate {2026,6,24} + dueTime {23,59}, i.e. 23:59 UTC, which Classroom showed
+// as 7:59 PM Eastern. The teacher had asked for the end of that day.
+const FUTURE = Date.parse('2026-09-01T00:00:00Z')
 
-check('due date converts to UTC fields Google expects', () => {
-  const { dueDate, dueTime } = dueFields('2026-09-15T23:59:00.000Z')
-  eq(dueDate.year, 2026); eq(dueDate.month, 9); eq(dueDate.day, 15)
-  eq(dueTime.hours, 23); eq(dueTime.minutes, 59)
+check('due fields are the UTC parts of the absolute instant', () => {
+  const out = gc.buildDueFields('2026-09-15T23:59:00.000Z', { now: FUTURE })
+  eq(out.dueDate.year, 2026); eq(out.dueDate.month, 9); eq(out.dueDate.day, 15)
+  eq(out.dueTime.hours, 23); eq(out.dueTime.minutes, 59)
 })
 
 check('a late-evening local due date rolls to the next UTC day', () => {
   // 11:59pm Sept 15 in New York (UTC-4) is 03:59 UTC on Sept 16. Sending the
-  // local calendar day would make the assignment due a day early for students.
-  const { dueDate, dueTime } = dueFields('2026-09-16T03:59:00.000Z')
-  eq(dueDate.day, 16, 'day: ')
-  eq(dueTime.hours, 3, 'hours: ')
+  // local calendar day instead is exactly what shifted due times four hours.
+  const out = gc.buildDueFields('2026-09-16T03:59:00.000Z', { now: FUTURE })
+  eq(out.dueDate.day, 16, 'day: ')
+  eq(out.dueTime.hours, 3, 'hours: ')
+})
+
+check('11:59 PM local round-trips to 11:59 PM local in every US timezone', () => {
+  // The property that actually matters: whatever the teacher picks is what a
+  // student in the same timezone sees in Classroom.
+  for (const [tz, offsetHours] of [['America/New_York', 4], ['America/Chicago', 5], ['America/Denver', 6], ['America/Los_Angeles', 7]]) {
+    // 23:59 local on Sept 15 == (23:59 + offset) UTC
+    const instant = new Date(Date.UTC(2026, 8, 16, (23 + offsetHours) % 24, 59))
+    const out = gc.buildDueFields(instant.toISOString(), { now: FUTURE })
+    const back = new Date(Date.UTC(out.dueDate.year, out.dueDate.month - 1, out.dueDate.day, out.dueTime.hours, out.dueTime.minutes))
+    const shown = back.toLocaleString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' })
+    eq(shown, '11:59 PM', `${tz} display: `)
+  }
+})
+
+check('a past due date is flagged, not silently sent', () => {
+  // Google requires a future due date and rejects the whole create with an
+  // opaque 400 that we used to report as a problem with the course.
+  const out = gc.buildDueFields('2026-01-01T00:00:00.000Z', { now: FUTURE })
+  ok(out?.past, 'should be flagged as past')
+  ok(!out.dueDate, 'must not also produce fields')
+})
+
+check('no due date and garbage due dates yield null', () => {
+  eq(gc.buildDueFields(null), null)
+  eq(gc.buildDueFields(''), null)
+  eq(gc.buildDueFields('not a date', { now: FUTURE }), null)
+})
+
+// ─── Draft links ─────────────────────────────────────────────────────────────
+check('a draft falls back to the course link', () => {
+  // alternateLink is only populated for PUBLISHED coursework, and draft is our
+  // default — so the success screen had no link at all on the common path.
+  eq(gc.classroomFallbackLink({ alternateLink: 'https://classroom.google.com/c/ABC' }, 'ABC'),
+     'https://classroom.google.com/c/ABC')
+  eq(gc.classroomFallbackLink(null, 'XYZ'), 'https://classroom.google.com/c/XYZ')
+  eq(gc.classroomFallbackLink(null, null), null)
+})
+
+// ─── Coursework titles ───────────────────────────────────────────────────────
+check('the default title leads with the bill number', () => {
+  const t = gc.defaultCourseworkTitle({ type: 'hr', number: '9351', congress: 119, title: 'To amend the Servicemembers Civil Relief Act to provide relief for members of the uniformed services who homeschool their dependent children, and for other purposes.' })
+  ok(t.startsWith('HR 9351: '), `got: ${t}`)
+  ok(!/for other purposes/i.test(t), 'boilerplate tail should be dropped')
+  ok(t.length <= gc.COURSEWORK_TITLE_MAX, `too long (${t.length}): ${t}`)
+})
+
+check('the default title truncates at a word boundary', () => {
+  const long = 'To establish a comprehensive national framework for the regulation of artificial intelligence systems deployed in critical infrastructure sectors, and for other purposes.'
+  const t = gc.defaultCourseworkTitle({ type: 's', number: '1', congress: 119, title: long })
+  ok(t.length <= gc.COURSEWORK_TITLE_MAX, `too long (${t.length})`)
+  ok(t.length < long.length, 'should have been shortened')
+  // Every word that survives must be a whole word from the original.
+  const words = t.replace(/^S 1: /, '').replace(/…$/, '').split(' ')
+  const source = long.toLowerCase()
+  for (const w of words) {
+    ok(source.includes(w.toLowerCase().replace(/[,;:]$/, '')), `"${w}" is not a whole word from the title: ${t}`)
+  }
+})
+
+check('state bills carry their state in the label', () => {
+  const t = gc.defaultCourseworkTitle({ type: 'hb', number: '5001', state: 'ct', session: '2026 Regular Session', title: 'An Act Concerning School Meals' })
+  ok(t.startsWith('CT HB 5001: '), `got: ${t}`)
+})
+
+check('a short title is left alone', () => {
+  const t = gc.defaultCourseworkTitle({ type: 'hr', number: '42', congress: 119, title: 'Limit retainage in certain private construction projects' })
+  eq(t, 'HR 42: Limit retainage in certain private construction projects')
+})
+
+check('a missing title still produces something postable', () => {
+  // Google rejects an empty title, so this must never come back blank.
+  ok(gc.defaultCourseworkTitle({ type: 'hr', number: '42', congress: 119 }).length > 0)
+  ok(gc.defaultCourseworkTitle(null).length > 0)
+  ok(gc.defaultCourseworkTitle({}).length > 0)
 })
 
 // ─── Run + report ────────────────────────────────────────────────────────────
