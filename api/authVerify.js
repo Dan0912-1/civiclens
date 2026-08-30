@@ -99,8 +99,11 @@ function verifySignature(alg, keyObject, signingInput, signature) {
 //   without a network call.
 // { ok: false, reason: 'unsupported' } when we can't judge it locally — the
 //   caller must fall back to supabase.auth.getUser.
-export async function verifyAccessToken(token, supabaseUrl) {
-  if (!token || !supabaseUrl) return { ok: false, reason: 'unsupported' }
+export async function verifyAccessToken(token, rawSupabaseUrl) {
+  if (!token || !rawSupabaseUrl) return { ok: false, reason: 'unsupported' }
+  // A trailing slash in SUPABASE_URL would otherwise make every legitimate
+  // token's issuer string mismatch.
+  const supabaseUrl = String(rawSupabaseUrl).replace(/\/+$/, '')
 
   const parts = token.split('.')
   if (parts.length !== 3) return { ok: false, reason: 'invalid' }
@@ -152,7 +155,12 @@ export async function verifyAccessToken(token, supabaseUrl) {
   if (typeof payload.nbf === 'number' && nowSec < payload.nbf - CLOCK_SKEW_SEC) {
     return { ok: false, reason: 'invalid' }
   }
-  if (payload.iss !== `${supabaseUrl}/auth/v1`) return { ok: false, reason: 'invalid' }
+  // The signature already proved this token was minted by our own project's
+  // key, so an issuer string that doesn't match is far more likely to be a
+  // config formatting difference than an attack. Defer to the authoritative
+  // network check rather than hard-rejecting — a genuinely bad issuer still
+  // gets caught there, but a config drift can't lock every user out.
+  if (payload.iss !== `${supabaseUrl}/auth/v1`) return { ok: false, reason: 'unsupported' }
 
   const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud]
   if (!aud.includes('authenticated')) return { ok: false, reason: 'invalid' }

@@ -57,7 +57,16 @@ await check('tampered signature', sign(base, { tamper: true }), 'invalid')
 await check('signed by a different key', sign(base, { key: otherPriv }), 'invalid')
 await check('expired', sign({ ...base, exp: now - 120 }), 'invalid')
 await check('not yet valid', sign({ ...base, nbf: now + 600 }), 'invalid')
-await check('wrong issuer', sign({ ...base, iss: 'https://evil.supabase.co/auth/v1' }), 'invalid')
+// A mismatched issuer defers to supabase.auth.getUser rather than hard-rejecting,
+// so a trailing slash in SUPABASE_URL can't lock every user out.
+await check('wrong issuer defers to network', sign({ ...base, iss: 'https://evil.supabase.co/auth/v1' }), 'unsupported')
+// A trailing slash in the configured URL must still verify.
+{
+  const res = await verifyAccessToken(sign(base), SUPABASE_URL + '/')
+  assert.strictEqual(res.ok, true, 'trailing-slash SUPABASE_URL should still verify')
+  console.log('  ok  trailing-slash SUPABASE_URL -> ok')
+  passed++
+}
 await check('wrong audience', sign({ ...base, aud: 'anon' }), 'invalid')
 await check('service_role escalation', sign({ ...base, role: 'service_role' }), 'invalid')
 await check('missing sub', sign({ ...base, sub: undefined }), 'invalid')
