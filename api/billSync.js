@@ -2,7 +2,9 @@
  * Bill Sync Module — Populates local bills table from three sources:
  *   1. Congress.gov (federal, free, unlimited)
  *   2. Open States / Plural (state, 1000/day, 40/min)
- *   3. LegiScan (text gap-fill only, 30K/month)
+ *   3. LegiScan (daily getMasterList catalog + change_hash detection;
+ *      10K queries/month and ~2 req/s from 2026-10-01 — every call goes
+ *      through the shared queue in ./legiscanClient.js)
  *
  * Designed to run as a daily cron. After initial backfill, only fetches
  * bills that changed since last sync.
@@ -10,6 +12,7 @@
 
 import { extractStructuredExcerpt, computeSectionTopicScores } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
+import { legiscanFetch } from './legiscanClient.js'
 
 // Safety cap: a handful of state bills publish 50+ MB PDFs (full code
 // rewrites). Parsing those eats memory and rarely produces useful excerpts.
@@ -695,7 +698,7 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
     try {
       console.log(`[legiscan-catalog] ${state}: fetching getMasterList`)
       const url = `https://api.legiscan.com/?key=${apiKey}&op=getMasterList&state=${state}`
-      const resp = await fetch(url, { signal: AbortSignal.timeout(30000) })
+      const resp = await legiscanFetch(url, { signal: AbortSignal.timeout(30000) })
       if (!resp.ok) {
         console.error(`[legiscan-catalog] ${state}: HTTP ${resp.status}`)
         continue
@@ -916,7 +919,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
       if (bill.legiscan_bill_id) {
         // Direct fetch by LegiScan ID
         const url = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${bill.legiscan_bill_id}`
-        const resp = await fetch(url)
+        const resp = await legiscanFetch(url)
         totalCalls++
         if (resp.ok) {
           const data = await resp.json()
@@ -927,7 +930,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
         const state = bill.jurisdiction === 'US' ? 'US' : bill.jurisdiction
         const searchTerm = `${bill.bill_type.toUpperCase()} ${bill.bill_number}`
         const url = `https://api.legiscan.com/?key=${apiKey}&op=search&state=${state}&query=${encodeURIComponent(searchTerm)}`
-        const resp = await fetch(url)
+        const resp = await legiscanFetch(url)
         totalCalls++
         if (resp.ok) {
           const data = await resp.json()
@@ -938,7 +941,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
           if (match) {
             // Fetch full bill
             const billUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${match.bill_id}`
-            const billResp = await fetch(billUrl)
+            const billResp = await legiscanFetch(billUrl)
             totalCalls++
             if (billResp.ok) {
               const billResult = await billResp.json()
@@ -960,7 +963,7 @@ async function syncLegiScanTexts(supabase, apiKey, options = {}) {
         const latestText = billData.texts[billData.texts.length - 1]
         if (latestText.doc_id) {
           const textUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBillText&id=${latestText.doc_id}`
-          const textResp = await fetch(textUrl)
+          const textResp = await legiscanFetch(textUrl)
           totalCalls++
           if (textResp.ok) {
             const textData = await textResp.json()
@@ -1017,7 +1020,11 @@ async function runDailySync(supabase, config) {
   //   2. Runtime fetch when a student clicks Personalize on a search result.
   //   3. On-demand text backfill when a teacher pins a bill to a classroom.
   // See api/server.js — fetchBillTextFromLegiScan and pinBillForAssignment.
-  const { congressApiKey, openStatesApiKey, legiscanApiKey, states } = config
+  //
+  // congress: server.js passes currentFederalCongress(). Without it,
+  // syncCongressGov falls back to its hard-coded default, which goes stale
+  // when the 120th Congress convenes on 2027-01-03.
+  const { congressApiKey, openStatesApiKey, legiscanApiKey, states, congress } = config
   const startTime = Date.now()
   const results = {}
 
@@ -1028,7 +1035,7 @@ async function runDailySync(supabase, config) {
   // Phase 1: Federal metadata + text (Congress.gov — unlimited)
   if (congressApiKey) {
     try {
-      results.congress = await syncCongressGov(supabase, congressApiKey)
+      results.congress = await syncCongressGov(supabase, congressApiKey, congress ? { congress } : {})
     } catch (err) {
       console.error('[sync] Congress.gov sync failed:', err.message)
       results.congress = { error: err.message }
@@ -1055,23 +1062,30 @@ async function runDailySync(supabase, config) {
     // include=versions ingestion filter, the bootstrap path isn't needed in
     // steady state. The function is still exported for one-off use when
     // seeding a brand-new jurisdiction.
+  }
 
-    // Phase 3.5: LegiScan change-hash detection.
-    // getMasterList per state (~51 calls) returns every bill's current
-    // change_hash. When it differs from what we stored, syncLegiScanCatalog
-    // nulls the row's full_text so Phase 4 below re-runs our scrapers on it.
-    // Without this, state bills that already have text are never checked for
-    // amendments/substitutes — our scrapers only run on first fetch.
-    if (legiscanApiKey) {
-      try {
-        const lsStates = states || Object.keys(STATE_NAMES)
-        results.legiscanCatalog = await syncLegiScanCatalog(supabase, legiscanApiKey, { states: lsStates })
-      } catch (err) {
-        console.error('[sync] LegiScan catalog sync failed:', err.message)
-        results.legiscanCatalog = { error: err.message }
-      }
+  // Phase 3.5: LegiScan change-hash detection.
+  // getMasterList per state (~51 calls) returns every bill's current
+  // change_hash. When it differs from what we stored, syncLegiScanCatalog
+  // nulls the row's full_text so Phase 4 below re-runs our scrapers on it.
+  // Without this, state bills that already have text are never checked for
+  // amendments/substitutes — our scrapers only run on first fetch.
+  //
+  // Runs whenever LEGISCAN_API_KEY is set. It used to be nested inside the
+  // Open States block, so a missing/expired Open States key silently stopped
+  // change detection as well.
+  if (legiscanApiKey) {
+    try {
+      const lsStates = states || Object.keys(STATE_NAMES)
+      results.legiscanCatalog = await syncLegiScanCatalog(supabase, legiscanApiKey, { states: lsStates })
+    } catch (err) {
+      console.error('[sync] LegiScan catalog sync failed:', err.message)
+      results.legiscanCatalog = { error: err.message }
     }
+  }
 
+  // Phase 4 needs Open States for the version links it scrapes from.
+  if (openStatesApiKey) {
     // Phase 4: State text via Open States → legislature PDF/HTML.
     // Runs after Phase 3.5 so any bill whose change_hash just flipped (and
     // therefore had full_text nulled) gets re-scraped on this same run.
@@ -1117,7 +1131,7 @@ async function runBackfill(supabase, config) {
   // Backfill federal bills (last 6 months)
   if (congressApiKey) {
     const sixMonthsAgo = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)
-    await syncCongressGov(supabase, congressApiKey, { since: sixMonthsAgo })
+    await syncCongressGov(supabase, congressApiKey, { since: sixMonthsAgo, ...(config.congress ? { congress: config.congress } : {}) })
   }
 
   // Backfill state bills (last 30 days — limited by daily quota)
@@ -2010,14 +2024,14 @@ async function fetchBillText(supabase, bill) {
     try {
       const apiKey = process.env.LEGISCAN_API_KEY
       const billUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBill&id=${bill.legiscan_bill_id}`
-      const billResp = await fetch(billUrl, { signal: AbortSignal.timeout(15000) })
+      const billResp = await legiscanFetch(billUrl, { signal: AbortSignal.timeout(15000) })
       if (billResp.ok) {
         const billData = await billResp.json()
         const latestText = billData.bill?.texts?.[billData.bill.texts.length - 1]
         if (latestText?.doc_id) {
           await new Promise(r => setTimeout(r, 1500))
           const textUrl = `https://api.legiscan.com/?key=${apiKey}&op=getBillText&id=${latestText.doc_id}`
-          const textResp = await fetch(textUrl, { signal: AbortSignal.timeout(15000) })
+          const textResp = await legiscanFetch(textUrl, { signal: AbortSignal.timeout(15000) })
           if (textResp.ok) {
             const textData = await textResp.json()
             const doc = textData.text?.doc

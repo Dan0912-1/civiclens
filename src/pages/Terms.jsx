@@ -105,12 +105,25 @@ export default function Terms() {
         <div className={styles.section}>
           <h2>Intellectual property</h2>
           <p>
-            Legislation data is sourced from Congress.gov and LegiScan and is in
-            the public domain. AI-generated explanations are provided for your
-            personal, non-commercial use only. The CapitolKey name, logo, app
-            design, and source code are the property of CapitolKey and are
-            protected by applicable copyright and trademark laws. Unauthorized
-            copying, reproduction, or redistribution is prohibited.
+            Legislation data comes from three sources.{' '}
+            <a href="https://www.congress.gov" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Congress.gov</a>{' '}
+            (Library of Congress) provides federal bill information, which is a
+            U.S. government work in the public domain.{' '}
+            <a href="https://openstates.org" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Open States</a>{' '}
+            (Plural) provides state bill information and links to official bill
+            text, which we retrieve from each state legislature's website.{' '}
+            <a href="https://legiscan.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>LegiScan</a>{' '}
+            provides state bill catalogs and status data, licensed under{' '}
+            <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Creative Commons Attribution 4.0 (CC BY 4.0)</a>:
+            "Legislative data from LegiScan, legiscan.com." We may reformat or
+            summarize that data; none of these sources endorses CapitolKey.
+          </p>
+          <p>
+            AI-generated explanations are provided for your personal,
+            non-commercial use only. The CapitolKey name, logo, app design, and
+            source code are the property of CapitolKey and are protected by
+            applicable copyright and trademark laws. Unauthorized copying,
+            reproduction, or redistribution is prohibited.
           </p>
         </div>
 

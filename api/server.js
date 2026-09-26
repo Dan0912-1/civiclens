@@ -20,6 +20,7 @@ import { GoogleAuth } from 'google-auth-library'
 import { billUpdateEmail } from './emailTemplates.js'
 import { runDailySync, runBackfill, fetchBillText, backfillStateTexts, refreshHotBillTexts } from './billSync.js'
 import { runRanker } from './billRanker.js'
+import { legiscanFetch, legiscanCallCount, legiscanMonthlyUsage, LEGISCAN_MIN_INTERVAL_MS } from './legiscanClient.js'
 import { pickBillContent, extractStructuredExcerpt } from './billExcerpt.js'
 import { loadPDFParse } from './pdfLoader.js'
 import { verifyAccessToken } from './authVerify.js'
@@ -342,6 +343,10 @@ const featuredLimiter = rateLimit({
   message: { error: 'Too many requests — please slow down.' },
 })
 
+// ONE LegiScan key for the whole product. Prewarm, the daily catalog sync,
+// runtime lookups and scripts all share LEGISCAN_API_KEY. Do not add a second
+// key (e.g. for prewarm) to get more quota: LegiScan's one-key rule bans every
+// key involved from 2026-11-01. See api/legiscanClient.js.
 const LEGISCAN_KEY = process.env.LEGISCAN_API_KEY
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY
 const GROQ_API_KEY = process.env.GROQ_API_KEY
@@ -396,7 +401,7 @@ function setClaudeBackoff(retryAfterHeader) {
 }
 
 // ─── LLM provider (Groq primary, Haiku fallback) ─────────────────────────
-// Groq Qwen3-32B is primary: 4-5x cheaper, 5x faster, comparable quality.
+// Groq openai/gpt-oss-120b is primary: much cheaper and faster than Claude.
 // Falls back to Claude Haiku if GROQ_API_KEY is missing or Groq goes down.
 let _useGroqFallback = !!GROQ_API_KEY  // true = use Groq (primary)
 let _groqFallbackSince = _useGroqFallback ? Date.now() : null
@@ -409,7 +414,7 @@ function activateGroqFallback(reason) {
   }
   _useGroqFallback = true
   _groqFallbackSince = Date.now()
-  console.log(`[llm-failover] Switched to Groq Qwen3-32B — reason: ${reason}`)
+  console.log(`[llm-failover] Switched to Groq gpt-oss-120b — reason: ${reason}`)
 }
 
 function isUsingGroq() { return _useGroqFallback }
@@ -545,7 +550,7 @@ let _groqConsecFails = 0
 let _groqDisabledUntil = 0
 
 /**
- * Unified LLM call. Groq Qwen3-32B is primary (when configured); Claude
+ * Unified LLM call. Groq openai/gpt-oss-120b is primary (when configured); Claude
  * Haiku is the fallback for Groq errors/outages. A Claude credit/auth
  * failure flips the process to Groq-primary permanently (activateGroqFallback)
  * and retries the in-flight call on Groq once — never recursively, so a
@@ -749,7 +754,10 @@ async function legiscanRequest(op, params = {}) {
     url.searchParams.set(k, v)
   }
   if (lsMetrics[op] !== undefined) lsMetrics[op]++
-  const resp = await fetch(url.toString(), { signal: AbortSignal.timeout(15000) })
+  // Every LegiScan call goes through the shared start-slot queue in
+  // legiscanClient.js (≥600ms apart, one key) — see that file for the
+  // 2026-10-01 limits this protects.
+  const resp = await legiscanFetch(url.toString(), { signal: AbortSignal.timeout(15000) })
   if (!resp.ok) throw new Error(`LegiScan ${op} failed: ${resp.status}`)
   const data = await resp.json()
   if (data.status === 'ERROR') throw new Error(`LegiScan ${op}: ${JSON.stringify(data)}`)
@@ -2357,7 +2365,7 @@ OUTPUT — return ONLY this JSON, nothing else:
 }`
 
 // ─── Relevance post-processing ────────────────────────────────────────────
-// Qwen3 (Groq) tends to over-rate relevance on bills with no real connection
+// The Groq model (originally Qwen3, now gpt-oss-120b) tends to over-rate relevance on bills with no real connection
 // to the student. This function only pulls DOWN clearly inflated scores —
 // it never touches scores where a reasonable connection exists.
 function adjustRelevance(parsed, profile) {
@@ -3780,6 +3788,68 @@ app.post('/api/notifications/preferences', authLimiter, async (req, res) => {
   }
 })
 
+// ─── Job-run ledger ─────────────────────────────────────────────────────────
+// Every scheduled job writes a `job_runs` row (supabase/create_job_runs.sql):
+// 'started' when it begins, then 'ok' or 'error' with its stats. Before this,
+// the only proof a cron ran was a console line in the Railway logs, which
+// roll off. The ledger is best-effort: if Supabase is down or the table has
+// not been created yet, we log and run the job anyway — a missing audit row
+// must never cost us the sync itself.
+async function recordJobRun(jobName, fn) {
+  const startedAt = new Date()
+  const callsBefore = legiscanCallCount()
+  let runId = null
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('job_runs')
+        .insert({ job_name: jobName, started_at: startedAt.toISOString(), status: 'started' })
+        .select('id')
+        .single()
+      if (error) console.log(`[job-runs] ${jobName}: could not record start (${error.message})`)
+      else runId = data?.id ?? null
+    } catch (err) {
+      console.log(`[job-runs] ${jobName}: could not record start (${err.message})`)
+    }
+  }
+
+  const finish = async (status, stats, errorText) => {
+    const finishedAt = new Date()
+    const row = {
+      finished_at: finishedAt.toISOString(),
+      status,
+      // legiscanCalls counts every LegiScan request this process issued while
+      // the job ran — normally just the job's own, since these crons run
+      // off-peak, but a concurrent student request would be included.
+      stats: {
+        ...(stats && typeof stats === 'object' ? stats : {}),
+        durationMs: finishedAt - startedAt,
+        legiscanCalls: legiscanCallCount() - callsBefore,
+      },
+      error: errorText || null,
+    }
+    if (!supabase || runId == null) {
+      console.log(`[job-runs] ${jobName} ${status} (not persisted):`, JSON.stringify(row.stats))
+      return
+    }
+    try {
+      const { error } = await supabase.from('job_runs').update(row).eq('id', runId)
+      if (error) console.log(`[job-runs] ${jobName}: could not record ${status} (${error.message})`)
+    } catch (err) {
+      console.log(`[job-runs] ${jobName}: could not record ${status} (${err.message})`)
+    }
+  }
+
+  try {
+    const result = await fn()
+    await finish('ok', result, null)
+    return result
+  } catch (err) {
+    await finish('error', null, String(err?.message || err).slice(0, 2000))
+    throw err
+  }
+}
+
 // ─── Bill-update notification cron job ──────────────────────────────────────
 // Runs daily at 8:00 AM UTC. Checks each bookmarked bill for status changes
 // on Congress.gov and sends grouped email notifications via Resend.
@@ -3787,11 +3857,11 @@ app.post('/api/notifications/preferences', authLimiter, async (req, res) => {
 async function checkBillUpdates() {
   if (!supabase) {
     console.log('[cron] Skipping bill check — Supabase not configured')
-    return
+    return { skipped: 'no_supabase' }
   }
   if (!resend && !fcmAuth) {
     console.log('[cron] Skipping bill check — neither Resend nor FCM configured')
-    return
+    return { skipped: 'no_resend_or_fcm' }
   }
 
   console.log('[cron] Starting daily bill-update check...')
@@ -3805,9 +3875,13 @@ async function checkBillUpdates() {
     .order('created_at', { ascending: false })
     .limit(BOOKMARKS_SCAN_LIMIT)
 
-  if (bmErr || !bookmarks?.length) {
-    console.log('[cron] No bookmarks to check', bmErr?.message || '')
-    return
+  if (bmErr) {
+    // Surface as a failed run in job_runs rather than a silent "ok".
+    throw new Error(`bookmarks query failed: ${bmErr.message}`)
+  }
+  if (!bookmarks?.length) {
+    console.log('[cron] No bookmarks to check')
+    return { bookmarksChecked: 0 }
   }
 
   // 2. Deduplicate bills and collect stored change_hashes
@@ -4089,33 +4163,39 @@ async function checkBillUpdates() {
   }
 
   console.log(`[cron] Bill check complete. ${bookmarkUpdates.length} bookmarks updated, ${emailsSent} emails sent, ${pushSent} push notifications sent.`)
+  return { bookmarksChecked: bookmarks.length, bookmarksUpdated: bookmarkUpdates.length, emailsSent, pushSent }
 }
 
 // Schedule: daily at 8:00 AM UTC (needs Supabase; Resend and FCM are optional)
 if (supabase) {
   cron.schedule('0 8 * * *', () => {
-    checkBillUpdates().catch(err => console.error('[cron] Unhandled error:', err))
+    recordJobRun('bill_updates', checkBillUpdates).catch(err => console.error('[cron] Unhandled error:', err))
   })
   console.log('   Bill-update cron: ✓ scheduled (daily 8:00 AM UTC)')
 
   // ── Bill sync cron: populate local bills DB from Congress.gov + Open States ──
   // Runs at 5:00 AM UTC (before bill-update and before school hours)
   const OPENSTATES_KEY = process.env.OPENSTATES_API_KEY
-  if (CONGRESS_API_KEY || OPENSTATES_KEY) {
+  if (CONGRESS_API_KEY || OPENSTATES_KEY || LEGISCAN_KEY) {
     cron.schedule('0 5 * * *', async () => {
       try {
-        await runDailySync(supabase, {
-          congressApiKey: CONGRESS_API_KEY,
-          openStatesApiKey: OPENSTATES_KEY,
-          // LegiScan used daily for change-hash detection (~51 getMasterList
-          // calls/day = ~5% of free-tier 30K/month). Invalidates stale state
-          // text so our scrapers re-run on amended/substituted bills.
-          legiscanApiKey: LEGISCAN_KEY,
+        await recordJobRun('daily_sync', async () => {
+          const sync = await runDailySync(supabase, {
+            congressApiKey: CONGRESS_API_KEY,
+            congress: currentFederalCongress(),
+            openStatesApiKey: OPENSTATES_KEY,
+            // LegiScan used daily for change-hash detection (~51 getMasterList
+            // calls/day ≈ 1,530/month — ~15% of the 10K/month allowance that
+            // applies from 2026-10-01). Invalidates stale state text so our
+            // scrapers re-run on amended/substituted bills.
+            legiscanApiKey: LEGISCAN_KEY,
+          })
+          // Refresh text for pinned + top-active federal bills (catches amendments)
+          const hotText = await refreshHotBillTexts(supabase, CONGRESS_API_KEY)
+          // Re-rank now that ingestion + refresh are done
+          await runRanker(supabase)
+          return { sync, hotText }
         })
-        // Refresh text for pinned + top-active federal bills (catches amendments)
-        await refreshHotBillTexts(supabase, CONGRESS_API_KEY)
-        // Re-rank now that ingestion + refresh are done
-        await runRanker(supabase)
       } catch (err) {
         console.error('[bill-sync] Unhandled cron error:', err)
       }
@@ -4127,25 +4207,33 @@ if (supabase) {
     setTimeout(() => {
       runBackfill(supabase, {
         congressApiKey: CONGRESS_API_KEY,
+        congress: currentFederalCongress(),
         openStatesApiKey: OPENSTATES_KEY,
         legiscanApiKey: LEGISCAN_KEY,
       }).catch(err => console.error('[backfill] Startup check error:', err))
     }, 5000) // Delay 5s to let server finish starting
   } else {
-    console.log('   Bill sync cron: ✗ disabled (no CONGRESS_API_KEY or OPENSTATES_API_KEY)')
+    console.log('   Bill sync cron: ✗ disabled (no CONGRESS_API_KEY, OPENSTATES_API_KEY or LEGISCAN_API_KEY)')
   }
 } else {
   console.log('   Bill-update cron: ✗ disabled (no Supabase)')
 }
 
 // ─── Pre-warm feed cache ────────────────────────────────────────────────────
-// Fetches feeds for popular interest/grade/state combos before school hours
-// so the first students to load the app get instant cache hits instead of
-// triggering a burst of LegiScan API calls.
-// Must match the age buckets the Profile UI actually offers — previously
-// this was ['9','10','11','12'] which no real user can produce, so every
-// prewarmed entry was dead weight and nobody got a cache hit.
-const PREWARM_GRADES = ['13-14', '15-16', '17-18']
+// Fetches feeds for popular interest/age combos before school hours so the
+// first students to load the app get instant cache hits.
+//
+// LegiScan budget (from 2026-10-01: 10K queries/month, ~2 req/s, one key —
+// see api/legiscanClient.js and docs/ops-oct1-legiscan.md). Every search here
+// runs strictly one at a time (awaited in a plain loop, never Promise.all),
+// and every request also passes the shared ≥600ms start-slot queue.
+//
+// Age buckets must match what the Profile UI offers. By default only the
+// middle high-school bucket is warmed; set PREWARM_AGE_BUCKETS (comma list of
+// 13-14,15-16,17-18) to warm more. LEGISCAN_PREWARM_ENABLED=false turns the
+// whole job off without a deploy (Railway env var).
+const PREWARM_ALL_AGE_BUCKETS = ['13-14', '15-16', '17-18']
+const PREWARM_DEFAULT_AGE_BUCKETS = ['15-16']
 const PREWARM_INTEREST_COMBOS = [
   ['education', 'technology'],
   ['environment', 'healthcare'],
@@ -4153,77 +4241,112 @@ const PREWARM_INTEREST_COMBOS = [
   ['technology', 'economy'],
   ['education', 'environment'],
 ]
+const PREWARM_SEARCH_TERMS_PER_COMBO = 6
+
+function prewarmEnabled() {
+  return String(process.env.LEGISCAN_PREWARM_ENABLED ?? 'true').trim().toLowerCase() !== 'false'
+}
+
+function prewarmAgeBuckets() {
+  const raw = process.env.PREWARM_AGE_BUCKETS
+  if (!raw || !raw.trim()) return PREWARM_DEFAULT_AGE_BUCKETS
+  const picked = raw.split(',').map(s => s.trim()).filter(b => PREWARM_ALL_AGE_BUCKETS.includes(b))
+  return picked.length ? [...new Set(picked)] : PREWARM_DEFAULT_AGE_BUCKETS
+}
 
 async function prewarmFeedCache() {
-  console.log('[prewarm] Starting feed cache warm-up...')
+  const startedAt = Date.now()
+  const searchesBefore = lsMetrics.search
+  if (!prewarmEnabled()) {
+    const summary = { searches: 0, durationMs: 0, skippedBecauseDisabled: true }
+    console.log('[prewarm]', JSON.stringify(summary))
+    return summary
+  }
+
+  const grades = prewarmAgeBuckets()
+  console.log(`[prewarm] Starting feed cache warm-up (age buckets: ${grades.join(',')})...`)
   let warmed = 0
 
   for (const interests of PREWARM_INTEREST_COMBOS) {
-    for (const grade of PREWARM_GRADES) {
+    // Search terms depend only on interests, so fetch once per combo and
+    // reuse the result for every age bucket.
+    let deduped = null
+    for (const grade of grades) {
       const feedCacheKey = `ls-bills-${[...interests].sort().join('-')}-${grade}-US`
       if (getCache(feedCacheKey)) continue // already cached
 
       try {
-        const searchTerms = buildSearchTerms(interests)
-        const federalFetches = searchTerms.slice(0, 6).map(term =>
-          cachedLegiscanSearch('US', term)
-            .then(data => {
-              if (!data.searchresult) return []
-              return Object.values(data.searchresult)
+        if (!deduped) {
+          const searchTerms = buildSearchTerms(interests).slice(0, PREWARM_SEARCH_TERMS_PER_COMBO)
+          const allBills = []
+          for (const term of searchTerms) {
+            try {
+              const data = await cachedLegiscanSearch('US', term)
+              if (!data.searchresult) continue
+              allBills.push(...Object.values(data.searchresult)
                 .filter(r => r.bill_id).slice(0, 10)
-                .map(hit => transformLegiScanBill(hit, term))
-            })
-            .catch(() => [])
-        )
-        const results = await Promise.all(federalFetches)
-        const allBills = results.flat()
+                .map(hit => transformLegiScanBill(hit, term)))
+            } catch (err) {
+              console.error(`[prewarm] search "${term}" failed:`, err.message)
+            }
+          }
 
-        // Deduplicate
-        const seen = new Set()
-        const unique = allBills.filter(b => {
-          const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
-          if (seen.has(id)) return false
-          seen.add(id)
-          return true
-        })
+          // Deduplicate
+          const seen = new Set()
+          const unique = allBills.filter(b => {
+            const id = b.legiscan_bill_id || `${b.state}-${b.type}${b.number}`
+            if (seen.has(id)) return false
+            seen.add(id)
+            return true
+          })
+          deduped = deduplicateCompanionBills(unique)
+          deduped.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
+        }
 
-        const deduped = deduplicateCompanionBills(unique)
-        deduped.sort((a, b) => new Date(b.updateDate) - new Date(a.updateDate))
-        const bills = deduped.slice(0, 15)
-        setCache(feedCacheKey, { bills }, FEED_CACHE_TTL)
+        setCache(feedCacheKey, { bills: deduped.slice(0, 15) }, FEED_CACHE_TTL)
         warmed++
-
-        // Small delay between combos to stay under LegiScan's 100 req/min
-        await new Promise(r => setTimeout(r, 4000))
       } catch (err) {
         console.error(`[prewarm] Error for ${interests.join(',')} grade ${grade}:`, err.message)
       }
     }
   }
 
-  console.log(`[prewarm] Done. Warmed ${warmed} feed cache entries.`)
   logLsMetrics('prewarmFeedCache')
 
-  // Also pre-fetch bill texts for all warmed bills
+  // Pre-fetch bill texts for all warmed bills. Awaited (not fire-and-forget)
+  // so the run's LegiScan usage is attributed to this job.
   const allCachedBills = []
   for (const interests of PREWARM_INTEREST_COMBOS) {
-    for (const grade of PREWARM_GRADES) {
+    for (const grade of grades) {
       const key = `ls-bills-${[...interests].sort().join('-')}-${grade}-US`
       const cached = getCache(key)
       if (cached?.bills) allCachedBills.push(...cached.bills)
     }
   }
   const uniqueBills = [...new Map(allCachedBills.map(b => [b.legiscan_bill_id || b.title, b])).values()]
-  prefetchBillTexts(uniqueBills).catch(err =>
+  try {
+    await prefetchBillTexts(uniqueBills, { concurrency: 1 })
+  } catch (err) {
     console.error('[prewarm] Bill text prefetch error:', err.message)
-  )
+  }
+
+  const summary = {
+    searches: lsMetrics.search - searchesBefore,
+    durationMs: Date.now() - startedAt,
+    skippedBecauseDisabled: false,
+    ageBuckets: grades,
+    feedEntriesWarmed: warmed,
+    billsPrefetched: uniqueBills.length,
+  }
+  console.log('[prewarm]', JSON.stringify(summary))
+  return summary
 }
 
 // Weekdays at 6:00 AM ET (11:00 UTC) — before US school hours
 cron.schedule('0 11 * * 1-5', () => {
-  prewarmFeedCache().catch(err => console.error('[prewarm] Unhandled error:', err))
+  recordJobRun('prewarm', prewarmFeedCache).catch(err => console.error('[prewarm] Unhandled error:', err))
 })
-console.log('   Feed pre-warm cron: ✓ scheduled (weekdays 6:00 AM ET / 11:00 UTC)')
+console.log(`   Feed pre-warm cron: ✓ scheduled (weekdays 6:00 AM ET / 11:00 UTC; ${prewarmEnabled() ? `age buckets ${prewarmAgeBuckets().join(',')}` : 'DISABLED via LEGISCAN_PREWARM_ENABLED=false'})`)
 
 // ─── Congress.gov featured-bills curation ───────────────────────────────────
 // Daily cron that fetches recently-updated bills from the Congress.gov API,
@@ -4283,7 +4406,7 @@ function normaliseCongressGovType(raw) {
 }
 
 async function refreshCuratedBills() {
-  if (!supabase || !CONGRESS_API_KEY) return
+  if (!supabase || !CONGRESS_API_KEY) return { skipped: 'no_supabase_or_congress_key' }
   const congress = currentFederalCongress()
   console.log(`[congress-cron] Refreshing curated bills for ${congress}th Congress...`)
 
@@ -4297,12 +4420,12 @@ async function refreshCuratedBills() {
     bills = data.bills || []
   } catch (err) {
     console.error('[congress-cron] Failed to fetch bill list:', err.message)
-    return
+    throw err
   }
 
   if (!bills.length) {
     console.log('[congress-cron] No bills returned from Congress.gov')
-    return
+    return { congress, fetched: 0, upserted: 0 }
   }
 
   // 2. Fetch individual bill details to get policyArea (list endpoint omits it)
@@ -4362,7 +4485,7 @@ async function refreshCuratedBills() {
 
   if (!unique.length) {
     console.log('[congress-cron] No bills to upsert')
-    return
+    return { congress, fetched: bills.length, upserted: 0 }
   }
 
   // 3. Upsert into curated_bills
@@ -4373,7 +4496,7 @@ async function refreshCuratedBills() {
     if (error) throw error
   } catch (err) {
     console.error('[congress-cron] Supabase upsert error:', err.message)
-    return
+    throw err
   }
 
   // 4. Clear the featured-bills cache so next request picks up fresh data
@@ -4383,12 +4506,13 @@ async function refreshCuratedBills() {
   const cats = {}
   for (const r of unique) cats[r.interest_category] = (cats[r.interest_category] || 0) + 1
   console.log(`[congress-cron] Upserted ${unique.length} bills (${rows.length - unique.length} dupes skipped). Categories: ${JSON.stringify(cats)}`)
+  return { congress, fetched: bills.length, upserted: unique.length, dupesSkipped: rows.length - unique.length, categories: cats }
 }
 
 if (supabase && CONGRESS_API_KEY) {
   // Daily at 6:00 AM UTC — before the 8 AM bill-update cron
   cron.schedule('0 6 * * *', () => {
-    refreshCuratedBills().catch(err => console.error('[congress-cron] Unhandled error:', err))
+    recordJobRun('curated_bills', refreshCuratedBills).catch(err => console.error('[congress-cron] Unhandled error:', err))
   })
   console.log('   Congress.gov cron: ✓ scheduled (daily 6:00 AM UTC)')
 } else {
@@ -4891,8 +5015,10 @@ function buildContextNote(blocks) {
 // Fire-and-forget: pre-fetch bill texts for all returned bills.
 // Bounded concurrency so a single /api/legislation request can't fan out
 // 12 bills × 2-3 LegiScan calls each in parallel and burn through quota.
-async function prefetchBillTexts(bills) {
-  const PREFETCH_CONCURRENCY = 3
+// concurrency=1 makes every LegiScan call strictly sequential (prewarm uses
+// this); the on-demand feed path keeps the default of 3.
+async function prefetchBillTexts(bills, { concurrency = 3 } = {}) {
+  const PREFETCH_CONCURRENCY = Math.max(1, concurrency)
   let cursor = 0
   async function worker() {
     while (true) {
@@ -7816,6 +7942,90 @@ app.get('/api/admin/feedback', requireAdmin, async (req, res) => {
     .limit(limit)
   if (error) return res.status(500).json({ error: 'Internal server error' })
   res.json({ data })
+})
+
+// ─── Ops: job-run ledger + LegiScan quota (admin-only, read-only) ───────────
+// Both routes sit behind the same ADMIN_SECRET / x-admin-token gate as
+// /api/admin/stats. Callers (humans, ops bots) only ever hold ADMIN_SECRET;
+// the server's own Supabase client does the read and nothing here writes.
+const JOB_RUN_COLUMNS = 'id, job_name, started_at, finished_at, status, stats, error'
+
+async function latestJobRun(jobName) {
+  if (!supabase) return null
+  const { data, error } = await supabase
+    .from('job_runs')
+    .select(JOB_RUN_COLUMNS)
+    .eq('job_name', jobName)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data || null
+}
+
+app.get('/api/admin/jobs', requireAdmin, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' })
+  const hours = Math.min(Math.max(parseInt(req.query.hours, 10) || 48, 1), 24 * 31)
+  const since = new Date(Date.now() - hours * 3600000).toISOString()
+  const { data, error } = await supabase
+    .from('job_runs')
+    .select(JOB_RUN_COLUMNS)
+    .gte('started_at', since)
+    .order('started_at', { ascending: false })
+    .limit(500)
+  if (error) {
+    // Most likely cause before the migration is applied: the table is missing.
+    console.error('[admin/jobs]', error.message)
+    return res.status(500).json({ error: 'Failed to read job_runs (has supabase/create_job_runs.sql been applied?)' })
+  }
+  res.json({ hours, since, runs: data })
+})
+
+app.get('/api/admin/quota', requireAdmin, async (req, res) => {
+  // Real counts only. Anything this process cannot know is null, never 0.
+  let lastPrewarm = null
+  let lastDailySync = null
+  let jobRunsError = null
+  try {
+    ;[lastPrewarm, lastDailySync] = await Promise.all([latestJobRun('prewarm'), latestJobRun('daily_sync')])
+  } catch (err) {
+    jobRunsError = err.message
+  }
+
+  const now = Date.now()
+  res.json({
+    legiscan: {
+      // Counted by the shared queue in api/legiscanClient.js for this process
+      // since `countingSince`. complete=false means the process restarted
+      // mid-month, so `count` is a lower bound for the month, not the total.
+      monthToDate: legiscanMonthlyUsage(),
+      minIntervalMs: LEGISCAN_MIN_INTERVAL_MS,
+      // Legacy per-op counters since process start (server.js calls only).
+      lsMetrics: { ...lsMetrics, _lastLog: undefined },
+    },
+    prewarm: {
+      enabled: prewarmEnabled(),
+      LEGISCAN_PREWARM_ENABLED: process.env.LEGISCAN_PREWARM_ENABLED ?? null,
+      PREWARM_AGE_BUCKETS: process.env.PREWARM_AGE_BUCKETS ?? null,
+      effectiveAgeBuckets: prewarmAgeBuckets(),
+    },
+    jobs: {
+      prewarm: lastPrewarm,
+      daily_sync: lastDailySync,
+      error: jobRunsError,
+    },
+    llm: {
+      groqConfigured: !!GROQ_API_KEY,
+      groqPrimary: _useGroqFallback,
+      groqConsecutiveFailures: _groqConsecFails,
+      groqDisabledUntil: _groqDisabledUntil > now ? new Date(_groqDisabledUntil).toISOString() : null,
+      groqCallsLastHour: _groqCallLog.filter(t => t > now - 3600000).length,
+      claudeBackoffUntil: _claudeBackoffUntil > now ? new Date(_claudeBackoffUntil).toISOString() : null,
+      anthropicCallsLastHour: _anthropicCallLog.filter(t => t > now - 3600000).length,
+      anthropicHourlyCap: ANTHROPIC_HOURLY_CAP,
+    },
+    processStartedAt: new Date(now - process.uptime() * 1000).toISOString(),
+  })
 })
 
 // Sentry's Express error handler must be registered after all routes but

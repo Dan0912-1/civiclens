@@ -18,7 +18,7 @@ CONTEXT
 CapitolKey is a nonpartisan civic-education app that personalizes U.S.
 legislation for high-school students. Stack: React 18 + Vite frontend,
 Node/Express backend, Supabase (Postgres + Auth), Anthropic Claude API for
-personalization with Groq Qwen3-32B primary / Claude Haiku fallback,
+personalization with Groq openai/gpt-oss-120b primary / claude-haiku-4-5-20251001 fallback,
 Capacitor 8 for iOS+Android, Resend for email, FCM for push. Deployed on
 Vercel (frontend) + Railway (backend) + Supabase Cloud.
 

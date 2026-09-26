@@ -50,8 +50,8 @@ export default function About() {
           <div className={styles.techGrid}>
             {[
               {
-                name: 'Our own scraping pipeline',
-                desc: 'We pull bill text directly from every state legislature and Congress, normalize it, and store it in our Supabase database. Covers all 50 states, updated daily.',
+                name: 'Official legislative data',
+                desc: 'Federal bills come from Congress.gov. State bills come from Open States and LegiScan, with bill text from each legislature\'s official site. We normalize it into our own database and refresh it daily. Covers Congress, 49 states, and D.C.',
                 badge: 'Data source'
               },
               {
@@ -72,6 +72,26 @@ export default function About() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className={styles.section}>
+          <h2>Data sources and credits</h2>
+          <p>
+            Federal bill information comes from{' '}
+            <a href="https://www.congress.gov" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Congress.gov</a>,
+            published by the Library of Congress. State bill information comes
+            from{' '}
+            <a href="https://openstates.org" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Open States</a>{' '}
+            (Plural) and from{' '}
+            <a href="https://legiscan.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>LegiScan</a>,
+            with bill text retrieved from each state legislature's official website.
+          </p>
+          <p>
+            LegiScan data is used under the{' '}
+            <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>Creative Commons Attribution 4.0 (CC BY 4.0)</a>{' '}
+            license. Legislative data from LegiScan, legiscan.com. We may have
+            reformatted or summarized it; LegiScan does not endorse CapitolKey.
+          </p>
         </div>
 
         <div className={styles.section}>
@@ -156,8 +176,9 @@ export default function About() {
             <details className={styles.faq}>
               <summary>Do you cover local or city-level legislation?</summary>
               <p>
-                Not yet. CapitolKey currently covers the U.S. Congress and all
-                50 state legislatures. Town councils, county boards, and school
+                Not yet. CapitolKey currently covers the U.S. Congress, 49
+                state legislatures, and D.C. (New Hampshire isn't supported
+                yet; see below). Town councils, county boards, and school
                 boards are on our roadmap.
               </p>
             </details>
@@ -165,8 +186,9 @@ export default function About() {
             <details className={styles.faq}>
               <summary>How often is bill data updated?</summary>
               <p>
-                Our pipeline refreshes federal and state bill data every day,
-                pulling directly from each legislature's official site. Status
+                Our pipeline refreshes federal and state bill data every day
+                from Congress.gov, Open States, and LegiScan, and pulls bill
+                text from each legislature's official site. Status
                 changes (introduced, in committee, passed, signed into law)
                 typically appear the same day they happen.
               </p>
