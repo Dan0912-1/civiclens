@@ -8,6 +8,7 @@ import { ToastProvider } from './context/ToastContext'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { initAnalytics } from './lib/analytics'
 import { initPostHog } from './lib/posthog'
+import { beforeSend } from './lib/sentryFilters'
 import App from './App.jsx'
 
 // Self-hosted fonts (latin subsets), replacing the render-blocking Google
@@ -111,6 +112,9 @@ onIdle(() => {
             // response code, or an unsupported MIME type) and still comes through.
             /An unknown error occurred when fetching the script/i,
           ],
+          // Drops CSP eval blocks that originate entirely outside our bundle
+          // (bots, extensions). Stack-aware, so it can't live in ignoreErrors.
+          beforeSend,
         })
       })
       .catch(() => {})
