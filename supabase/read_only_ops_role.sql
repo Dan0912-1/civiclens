@@ -9,14 +9,13 @@
 -- was never applied, like backfill_progress) are skipped with a NOTICE rather
 -- than failing the whole script. Re-run this file after creating any of them.
 --
--- This file creates a NOLOGIN group role. To let a bot connect, a human
--- creates a separate login role and adds it to the group, choosing the
--- password in the SQL editor (never commit it):
---
---   create role ops_bot login password '<choose in SQL editor>' in role capitolkey_ops_readonly;
---
--- and gives the bot the Postgres connection string for that login (Supabase
--- dashboard → Connect → session pooler), NOT the service key.
+-- This file creates a NOLOGIN group role. The login role that bots use
+-- (ops_bot) is created by the SQL in docs/ops-warden-access.md, which also
+-- covers how its password is handled. Don't write a bare
+-- `create role ... password '...'` at the top level of the SQL editor: this
+-- project runs with log_statement = 'ddl', so that statement, password
+-- included, would land in the Postgres logs. Never hand a bot the
+-- SUPABASE_SERVICE_KEY.
 --
 -- PII: user_profiles and feedback contain student profile fields and contact
 -- details. They are included because ops triage needs them. If a bot only
@@ -71,17 +70,22 @@ begin
   end loop;
 end $$;
 
--- pg_cron run history (cron.job_run_details) for the retention jobs in
--- supabase/schedule_retention_cron.sql. On some Supabase projects the cron
--- schema is owned by supabase_admin and `postgres` cannot re-grant it, or
--- pg_cron is not installed; either way this block prints a notice and the rest
--- of the file still applies.
+-- pg_cron: deliberately NOT granted (2026-09-28). An earlier version of this
+-- file granted USAGE on schema cron plus SELECT on cron.job and
+-- cron.job_run_details. That was useless and unsafe:
+--   * pg_cron's own RLS policy (username = current_user) shows each role only
+--     the jobs it owns. Every job here is owned by postgres, so the ops role
+--     read 0 rows.
+--   * USAGE on schema cron is what pg_cron checks before cron.schedule(), so
+--     the "read-only" role could create its own scheduled jobs.
+-- This block removes the old grants wherever they were applied. The owner reads
+-- cron history as postgres (scripts/pipeline-freshness.sql, query 5).
 do $$
 begin
-  execute 'grant usage on schema cron to capitolkey_ops_readonly';
-  execute 'grant select on table cron.job, cron.job_run_details to capitolkey_ops_readonly';
+  execute 'revoke select on table cron.job, cron.job_run_details from capitolkey_ops_readonly';
+  execute 'revoke usage on schema cron from capitolkey_ops_readonly';
 exception when others then
-  raise notice 'Could not grant cron.* to capitolkey_ops_readonly: %', sqlerrm;
+  raise notice 'Could not revoke cron.* from capitolkey_ops_readonly: %', sqlerrm;
 end $$;
 
 -- Verify (should list only SELECT):

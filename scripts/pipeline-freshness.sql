@@ -59,8 +59,9 @@ order by started_at desc;
 
 -- 5. pg_cron history for the DB-side retention jobs
 --    (supabase/schedule_retention_cron.sql: 7 3 * * *).
---    Fails with "permission denied" if the cron grant in
---    read_only_ops_role.sql could not be applied — run as postgres instead.
+--    OWNER ONLY: run as postgres. The ops role has no access to schema cron
+--    (see read_only_ops_role.sql), so as ops_bot this fails with
+--    "permission denied for schema cron". That is expected, not an incident.
 select j.jobname, d.status, d.start_time, d.end_time, d.return_message
 from cron.job_run_details d
 join cron.job j on j.jobid = d.jobid
