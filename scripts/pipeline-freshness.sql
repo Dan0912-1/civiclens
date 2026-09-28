@@ -3,6 +3,10 @@
 -- Run in the Supabase SQL editor, or as the capitolkey_ops_readonly role
 -- (supabase/read_only_ops_role.sql). Nothing here writes.
 --
+-- Run ONE query at a time (highlight it, then Run): the Supabase SQL editor
+-- only displays the result of the last statement, and a query against a table
+-- that does not exist in this project stops everything after it.
+--
 -- Context: the daily sync runs at 0 5 * * * UTC (api/server.js →
 -- runDailySync in api/billSync.js). New Hampshire is intentionally excluded
 -- from the product (gc.nh.gov serves a JS challenge instead of bill text), so
@@ -35,11 +39,14 @@ select
 from curated_bills;
 
 -- 3. Historical backfill queue (supabase/create_backfill_tracking.sql).
+--    OPTIONAL: that migration was never applied on some projects. If you get
+--    'relation "backfill_progress" does not exist', skip this query.
 select state_code, status, bills_synced, api_calls_used, started_at, completed_at, error, updated_at
 from backfill_progress
 order by status, state_code;
 
 -- 4. App job ledger (supabase/create_job_runs.sql). Last 48 hours.
+--    Empty until a cron has run on code that includes recordJobRun().
 --    status='started' with no finished_at = the process died mid-run.
 select job_name, started_at, finished_at, status,
        finished_at - started_at as duration,

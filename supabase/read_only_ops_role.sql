@@ -5,6 +5,9 @@
 -- nothing else: no INSERT, UPDATE, DELETE, TRUNCATE, or DDL.
 --
 -- Run once in the Supabase SQL editor as the `postgres` user. Idempotent.
+-- Tables in the list that do not exist in this project (e.g. a migration that
+-- was never applied, like backfill_progress) are skipped with a NOTICE rather
+-- than failing the whole script. Re-run this file after creating any of them.
 --
 -- This file creates a NOLOGIN group role. To let a bot connect, a human
 -- creates a separate login role and adds it to the group, choosing the
@@ -17,12 +20,12 @@
 --
 -- PII: user_profiles and feedback contain student profile fields and contact
 -- details. They are included because ops triage needs them. If a bot only
--- needs pipeline freshness, drop those two grants/policies.
+-- needs pipeline freshness, remove them from the list below.
 --
 -- Supabase note: tables created in `public` after 2026-10-30 need an explicit
 -- GRANT for every role that should see them. Any new table an ops bot must
--- read has to be added to this file (grant + policy) — it will NOT inherit
--- access automatically.
+-- read has to be added to the list below — it will NOT inherit access
+-- automatically.
 
 do $$
 begin
@@ -33,42 +36,30 @@ end $$;
 
 grant usage on schema public to capitolkey_ops_readonly;
 
--- Explicit SELECT only, table by table. No `grant ... on all tables`.
-grant select on table
-  public.bills,
-  public.curated_bills,
-  public.backfill_progress,
-  public.personalization_cache,
-  public.feedback,
-  public.bill_explainers,
-  public.user_profiles,
-  public.job_runs            -- from supabase/create_job_runs.sql; apply that first
-to capitolkey_ops_readonly;
-
--- Belt and braces: make sure nothing broader is held.
-revoke insert, update, delete, truncate, references, trigger
-  on table
-    public.bills,
-    public.curated_bills,
-    public.backfill_progress,
-    public.personalization_cache,
-    public.feedback,
-    public.bill_explainers,
-    public.user_profiles,
-    public.job_runs
-  from capitolkey_ops_readonly;
-
--- Every table above has RLS enabled, and a role without BYPASSRLS sees zero
--- rows unless a policy admits it. These policies admit SELECT for this role
--- only; they do not change access for anon, authenticated or service_role.
+-- For each table: explicit SELECT only (no `grant ... on all tables`), revoke
+-- anything broader, and — because every table here has RLS enabled and a role
+-- without BYPASSRLS sees zero rows unless a policy admits it — add a
+-- SELECT-only policy for this role alone. Policies do not change access for
+-- anon, authenticated or service_role.
 do $$
 declare
   t text;
 begin
   foreach t in array array[
     'bills', 'curated_bills', 'backfill_progress', 'personalization_cache',
-    'feedback', 'bill_explainers', 'user_profiles', 'job_runs'
+    'feedback', 'bill_explainers', 'user_profiles',
+    'job_runs'   -- from supabase/create_job_runs.sql; apply that first
   ] loop
+    if to_regclass(format('public.%I', t)) is null then
+      raise notice 'Skipping public.% (table does not exist in this project)', t;
+      continue;
+    end if;
+
+    execute format('grant select on table public.%I to capitolkey_ops_readonly', t);
+    execute format(
+      'revoke insert, update, delete, truncate, references, trigger on table public.%I from capitolkey_ops_readonly', t
+    );
+
     if not exists (
       select 1 from pg_policies
       where schemaname = 'public' and tablename = t and policyname = 'ops_readonly_select'
@@ -82,8 +73,9 @@ end $$;
 
 -- pg_cron run history (cron.job_run_details) for the retention jobs in
 -- supabase/schedule_retention_cron.sql. On some Supabase projects the cron
--- schema is owned by supabase_admin and `postgres` cannot re-grant it; in that
--- case this block prints a notice and the rest of the file still applies.
+-- schema is owned by supabase_admin and `postgres` cannot re-grant it, or
+-- pg_cron is not installed; either way this block prints a notice and the rest
+-- of the file still applies.
 do $$
 begin
   execute 'grant usage on schema cron to capitolkey_ops_readonly';
