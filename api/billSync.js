@@ -804,6 +804,10 @@ async function syncLegiScanCatalog(supabase, apiKey, options = {}) {
             bill_number: number,
             title: ls.title || '',
             description: ls.description || null,
+            // Title-only for now; fetchBillText upgrades this with full-text
+            // signal when text lands. Without it every LegiScan-sourced row
+            // (all of NC and DC) failed the ranker's topic requirement.
+            topics: classifyTopics([], ls.title || ''),
             status: ls.status != null ? String(ls.status) : null,
             latest_action: ls.last_action || null,
             latest_action_date: sanitizeLegiScanDate(ls.last_action_date),
@@ -1177,7 +1181,7 @@ async function fetchVersionsREST(openstatesId, apiKey) {
 // Walk a versions[] array newest-first (OS returns them newest at index 0),
 // try PDF link then HTML for each version, return first extracted text that
 // clears the 100-char minimum. Returns { text, format, url } or null.
-async function walkVersionsAndExtract(versions, label) {
+async function walkVersionsAndExtract(versions, label, diag = null) {
   for (let i = versions.length - 1; i >= 0; i--) {
     const links = versions[i].links || []
     const pdfLink = links.find(l => l.mediaType === 'application/pdf' || l.media_type === 'application/pdf' || /\.pdf(\?|$)/i.test(l.url || ''))
@@ -1188,7 +1192,7 @@ async function walkVersionsAndExtract(versions, label) {
       htmlLink ? { url: htmlLink.url, format: 'html' } : null,
     ]) {
       if (!attempt) continue
-      const text = await fetchAndExtract(attempt.url, attempt.format)
+      const text = await fetchAndExtract(attempt.url, attempt.format, diag)
       if (text && text.length >= 100) return { text, format: attempt.format, url: attempt.url }
     }
   }
@@ -1406,15 +1410,19 @@ const URL_SYNTHESIZERS = {
   },
 
   // North Carolina: www.ncleg.gov/Sessions/{yr}/Bills/{ChamberLong}/PDF/{TYPE}{num}v{ver}.pdf
-  // Session "2025-2026 Regular Session" → first year. S/H only (NC's LegiScan
-  // types), v0 = first filed version.
+  // Session "2025-2026 Regular Session" → first year. v0 = first filed
+  // version. ncleg.gov files every measure under a bare H/S prefix
+  // (H1147v0.pdf), so collapse Open States types (hb/sb/hjr/sr...) to the
+  // chamber letter; LegiScan rows already use h/s. "HB1147v0.pdf" 404s.
   NC: (b) => {
     const type = (b.bill_type || '').toUpperCase()
-    if (!type || !b.session) return []
+    if (!type || !b.session || !b.bill_number) return []
     const yr = String(b.session).match(/^(\d{4})/)?.[1]
     if (!yr) return []
-    const chamber = type.startsWith('S') ? 'Senate' : 'House'
-    return [`https://www.ncleg.gov/Sessions/${yr}/Bills/${chamber}/PDF/${type}${b.bill_number}v0.pdf`]
+    const prefix = type.startsWith('S') ? 'S' : type.startsWith('H') ? 'H' : null
+    if (!prefix) return []
+    const chamber = prefix === 'S' ? 'Senate' : 'House'
+    return [`https://www.ncleg.gov/Sessions/${yr}/Bills/${chamber}/PDF/${prefix}${b.bill_number}v0.pdf`]
   },
 
   // Washington: lawfilesext.leg.wa.gov/biennium/{yr1}-{yr2_2}/Pdf/Bills/{House|Senate} Bills/{num}.pdf
@@ -1960,6 +1968,7 @@ async function fetchBillText(supabase, bill) {
 
   const label = `${bill.jurisdiction} ${bill.bill_type}${bill.bill_number}`
   let lastError = null
+  const diag = { last: null }
 
   // Attempt 0: Direct URL synthesis (zero Open States quota burn).
   // For states with deterministic, stable URL patterns we can construct
@@ -1969,7 +1978,7 @@ async function fetchBillText(supabase, bill) {
   if (synthesizer) {
     const synthUrls = synthesizer(bill)
     for (const url of synthUrls) {
-      const text = await fetchAndExtract(url, 'pdf')
+      const text = await fetchAndExtract(url, 'pdf', diag)
       if (text && text.length >= 100) {
         const wordCount = text.split(/\s+/).length
         console.log(`[fetchBillText] Extracted ${wordCount} words (pdf, via synth) for ${label}`)
@@ -1980,6 +1989,7 @@ async function fetchBillText(supabase, bill) {
             text_version: 'scraped_pdf',
             structured_excerpt: extractStructuredExcerpt(text),
             section_topic_scores: computeSectionTopicScores(text),
+            ...topicsOnTextLanded(bill, text),
             synced_at: new Date().toISOString(),
           }).eq('id', bill.id)
           const { error: trackErr } = await supabase.from('bills').update({
@@ -2045,6 +2055,7 @@ async function fetchBillText(supabase, bill) {
                     text_version: latestText.type || 'legiscan',
                     structured_excerpt: extractStructuredExcerpt(cleanText),
                     section_topic_scores: computeSectionTopicScores(cleanText),
+                    ...topicsOnTextLanded(bill, cleanText),
                     synced_at: new Date().toISOString(),
                     text_fetch_attempts: 0,
                     text_fetch_last_at: new Date().toISOString(),
@@ -2067,7 +2078,7 @@ async function fetchBillText(supabase, bill) {
   // a malformed GraphQL query.
   if (!canHybrid) {
     if (supabase && bill.id) {
-      await recordTextFetchFailure(supabase, bill.id, 'synth-miss no-os-id')
+      await recordTextFetchFailure(supabase, bill.id, `synth-miss no-os-id${diag.last ? ` (${diag.last})` : ''}`)
     }
     return null
   }
@@ -2092,7 +2103,7 @@ async function fetchBillText(supabase, bill) {
     // Attempt 1: GraphQL
     const gql = await fetchVersionsGraphQL(bill.openstates_id, apiKey)
     if (gql.versions?.length) {
-      result = await walkVersionsAndExtract(gql.versions, label)
+      result = await walkVersionsAndExtract(gql.versions, label, diag)
       if (result) usedSource = 'graphql'
     }
 
@@ -2106,20 +2117,26 @@ async function fetchBillText(supabase, bill) {
         // Bubble up to stop the backfill loop; today's bill keeps its
         // attempt counter untouched so tomorrow's run picks it up fresh.
         if (gql.rateLimited) throw new OpenStatesRateLimitError(429)
-        // REST quota alone hit; record a soft failure and move on.
-        lastError = 'rest 429'
-        await recordTextFetchFailure(supabase, bill.id, lastError)
+        // REST quota alone hit. That says nothing about this bill, so don't
+        // score a strike: striking here shelved thousands of MT/NC bills
+        // whose only "failure" was our own daily quota. Leave the counter
+        // untouched so a later run retries it with REST available.
+        console.log(`[fetchBillText] REST 429 for ${label}; not counted as a strike`)
         return null
       }
       if (rest.versions?.length) {
-        result = await walkVersionsAndExtract(rest.versions, label)
+        result = await walkVersionsAndExtract(rest.versions, label, diag)
         if (result) usedSource = 'rest'
       }
 
       // Both endpoints returned empty or no-parseable-links
       if (!result) {
         const hadAny = (gql.versions?.length || 0) + (rest.versions?.length || 0)
-        lastError = hadAny ? 'no parseable version' : 'no versions'
+        // Keep the 'no parseable version' prefix so existing grouping still
+        // works; the suffix names the host and how it failed.
+        lastError = hadAny
+          ? `no parseable version${diag.last ? ` (${diag.last})` : ''}`
+          : 'no versions'
         console.log(`[fetchBillText] ${lastError} for ${label}`)
         await recordTextFetchFailure(supabase, bill.id, lastError)
         return null
@@ -2143,6 +2160,7 @@ async function fetchBillText(supabase, bill) {
           text_version: result.format === 'pdf' ? 'scraped_pdf' : 'scraped_html',
           structured_excerpt: extractStructuredExcerpt(result.text),
           section_topic_scores: computeSectionTopicScores(result.text),
+          ...topicsOnTextLanded(bill, result.text),
           synced_at: new Date().toISOString(),
         })
         .eq('id', bill.id)
@@ -2176,7 +2194,13 @@ async function fetchBillText(supabase, bill) {
 // caller can try the next format/version. Falls back to a loose-TLS raw
 // https.get for sites with broken cert chains (CT, MS, etc. — see
 // fetchInsecure block comment).
-async function fetchAndExtract(url, format) {
+//
+// `diag` (optional) receives a short reason for the most recent failure in
+// diag.last, e.g. "HTTP 403 www.ncleg.gov" or "412 chars text/html
+// api.legmt.gov" (a bot-challenge page). Callers fold it into
+// text_fetch_last_error so a host that refuses our server is visible in the
+// DB instead of hiding behind "no parseable version".
+async function fetchAndExtract(url, format, diag = null) {
   // Some legislature hosts serve an obfuscated-JS anti-bot challenge to
   // non-browser clients on the canonical URL, but the older "mirror" host
   // for the same legislature serves the real file directly. Rewrite before
@@ -2187,6 +2211,9 @@ async function fetchAndExtract(url, format) {
     /^https?:\/\/gc\.nh\.gov\/bill_Status\//i,
     'https://www.gencourt.state.nh.us/bill_status/',
   )
+  let host = ''
+  try { host = new URL(url).host } catch { /* malformed link; fetch below fails */ }
+  if (diag) diag.last = `no text ${host}`
 
   let body = null
   let contentType = ''
@@ -2204,6 +2231,7 @@ async function fetchAndExtract(url, format) {
 
     if (!resp.ok) {
       console.error(`[fetchBillText] ${format.toUpperCase()} fetch error: ${resp.status} for ${url.slice(0, 100)}`)
+      if (diag) diag.last = `HTTP ${resp.status} ${host}`
       return null
     }
 
@@ -2218,6 +2246,7 @@ async function fetchAndExtract(url, format) {
   } catch (err) {
     if (!isCertError(err)) {
       console.error(`[fetchBillText] ${format.toUpperCase()} fetch failed: ${err.message} (${err.cause?.code || 'no-cause'})`)
+      if (diag) diag.last = `${err.cause?.code || err.name || 'fetch failed'} ${host}`
       return null
     }
     // TLS verification failed — retry with loose verification for this one
@@ -2259,11 +2288,27 @@ async function fetchAndExtract(url, format) {
     }
 
     const html = body.toString('utf-8')
-    return extractTextFromHtml(html)
+    const text = extractTextFromHtml(html)
+    if (diag && (!text || text.length < 100)) {
+      diag.last = `${text?.length || 0} chars ${contentType.split(';')[0] || 'no-type'} ${host}`
+    }
+    return text
   } catch (err) {
     console.error(`[fetchBillText] ${format.toUpperCase()} extraction failed: ${err.message}`)
     return null
   }
+}
+
+// Ingest classifies topics from the title alone, so a bill whose title has no
+// keyword hits lands with topics=[] and the ranker's hard filter drops it
+// forever, even after its text arrives. When text lands, fill topics from
+// title + text, but only for rows that still have none. Rows that already
+// have topics keep them, and callers that didn't select topics/title
+// (bill.topics undefined) are left untouched.
+function topicsOnTextLanded(bill, text) {
+  if (bill.topics === undefined || bill.topics?.length || !bill.title) return {}
+  const topics = classifyTopics(bill.subjects || [], bill.title, text)
+  return topics.length ? { topics } : {}
 }
 
 // Increment the failed-attempt counter for a bill so backfillStateTexts can
@@ -2524,7 +2569,7 @@ async function backfillStateTexts(supabase, apiKey, options = {}) {
   for (let from = 0; candidates.length < maxBills * 3; from += PAGE_SIZE) {
     const { data: page } = await supabase
       .from('bills')
-      .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, text_fetch_attempts, text_fetch_last_at')
+      .select('id, openstates_id, jurisdiction, bill_type, bill_number, session, source, title, subjects, topics, text_fetch_attempts, text_fetch_last_at')
       .eq('source', 'openstates')
       .is('full_text', null)
       .not('openstates_id', 'is', null)
