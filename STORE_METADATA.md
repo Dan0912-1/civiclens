@@ -17,17 +17,17 @@ legislation,congress,bills,civic,government,politics,education,students,laws,non
 
 ## Description
 
-CapitolKey takes real bills moving through Congress right now and explains them in plain English — personalized to your state, grade, and interests.
+CapitolKey takes real bills moving through Congress and your state legislature and explains them in plain English — personalized to your state, age, and interests.
 
-See exactly how federal legislation could affect your daily life: your student loans, your part-time job, your environment, your future. Every explanation is strictly nonpartisan — we explain impact, never opinions.
+See exactly how federal and state legislation could affect your daily life: your student loans, your part-time job, your environment, your future. Every explanation is strictly nonpartisan — we explain impact, never opinions.
 
 HOW IT WORKS:
 1. Tell us about yourself — your state, grade, and what issues matter to you
-2. We find the bills most relevant to your life from Congress.gov
+2. We find the bills most relevant to your life from official sources: Congress.gov for federal bills, and Open States and LegiScan for state bills
 3. Each bill is explained in plain language: what changes if it passes, what stays the same if it fails
 
 FEATURES:
-- Real-time legislation from Congress.gov
+- Real legislation from Congress and 49 state legislatures plus D.C., updated daily (Congress.gov, Open States, LegiScan)
 - AI-powered plain-language explanations personalized to your profile
 - Strictly nonpartisan — explains impact, never advocates a position
 - Save bills and get notified when their status changes
@@ -56,7 +56,7 @@ https://capitolkey.org/contact
 2026 CapitolKey
 
 ## App Review Notes
-CapitolKey is a civic education tool for high school students. It fetches real legislation from Congress.gov and uses AI (Claude by Anthropic) to explain each bill in plain language personalized to the student's profile (state, grade, interests).
+CapitolKey is a civic education tool for high school students. It pulls real legislation from Congress.gov (federal) and Open States / LegiScan (state legislatures), and uses AI to explain each bill in plain language personalized to the student's profile (state, age, interests). The primary model is openai/gpt-oss-120b served by Groq; Anthropic's Claude Haiku 4.5 (claude-haiku-4-5-20251001) is the fallback.
 
 To test the app:
 1. Tap "See my legislation" on the home screen

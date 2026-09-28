@@ -5,8 +5,9 @@ explainers for a small batch of trending + student-relevant federal bills and
 stores them in the `bill_explainers` table. Topic pages (`/topics/:slug`) and the
 sitemap surface explainers whose `status = 'published'`.
 
-It reuses the app's LLM path: **Groq Qwen3-32B primary, Claude Haiku 4.5
-fallback** (same models as `api/server.js`). No new provider.
+It reuses the app's LLM path: **Groq `openai/gpt-oss-120b` primary,
+`claude-haiku-4-5-20251001` fallback** (same models as `api/server.js`). No new
+provider.
 
 ## Guardrail: nothing auto-publishes
 
