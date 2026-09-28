@@ -17,6 +17,7 @@ import { billHref, congressGovUrl, congressGovTextUrl, isRepFinderUrl, trimDangl
 import RepsPanel from '../components/RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import { isReadBillAction, splitActionText } from '../lib/actionLinks'
+import { describeLatestAction } from '../lib/actionDate'
 import { formatBillText } from '../lib/billText'
 import styles from './BillDetail.module.css'
 
@@ -891,12 +892,16 @@ export default function BillDetail() {
             </span>
           </div>
           <h1 className={styles.title}>{displayTitle}</h1>
-          {bill?.latestAction && (
-            <p className={styles.action}>
-              <strong>Last action:</strong> {bill.latestAction}
-              {bill.latestActionDate && <span className={styles.date}> · {bill.latestActionDate}</span>}
-            </p>
-          )}
+          {bill?.latestAction && (() => {
+            // A future date is an effective date or a scheduled event, not the last action.
+            const action = describeLatestAction(bill.latestAction, bill.latestActionDate)
+            return (
+              <p className={styles.action}>
+                <strong>{action.label}:</strong> {action.text}
+                {action.date && <span className={styles.date}> · {action.date}</span>}
+              </p>
+            )
+          })()}
         </div>
 
         {/* Bill progress timeline. LegiScan event IDs → 1..5 dot position.

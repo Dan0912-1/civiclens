@@ -8,6 +8,7 @@ import RepsPanel from './RepsPanel'
 import { stageToDot, stageLabels } from '../lib/billStage'
 import { haptic } from '../lib/haptics'
 import { splitActionText } from '../lib/actionLinks'
+import { describeLatestAction } from '../lib/actionDate'
 import styles from './BillCard.module.css'
 
 const TAG_COLORS = {
@@ -179,14 +180,20 @@ export default memo(function BillCard({ bill, analysis, animationDelay, isBookma
         </button>
       </h3>
 
-      {/* Latest action */}
-      <p className={styles.action}>
-        <span className={styles.actionLabel}>Last action:</span>{' '}
-        {bill.latestAction}
-        {bill.latestActionDate && (
-          <span className={styles.actionDate}> · {bill.latestActionDate}</span>
-        )}
-      </p>
+      {/* Latest action. A future date is an effective date or a scheduled
+          event, so it isn't labeled as the last thing that happened. */}
+      {(() => {
+        const action = describeLatestAction(bill.latestAction, bill.latestActionDate)
+        return (
+          <p className={styles.action}>
+            <span className={styles.actionLabel}>{action.label}:</span>{' '}
+            {action.text}
+            {action.date && (
+              <span className={styles.actionDate}> · {action.date}</span>
+            )}
+          </p>
+        )
+      })()}
 
       {/* Analysis — on-demand personalize button (search page) */}
       {isLoading && !personalizationFailed && onPersonalize && !personalizing && (

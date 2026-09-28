@@ -22,6 +22,7 @@
 // instead of an empty shell.
 
 import { SITE_URL } from './seoConfig.js'
+import { classifyActionDate, describeLatestAction } from '../src/lib/actionDate.js'
 import {
   resolveStateBillRow, slugifySession, stateName, stateBillTypeLabel, sessionPhrase,
 } from './stateBills.js'
@@ -58,6 +59,21 @@ function clamp(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
   if (t.length <= n) return t
   return t.slice(0, n - 1).replace(/\s+\S*$/, '') + '…'
+}
+
+// A future latest_action_date is an effective date or a scheduled event, not
+// the last thing that happened, so it gets its own heading.
+function latestActionHtml(action, actionDate) {
+  const d = describeLatestAction(clamp(action, 300), actionDate)
+  const heading = d.kind === 'past' ? 'Latest action' : d.label
+  const when = d.date ? ` (${htmlEscape(d.date)})` : ''
+  return `<h2>${heading}</h2>\n<p>${htmlEscape(d.text)}${when}</p>`
+}
+
+// legislationDate only for dates that have already happened.
+function pastActionDate(action, actionDate) {
+  const { kind, date } = classifyActionDate(action, actionDate)
+  return kind === 'past' ? date : ''
 }
 
 function billLabel(type, number) {
@@ -104,7 +120,8 @@ function renderBillHtml({ congress, type, number, bill }) {
     legislationJurisdiction: 'United States',
     url: canonical,
   }
-  if (bill?.latest_action_date) legislation.legislationDate = String(bill.latest_action_date).slice(0, 10)
+  const legislationDate = pastActionDate(bill?.latest_action, bill?.latest_action_date)
+  if (legislationDate) legislation.legislationDate = legislationDate
   if (summary) legislation.description = clamp(summary, 300)
 
   const jsonLd = {
@@ -127,10 +144,7 @@ function renderBillHtml({ congress, type, number, bill }) {
   if (ordinal) body.push(`<p><strong>${htmlEscape(ordinal)}</strong></p>`)
   if (stageLabel) body.push(`<p>Status: ${htmlEscape(stageLabel)}</p>`)
   if (summary) body.push(`<h2>What it does</h2>\n<p>${htmlEscape(clamp(summary, 1200))}</p>`)
-  if (bill?.latest_action) {
-    const when = bill.latest_action_date ? ` (${htmlEscape(String(bill.latest_action_date).slice(0, 10))})` : ''
-    body.push(`<h2>Latest action</h2>\n<p>${htmlEscape(clamp(bill.latest_action, 300))}${when}</p>`)
-  }
+  if (bill?.latest_action) body.push(latestActionHtml(bill.latest_action, bill.latest_action_date))
   body.push(`<p><a href="${canonical}">See how ${htmlEscape(label)} affects you on CapitolKey</a></p>`)
   body.push(`<p><a href="${SITE_URL}/search">Browse more bills</a> &middot; <a href="${SITE_URL}/">CapitolKey home</a></p>`)
 
@@ -215,7 +229,8 @@ function renderStateBillHtml({ state, session, type, number, row }) {
     legislationJurisdiction: stName,
     url: canonical,
   }
-  if (row?.latest_action_date) legislation.legislationDate = String(row.latest_action_date).slice(0, 10)
+  const legislationDate = pastActionDate(row?.latest_action, row?.latest_action_date)
+  if (legislationDate) legislation.legislationDate = legislationDate
   if (summary) legislation.description = clamp(summary, 300)
 
   const jsonLd = {
@@ -239,10 +254,7 @@ function renderStateBillHtml({ state, session, type, number, row }) {
   if (subline) body.push(`<p><strong>${htmlEscape(subline)}</strong></p>`)
   if (stageLabel) body.push(`<p>Status: ${htmlEscape(stageLabel)}</p>`)
   if (summary) body.push(`<h2>What it does</h2>\n<p>${htmlEscape(clamp(summary, 1200))}</p>`)
-  if (row?.latest_action) {
-    const when = row.latest_action_date ? ` (${htmlEscape(String(row.latest_action_date).slice(0, 10))})` : ''
-    body.push(`<h2>Latest action</h2>\n<p>${htmlEscape(clamp(row.latest_action, 300))}${when}</p>`)
-  }
+  if (row?.latest_action) body.push(latestActionHtml(row.latest_action, row.latest_action_date))
   body.push(`<p><a href="${canonical}">See how ${htmlEscape(shortLabel)} affects you on CapitolKey</a></p>`)
   body.push(`<p><a href="${SITE_URL}/search">Browse more bills</a> &middot; <a href="${SITE_URL}/">CapitolKey home</a></p>`)
 

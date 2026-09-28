@@ -149,8 +149,11 @@ async function fetchStateBillChunk(supabase, offset, limit) {
   return rows
 }
 
+// A future latest_action_date (effective date, scheduled hearing) isn't a
+// modification time, and search engines distrust future lastmods.
 function lastmodFor(row) {
-  if (row.latest_action_date) return String(row.latest_action_date).slice(0, 10)
+  const actionDate = row.latest_action_date ? String(row.latest_action_date).slice(0, 10) : ''
+  if (actionDate && actionDate <= new Date().toISOString().slice(0, 10)) return actionDate
   if (row.synced_at) return String(row.synced_at).slice(0, 10)
   return null
 }

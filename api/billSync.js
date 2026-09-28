@@ -268,6 +268,9 @@ function normalizeStatus(rawStatus, latestAction) {
   const combined = `${rawStatus || ''} ${latestAction || ''}`.toLowerCase()
 
   if (/signed\s+by\s+(the\s+)?(president|governor)|became\s+(public\s+)?law|\bpublic\s+law\s+no|\benacted\b|chaptered/.test(combined)) return 'enacted'
+  // "Effective Date", "Effective 10/6/26", "(H) EFFECTIVE DATE(S) OF LAW 1/1/27":
+  // an effective-date action only exists for a bill that became law.
+  if (/^\s*(\([a-z]\)\s*)?effective\b/i.test(latestAction || '')) return 'enacted'
   if (/\bvetoed\b/.test(combined)) return 'vetoed'
   if (/\b(failed|defeated|withdrawn|tabled|died)\b/.test(combined)) return 'failed'
   if (/passed\s+both|enrolled|presented\s+to\s+(the\s+)?(president|governor)/.test(combined)) return 'passed_both'

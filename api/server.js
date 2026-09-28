@@ -32,6 +32,7 @@ import { sanitizeCivicActions, federalBillUrl } from './civicLinks.js'
 import { parseBillNumberQuery, exactBillMatches } from './billSearch.js'
 import { validateFundingClaims } from './personalizationValidation.js'
 import { representativesFor } from './representatives.js'
+import { classifyActionDate } from '../src/lib/actionDate.js'
 import {
   googleConfigured,
   buildConsentUrl,
@@ -2186,10 +2187,15 @@ app.get('/api/state-bill/:state/:type/:number', billDetailLimiter, async (req, r
         Object.assign(bill, {
           title: b.title || bill.title,
           description: b.description || bill.description,
-          latestAction: {
-            text: b.status_desc || b.last_action || bill.latestAction.text,
-            actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate,
-          },
+          // Keep each text with its own date. Pairing last_action ("Effective
+          // Date") with status_date (the signing date) told students a law
+          // took effect the day it was signed.
+          latestAction: b.status_desc
+            ? { text: b.status_desc, actionDate: b.status_date || b.last_action_date || bill.latestAction.actionDate }
+            : {
+                text: b.last_action || bill.latestAction.text,
+                actionDate: b.last_action_date || b.status_date || bill.latestAction.actionDate,
+              },
           url: b.url || bill.url,
           textUrl: legiscanTextUrl(b),
           sponsors: mapLegiscanSponsors(b),
@@ -2738,10 +2744,18 @@ BILL:
 - Bill: ${bill.type} ${bill.number} (${bill.isStateBill ? `${bill.state} State Legislature` : `${bill.congress}th Congress`})
 - Title: ${bill.title}
 - Chamber: ${bill.originChamber || 'Congress'}
-- Latest Action: ${bill.latestAction}
-- Date of Last Action: ${bill.latestActionDate}
+${latestActionPromptLines(bill)}
 ${contextNote ? `\n${contextNote}` : ''}${cappedContent ? `\n\n${cappedContent}` : '\nNote: Full bill text was not available. Base your analysis on the bill title and your knowledge, but flag any uncertainty.'}
 Analyze how this bill could affect this specific reader. Follow the JSON schema exactly.`
+}
+
+// A future action date is an effective date or a scheduled event. Label it so
+// the model doesn't describe it as something that already happened.
+function latestActionPromptLines(bill) {
+  const { kind, date } = classifyActionDate(bill.latestAction, bill.latestActionDate)
+  if (kind === 'effective') return `- Latest Action: ${bill.latestAction}\n- Takes Effect On (future date): ${date}`
+  if (kind === 'scheduled') return `- Upcoming Scheduled Action: ${bill.latestAction}\n- Scheduled For (future date): ${date}`
+  return `- Latest Action: ${bill.latestAction}\n- Date of Last Action: ${date || bill.latestActionDate}`
 }
 
 // Build a stable identity key for a bill — preferring legiscan_bill_id which
