@@ -39,11 +39,12 @@ select
 from curated_bills;
 
 -- 3. Historical backfill queue (supabase/create_backfill_tracking.sql).
---    OPTIONAL: that migration was never applied on some projects. If you get
---    'relation "backfill_progress" does not exist', skip this query.
-select state_code, status, bills_synced, api_calls_used, started_at, completed_at, error, updated_at
-from backfill_progress
-order by status, state_code;
+--    OPTIONAL and commented out: that migration was never applied on the
+--    production project, so this table does not exist there. Uncomment only if
+--    `select to_regclass('public.backfill_progress')` returns non-null.
+-- select state_code, status, bills_synced, api_calls_used, started_at, completed_at, error, updated_at
+-- from backfill_progress
+-- order by status, state_code;
 
 -- 4. App job ledger (supabase/create_job_runs.sql). Last 48 hours.
 --    Empty until a cron has run on code that includes recordJobRun().
