@@ -15,6 +15,8 @@
  * Run this daily from the sync cron, after text backfill is done.
  */
 
+import { classifyActionDate } from '../src/lib/actionDate.js'
+
 // ─── Hard filter ─────────────────────────────────────────────────────────────
 // Bills that fail these are never eligible regardless of score.
 
@@ -83,9 +85,17 @@ function scoreStage(bill) {
 // their government works. Without this floor, a newly introduced doomed-to-fail
 // bill (score 6 + 25 = 31) outranks an actually-passed law from 400 days ago
 // (score 25 + 0 = 25), which is exactly backwards for civic education.
+//
+// A future latest_action_date is not recent activity. A future effective date
+// says when a law kicks in, not that anything happened lately, so it earns no
+// recency. A scheduled event (hearing, mark-up) means the bill is live, so it
+// counts as today. See src/lib/actionDate.js.
 function scoreRecency(bill) {
-  const actionDate = bill.latest_action_date || bill.updated_at
   const isEnacted = bill.status_stage === 'enacted'
+  const { kind, date } = classifyActionDate(bill.latest_action, bill.latest_action_date)
+  if (kind === 'effective') return isEnacted ? 8 : 0
+  if (kind === 'scheduled') return 25
+  const actionDate = date || bill.updated_at
   if (!actionDate) return isEnacted ? 8 : 0
   const days = (Date.now() - new Date(actionDate).getTime()) / 86400000
   if (days <= 30) return 25
@@ -241,7 +251,7 @@ async function runRanker(supabase, options = {}) {
   while (true) {
     const { data, error } = await supabase
       .from('bills')
-      .select('id, jurisdiction, bill_type, bill_number, title, topics, status_stage, latest_action_date, updated_at, text_word_count, pinned_classroom_count')
+      .select('id, jurisdiction, bill_type, bill_number, title, topics, status_stage, latest_action, latest_action_date, updated_at, text_word_count, pinned_classroom_count')
       .not('full_text', 'is', null)
       .gte('text_word_count', 150)
       .order('id') // stable ordering for pagination
