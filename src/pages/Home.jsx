@@ -107,7 +107,11 @@ function HeroDemo() {
           </span>
         </div>
         <div className={styles.demoTitle}>
-          {typedTitle}<span className={styles.cursor}>|</span>
+          {/* typedTitle sits in its own span so React rewrites the span's
+              textContent instead of removing a bare text node when it resets
+              to ''. Google Translate swaps bare text nodes out, and removing
+              one it replaced crashed the page (JAVASCRIPT-REACT-1Z). */}
+          <span>{typedTitle}</span><span className={styles.cursor}>|</span>
         </div>
         {showSummary && (
           <div className={styles.demoSummary}>

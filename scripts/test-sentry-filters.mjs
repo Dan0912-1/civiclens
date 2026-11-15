@@ -9,6 +9,8 @@
 
 import assert from 'node:assert/strict'
 import { beforeSend, isInjectedCspEvalError } from '../src/lib/sentryFilters.js'
+import { preloadErrorAction, RELOAD_WINDOW_MS } from '../src/lib/chunkRecovery.js'
+import { installDomResilience } from '../src/lib/domResilience.js'
 
 const CHROME_MSG =
   "Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"script-src 'self' https://www.googletagmanager.com https://*.posthog.com https://*.i.posthog.com\"."
@@ -75,5 +77,62 @@ check(
   false,
 )
 check('event without an exception is kept', { message: 'hello' }, false)
+
+// --- JAVASCRIPT-REACT-1Y: vite:preloadError handling (src/lib/chunkRecovery.js)
+console.log('\nvite:preloadError recovery')
+const NOW = 1_800_000_000_000
+const cssErr = new Error('Unable to preload CSS for /assets/Contact-Ce-AOjYz.css')
+const jsErr = new TypeError('Failed to fetch dynamically imported module: https://capitolkey.org/assets/Contact-abc.js')
+function action(name, err, last, expected) {
+  assert.equal(preloadErrorAction(err, last, NOW), expected, name)
+  console.log(`  ok  ${name} -> ${expected}`)
+  passed++
+}
+action('first CSS failure reloads', cssErr, 0, 'reload')
+action('first JS failure reloads', jsErr, 0, 'reload')
+action('JAVASCRIPT-REACT-1Y: repeat CSS failure continues unstyled', cssErr, NOW - 2000, 'continue')
+action('repeat JS failure throws to ErrorBoundary', jsErr, NOW - 2000, 'throw')
+action('failure after the window reloads again', cssErr, NOW - RELOAD_WINDOW_MS, 'reload')
+action('garbage sessionStorage value reloads', jsErr, 'NaN', 'reload')
+action('repeat with no payload throws', undefined, NOW - 1, 'throw')
+
+// --- JAVASCRIPT-REACT-1Z: translator-mutated DOM (src/lib/domResilience.js)
+console.log('\nDOM resilience patch')
+class FakeNode {
+  constructor() { this.children = []; this.parentNode = null }
+  removeChild(c) {
+    const i = this.children.indexOf(c)
+    if (i < 0) { const e = new Error("Failed to execute 'removeChild' on 'Node'"); e.name = 'NotFoundError'; throw e }
+    this.children.splice(i, 1); c.parentNode = null; return c
+  }
+  insertBefore(n, ref) {
+    const i = ref == null ? this.children.length : this.children.indexOf(ref)
+    if (i < 0) { const e = new Error("Failed to execute 'insertBefore' on 'Node'"); e.name = 'NotFoundError'; throw e }
+    this.children.splice(i, 0, n); n.parentNode = this; return n
+  }
+}
+const ok = (name) => { console.log(`  ok  ${name}`); passed++ }
+const warn = console.warn
+console.warn = () => {}
+try {
+  assert.equal(installDomResilience(FakeNode), true); ok('installs once')
+  assert.equal(installDomResilience(FakeNode), false); ok('second install is a no-op')
+  assert.equal(installDomResilience(undefined), false); ok('no Node constructor (SSR/node) is a no-op')
+
+  const root = new FakeNode(), a = new FakeNode(), b = new FakeNode()
+  root.insertBefore(a, null); root.insertBefore(b, a)
+  assert.deepEqual(root.children, [b, a]); ok('valid insertBefore still inserts')
+  assert.equal(root.removeChild(a), a); assert.deepEqual(root.children, [b]); ok('valid removeChild still removes')
+
+  // Google Translate moved b under its own <font> wrapper.
+  const font = new FakeNode()
+  root.removeChild(b); root.insertBefore(font, null); font.insertBefore(b, null)
+  assert.doesNotThrow(() => root.removeChild(b)); ok('JAVASCRIPT-REACT-1Z: removeChild of a re-parented node does not throw')
+  assert.deepEqual(font.children, [b]); ok('skipped removeChild leaves the DOM untouched')
+  const c = new FakeNode()
+  assert.equal(root.insertBefore(c, b), c); assert.deepEqual(root.children, [font]); ok('insertBefore with a re-parented reference node is skipped')
+} finally {
+  console.warn = warn
+}
 
 console.log(`\n${passed} sentry filter checks passed`)
