@@ -9,7 +9,12 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { initAnalytics } from './lib/analytics'
 import { initPostHog } from './lib/posthog'
 import { beforeSend } from './lib/sentryFilters'
+import { preloadErrorAction } from './lib/chunkRecovery'
+import { installDomResilience } from './lib/domResilience'
 import App from './App.jsx'
+
+// Before the first render, so a translated page can't crash React's commits.
+installDomResilience()
 
 // Self-hosted fonts (latin subsets), replacing the render-blocking Google
 // Fonts stylesheet. Bundling the woff2 means the Capacitor app gets correct
@@ -35,15 +40,18 @@ import './index.css'
 // browser refuses to execute it — surfacing as "'text/html' is not a valid
 // JavaScript MIME type" / "Failed to fetch dynamically imported module". Vite
 // fires `vite:preloadError` for exactly this; reload once to pull the fresh
-// manifest. We DON'T preventDefault on a repeat within 10s, so a genuinely
+// manifest. A repeat JS failure within 10s is NOT prevented, so a genuinely
 // broken deploy still throws through to the ErrorBoundary + Sentry instead of
-// reload-looping or silently resolving the lazy import to undefined.
+// reload-looping. A repeat that is only a stylesheet lets the module load
+// unstyled rather than crash the page (see src/lib/chunkRecovery.js).
 window.addEventListener('vite:preloadError', (event) => {
   const KEY = 'ck-preload-reload-at'
   let last = 0
   try { last = Number(sessionStorage.getItem(KEY) || 0) } catch {}
-  if (Date.now() - last < 10000) return
+  const action = preloadErrorAction(event.payload, last)
+  if (action === 'throw') return
   event.preventDefault()
+  if (action === 'continue') return
   try { sessionStorage.setItem(KEY, String(Date.now())) } catch {}
   window.location.reload()
 })
