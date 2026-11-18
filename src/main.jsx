@@ -9,7 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { initAnalytics } from './lib/analytics'
 import { initPostHog } from './lib/posthog'
 import { beforeSend } from './lib/sentryFilters'
-import { preloadErrorAction } from './lib/chunkRecovery'
+import { preloadErrorAction, markReloadPending } from './lib/chunkRecovery'
 import { installDomResilience } from './lib/domResilience'
 import App from './App.jsx'
 
@@ -53,6 +53,7 @@ window.addEventListener('vite:preloadError', (event) => {
   event.preventDefault()
   if (action === 'continue') return
   try { sessionStorage.setItem(KEY, String(Date.now())) } catch {}
+  markReloadPending()
   window.location.reload()
 })
 
