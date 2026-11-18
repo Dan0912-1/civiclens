@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { Capacitor } from '@capacitor/core'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import {
@@ -149,15 +150,45 @@ export default function ClassroomDetail() {
   async function handleExport() {
     const t = await getToken()
     if (!t) return
+    const filename = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
+    let blob
     try {
-      const blob = await exportClassroomCsv(t, id)
+      blob = await exportClassroomCsv(t, id)
+    } catch (err) {
+      showToast(err?.message || 'Could not export the report. Please try again.', 'error')
+      return
+    }
+    // The iOS/Android app's webview ignores <a download>, so the button did
+    // nothing there. Hand the file to the system share sheet instead (Save to
+    // Files, AirDrop, email). Also used by any browser that can share files.
+    try {
+      const file = new File([blob], filename, { type: 'text/csv' })
+      if (Capacitor.isNativePlatform() && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename })
+        return
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') return // user closed the share sheet
+    }
+    if (Capacitor.isNativePlatform()) {
+      showToast('Export is not supported in the app yet. Open capitolkey.org on a computer to download the report.', 'error')
+      return
+    }
+    try {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(classroom?.name || 'classroom').replace(/[^a-zA-Z0-9]/g, '_')}_report.csv`
+      a.download = filename
+      a.rel = 'noopener'
+      // Safari only honors the click on an attached link, and revoking the
+      // URL in the same tick could cancel the download before it started.
+      document.body.appendChild(a)
       a.click()
-      URL.revokeObjectURL(url)
-    } catch {}
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch {
+      showToast('Could not download the report. Please try again.', 'error')
+    }
   }
 
   async function handleRegenerateCode() {

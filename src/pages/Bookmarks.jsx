@@ -82,8 +82,12 @@ export default function Bookmarks() {
     setEmailNotif(next)
     if (supabase) {
       const session = await getSessionSafe()
-      if (session?.access_token) {
-        await setNotificationPrefs(session.access_token, { email_notifications: next })
+      const ok = session?.access_token
+        ? await setNotificationPrefs(session.access_token, { email_notifications: next })
+        : false
+      if (!ok) {
+        setEmailNotif(!next)
+        showToast('Could not save that setting. Please try again.', 'error')
       }
     }
   }
@@ -93,8 +97,12 @@ export default function Bookmarks() {
     setPushNotif(next)
     if (supabase) {
       const session = await getSessionSafe()
-      if (session?.access_token) {
-        await setNotificationPrefs(session.access_token, { push_notifications: next })
+      const ok = session?.access_token
+        ? await setNotificationPrefs(session.access_token, { push_notifications: next })
+        : false
+      if (!ok) {
+        setPushNotif(!next)
+        showToast('Could not save that setting. Please try again.', 'error')
       }
     }
   }

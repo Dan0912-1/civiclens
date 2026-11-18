@@ -47,14 +47,18 @@ export default function JoinClassroom() {
         } else {
           // Server-side join creates a classroom_members row keyed on the
           // student's anonymous_id so the teacher's analytics count this
-          // join. Network failure here shouldn't block the student from
-          // viewing the class; the original bug was teachers seeing zero
-          // students because this call silently fell through, so surface
-          // failures to Sentry rather than burying them in console.
+          // join. A network failure is queued for retry inside
+          // joinClassroomAnon and the student goes on into the class. A
+          // server refusal (rate limit, closed class) throws: showing the
+          // class anyway left students the teacher could never see, whose
+          // "Mark as read" later failed.
           try {
             await joinClassroomAnon(trimmed)
           } catch (err) {
             Sentry.captureException(err, { tags: { scope: 'classroom:join-anon' } })
+            setError(err.message || 'Could not join the classroom. Please try again.')
+            setLoading(false)
+            return
           }
           addJoinedClassroom(trimmed, data.classroom.name, data.classroom.id)
           navigate(`/classroom/view/${trimmed}`)
@@ -78,6 +82,9 @@ export default function JoinClassroom() {
       await joinClassroomAnon(trimmed, studentName)
     } catch (err) {
       Sentry.captureException(err, { tags: { scope: 'classroom:join-anon' } })
+      setError(err.message || 'Could not join the classroom. Please try again.')
+      setLoading(false)
+      return
     }
     addJoinedClassroom(trimmed, pendingData.classroom.name, pendingData.classroom.id, studentName)
     navigate(`/classroom/view/${trimmed}`)

@@ -71,8 +71,9 @@ export async function getSessionSafe() {
 
   // Fallback: read token directly from localStorage (bypass lock)
   let stored = null
+  let key = null
   try {
-    const key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
+    key = Object.keys(localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'))
     if (key) {
       const parsed = JSON.parse(localStorage.getItem(key))
       stored = parsed?.access_token ? parsed : parsed?.currentSession
@@ -119,15 +120,23 @@ export async function getSessionSafe() {
       if (resp?.ok) {
         const data = await resp.json().catch(() => null)
         if (data?.access_token) {
-          return {
+          const expiresIn = data.expires_in || 3600
+          const fresh = {
             access_token: data.access_token,
             refresh_token: data.refresh_token || stored.refresh_token,
-            expires_at:
-              data.expires_at ||
-              Math.floor(Date.now() / 1000) + (data.expires_in || 3600),
+            expires_in: expiresIn,
+            expires_at: data.expires_at || Math.floor(Date.now() / 1000) + expiresIn,
             token_type: data.token_type || 'bearer',
             user: data.user || stored.user,
           }
+          // Supabase refresh tokens are single-use: this call just spent the
+          // stored one. Write the new pair back where supabase-js reads its
+          // session, or its next auto-refresh replays the spent token and
+          // Supabase ends the session (the "randomly signed out" reports).
+          try {
+            if (key) localStorage.setItem(key, JSON.stringify(fresh))
+          } catch {}
+          return fresh
         }
       }
     } catch {}

@@ -305,9 +305,15 @@ const personalizeLimiter = rateLimit({
   message: { error: 'Too many personalization requests — please slow down.' },
 })
 
+// Covers activity tracking, push registration, notification settings and
+// account deletion. It used to be bare-IP with a ceiling of 50 per 15 minutes,
+// so one school network spent it in minutes and every signed-in student's
+// tracking and settings silently failed until the window reset. Signed-in
+// callers (all of these endpoints need a token) now get their own bucket.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50,                   // 50 auth-related requests per 15 min per IP
+  max: 300,                  // per user (per IP for the rare tokenless call)
+  keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests — please try again later.' },
@@ -325,10 +331,13 @@ const feedbackLimiter = rateLimit({
   message: { error: 'Too many feedback submissions — please try again later.' },
 })
 
-// Bill-detail endpoint proxies LegiScan — rate limit to prevent quota abuse.
+// Bill detail, bill text, state bill and representatives. Responses are
+// cached in memory and Supabase per bill, so a class opening the same assigned
+// bill is mostly cache hits; the old 60/min shared by an entire school network
+// turned the second half of the class into "Could not load bill details".
 const billDetailLimiter = rateLimit({
   windowMs: 60 * 1000,      // 1 minute
-  max: 60,                   // 60 bill-detail requests per minute per user
+  max: 200,                  // ~2 classes x 3 calls each on one school IP
   keyGenerator: userOrIpKey,
   standardHeaders: true,
   legacyHeaders: false,
@@ -338,7 +347,7 @@ const billDetailLimiter = rateLimit({
 // Public featured-bills endpoint — generous but bounded.
 const featuredLimiter = rateLimit({
   windowMs: 60 * 1000,      // 1 minute
-  max: 60,                   // 60 requests per minute per IP
+  max: 150,                  // a class loading the home page on one school IP
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests — please slow down.' },
@@ -3119,7 +3128,18 @@ app.post('/api/personalize-batch', personalizeLimiter, async (req, res) => {
     return { ...b, billData }
   })
 
-  const billsWithText = await Promise.all(textFetches)
+  // One bill's text lookup throwing (a Supabase hiccup, a source timeout) used
+  // to reject this whole Promise.all. This handler has no outer catch and
+  // Express 4 doesn't catch async errors, so the request never answered and
+  // every card in the wave sat until the client's 60s timeout, then showed
+  // "couldn't personalize". Fall back to metadata-only for just that bill.
+  const billsWithText = await Promise.all(textFetches.map((p, i) => p.catch((err) => {
+    console.warn('[personalize-batch] bill text lookup failed, continuing without text:', err?.message)
+    return {
+      ...billsToPersonalize[i],
+      billData: { text: null, wordCount: 0, version: '', crsSummary: null, crsVersion: '' },
+    }
+  })))
 
   // Wall-clock cap for the whole batch — bound how long Claude retries can run.
   const batchStart = Date.now()

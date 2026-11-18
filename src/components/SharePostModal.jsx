@@ -121,7 +121,8 @@ export default function SharePostModal({ isOpen, onClose, bill, analysis }) {
 
   function copyDraft(text, idx) {
     haptic('Light')
-    navigator.clipboard.writeText(text).catch(() => {})
+    // navigator.clipboard is missing on older browsers; calling into it threw.
+    try { navigator.clipboard?.writeText(text)?.catch(() => {}) } catch {}
     setCopiedIdx(idx)
     setTimeout(() => setCopiedIdx(null), 2000)
   }

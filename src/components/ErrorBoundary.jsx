@@ -7,6 +7,15 @@ export default class ErrorBoundary extends Component {
     return { hasError: true }
   }
 
+  // The route-level boundary passes the current pathname as resetKey. Without
+  // it, one crashed page left every other page on "Something went wrong" until
+  // a full reload, even after the user tapped the nav to go somewhere else.
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false })
+    }
+  }
+
   componentDidCatch(error, info) {
     console.error('ErrorBoundary caught:', error, info.componentStack)
     // Dynamic import keeps the Sentry SDK out of the entry chunk (it's

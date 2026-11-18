@@ -92,7 +92,7 @@ export default function App() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const [showOnboarding, setShowOnboarding] = useState(
-    () => !localStorage.getItem('ck_onboarded_v2')
+    () => { try { return !localStorage.getItem('ck_onboarded_v2') } catch { return false } }
   )
 
   // Inject navigate into push notification handler so it uses SPA routing
@@ -341,7 +341,7 @@ export default function App() {
   }, [])
 
   function completeOnboarding() {
-    localStorage.setItem('ck_onboarded_v2', '1')
+    try { localStorage.setItem('ck_onboarded_v2', '1') } catch {}
     setShowOnboarding(false)
   }
 
@@ -353,7 +353,7 @@ export default function App() {
       <OfflineScreen />
       <Nav />
       <main id="main-content">
-      <ErrorBoundary>
+      <ErrorBoundary resetKey={pathname}>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/"          element={<Home />} />

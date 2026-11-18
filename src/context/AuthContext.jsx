@@ -26,6 +26,22 @@ async function sha256(message) {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Per-person data that must not outlive a sign-out on a shared device. The two
+// classroom keys mirror JOINED_KEY / ANON_ID_KEY in src/lib/classroom.js (kept
+// inline so the entry chunk doesn't pull in the classroom module): without
+// clearing them, the next student on a shared Chromebook or iPad saw the
+// previous student's classes and had completions credited to them. Each call
+// is guarded because a storage-blocked browser throws on removeItem too.
+function clearLocalUserState() {
+  const drop = (store, key) => { try { store.removeItem(key) } catch {} }
+  drop(sessionStorage, 'civicProfile')
+  drop(sessionStorage, 'civicInteractions')
+  drop(sessionStorage, 'ck_joined_classrooms')
+  drop(localStorage, 'ck_joined_classrooms')
+  drop(localStorage, 'ck_anon_student_id')
+  drop(localStorage, 'ck_offline_queue')
+}
+
 const AuthContext = createContext({
   user: null,
   loading: true,
@@ -210,17 +226,31 @@ export function AuthProvider({ children }) {
         // doesn't silently drop their class membership. Each peek-joined room
         // is re-joined via the authenticated endpoint; already-member responses
         // (409) are harmless.
+        //
+        // Reads through classroom.js, which owns the storage location. This
+        // used to read sessionStorage directly after classroom.js had moved the
+        // list to localStorage, so the migration found nothing and signed-up
+        // students were never added to their class on the server. Entries that
+        // fail for a transient reason stay stored and retry on the next sign-in.
         try {
-          const joinedRaw = sessionStorage.getItem('ck_joined_classrooms')
-          if (joinedRaw && session.access_token) {
-            const joined = JSON.parse(joinedRaw)
+          if (session.access_token) {
+            const { joinClassroom, getJoinedClassrooms, setJoinedClassrooms } = await import('../lib/classroom')
+            const joined = getJoinedClassrooms()
             if (Array.isArray(joined) && joined.length) {
-              const { joinClassroom } = await import('../lib/classroom')
+              const remaining = []
               for (const entry of joined) {
                 if (!entry?.code) continue
-                try { await joinClassroom(session.access_token, entry.code) } catch {}
+                try {
+                  await joinClassroom(session.access_token, entry.code)
+                } catch (err) {
+                  // Already a member, or a dead/invalid code: nothing to retry.
+                  // Offline joins are queued by joinClassroom itself.
+                  const msg = String(err?.message || '')
+                  const permanent = /already|invalid|no longer|not found|6 characters|appear offline/i.test(msg)
+                  if (!permanent) remaining.push(entry)
+                }
               }
-              sessionStorage.removeItem('ck_joined_classrooms')
+              setJoinedClassrooms(remaining)
             }
           }
         } catch {}
@@ -240,10 +270,7 @@ export function AuthProvider({ children }) {
       if (!msg?.event) return
       if (msg.event === 'SIGNED_OUT') {
         setUser(null)
-        sessionStorage.removeItem('civicProfile')
-        sessionStorage.removeItem('civicInteractions')
-        sessionStorage.removeItem('ck_joined_classrooms')
-        localStorage.removeItem('ck_offline_queue')
+        clearLocalUserState()
         resetPushState()
         phReset()
         return
@@ -443,10 +470,7 @@ export function AuthProvider({ children }) {
     // Drop the cached access token immediately — a stale one here would let a
     // page fire an authenticated request after the user signed out.
     cacheSession(null)
-    sessionStorage.removeItem('civicProfile')
-    sessionStorage.removeItem('civicInteractions')
-    sessionStorage.removeItem('ck_joined_classrooms')
-    localStorage.removeItem('ck_offline_queue')
+    clearLocalUserState()
     resetPushState()
     // Tell peer tabs immediately so they also drop state without waiting on
     // the local teardown to finish.

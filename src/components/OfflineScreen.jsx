@@ -9,14 +9,17 @@ import styles from './OfflineScreen.module.css'
 // listeners inherit the same lie. An active fetch against /api/health is
 // the only way to know whether the server is actually reachable.
 const HEALTH_URL = `${getApiBase()}/api/health`
-const PROBE_TIMEOUT_MS = 4000
+// 8s, not 4s: slow school wifi plus a backend busy with the daily data sync
+// can take longer than 4s to answer even a trivial health check, and three
+// slow answers in a row told students who were online that they were offline.
+const PROBE_TIMEOUT_MS = 8000
 const PROBE_INTERVAL_MS = 30_000 // poll when online (cheap HEAD)
 const FAST_RETRY_MS = 5_000 // poll faster once we've seen offline
 // Require N consecutive failed probes before showing the banner. A single
 // failed probe during a backend redeploy or a transient blip would otherwise
 // flash an alarming "you're offline" message at users whose network is fine.
-// With FAST_RETRY_MS=5s and PROBE_TIMEOUT_MS=4s, a threshold of 3 means the
-// banner only appears after ~10-22s of sustained failures — long enough to
+// With FAST_RETRY_MS=5s and PROBE_TIMEOUT_MS=8s, a threshold of 3 means the
+// banner only appears after ~10-34s of sustained failures — long enough to
 // ride out a Railway restart, short enough that real outages still surface.
 const FAIL_THRESHOLD = 3
 
