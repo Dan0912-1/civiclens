@@ -1,3 +1,5 @@
+// Must stay the first import: fills browser gaps before any other module runs.
+import './lib/polyfills'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
@@ -120,7 +122,20 @@ onIdle(() => {
             // a genuinely broken sw.js reports a different message (a bad HTTP
             // response code, or an unsupported MIME type) and still comes through.
             /An unknown error occurred when fetching the script/i,
+            // Same registerSW.js unhandled rejection, Chrome's wording when the
+            // registration is cut off by a navigation or tab close mid-fetch
+            // (JAVASCRIPT-REACT-1V). Scoped to AbortError: other registration
+            // failures still report.
+            /AbortError: Failed to register a ServiceWorker/i,
+            // Outlook / Microsoft Defender SafeLinks scanners open emailed links
+            // in a headless browser and reject a promise with this exact
+            // non-Error value (JAVASCRIPT-REACT-1W). Not a real user.
+            /Object Not Found Matching Id/,
           ],
+          // Separates the iOS/Android app from the website in Sentry.
+          initialScope: {
+            tags: { app_platform: window.Capacitor?.getPlatform?.() || 'web' },
+          },
           // Drops CSP eval blocks that originate entirely outside our bundle
           // (bots, extensions). Stack-aware, so it can't live in ignoreErrors.
           beforeSend,

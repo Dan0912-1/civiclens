@@ -11,6 +11,7 @@ import assert from 'node:assert/strict'
 import { beforeSend, isInjectedCspEvalError } from '../src/lib/sentryFilters.js'
 import { preloadErrorAction, RELOAD_WINDOW_MS, settleRouteModule, markReloadPending } from '../src/lib/chunkRecovery.js'
 import { installDomResilience } from '../src/lib/domResilience.js'
+import { installAbortSignalTimeout, installStorageFallback } from '../src/lib/polyfills.js'
 
 const CHROME_MSG =
   "Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"script-src 'self' https://www.googletagmanager.com https://*.posthog.com https://*.i.posthog.com\"."
@@ -149,6 +150,39 @@ try {
   assert.equal(root.insertBefore(c, b), c); assert.deepEqual(root.children, [font]); ok('insertBefore with a re-parented reference node is skipped')
 } finally {
   console.warn = warn
+}
+
+// ── polyfills.js ─────────────────────────────────────────────────────────────
+console.log('\npolyfills')
+{
+  // Simulate Safari 15 / Chrome < 103: AbortSignal without .timeout().
+  class OldSignal {}
+  assert.equal(installAbortSignalTimeout(OldSignal, AbortController), true); ok('installs AbortSignal.timeout when missing')
+  const sig = OldSignal.timeout(20)
+  assert.equal(sig.aborted, false); ok('timeout signal starts un-aborted')
+  await new Promise((r) => setTimeout(r, 40))
+  assert.equal(sig.aborted, true); ok('timeout signal aborts after the delay')
+  assert.equal(sig.reason?.name, 'TimeoutError'); ok('abort reason is a TimeoutError, like the native one')
+  assert.equal(installAbortSignalTimeout(AbortSignal, AbortController), false); ok('leaves a native AbortSignal.timeout alone')
+
+  // Storage that throws on access (Safari "Block all cookies").
+  const blocked = {}
+  Object.defineProperty(blocked, 'localStorage', { configurable: true, get() { throw new Error('SecurityError') } })
+  const working = createWorkingStore()
+  blocked.sessionStorage = working
+  assert.deepEqual(installStorageFallback(blocked), ['localStorage']); ok('replaces only the blocked storage')
+  assert.equal(blocked.sessionStorage, working); ok('working storage is untouched')
+  blocked.localStorage.setItem('k', 1)
+  assert.equal(blocked.localStorage.getItem('k'), '1'); ok('fallback stores strings')
+  assert.equal(blocked.localStorage.getItem('missing'), null); ok('fallback returns null for missing keys')
+  assert.deepEqual(Object.keys(blocked.localStorage).filter((k) => k === 'k'), []); ok('stored keys are not own properties (Object.keys(localStorage) callers stay safe)')
+  blocked.localStorage.removeItem('k')
+  assert.equal(blocked.localStorage.length, 0); ok('fallback removes keys')
+}
+
+function createWorkingStore() {
+  const m = new Map()
+  return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }
 }
 
 console.log(`\n${passed} sentry filter checks passed`)

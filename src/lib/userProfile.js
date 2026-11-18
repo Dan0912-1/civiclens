@@ -338,15 +338,20 @@ export async function getNotificationPrefs(token) {
       headers: { Authorization: `Bearer ${token}` },
     })
     if (!resp.ok) return { email_notifications: false, push_notifications: true }
-    return resp.json()
+    // await so a malformed body lands in the catch below instead of escaping
+    // as an unhandled rejection.
+    return await resp.json()
   } catch {
     return { email_notifications: false, push_notifications: true }
   }
 }
 
+// Returns whether the server saved it. Callers roll the toggle back on false;
+// before, a rate-limited or failed save left the switch showing a setting the
+// server never stored.
 export async function setNotificationPrefs(token, prefs) {
   try {
-    await fetch(`${getApiBase()}/api/notifications/preferences`, {
+    const resp = await fetch(`${getApiBase()}/api/notifications/preferences`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -354,7 +359,8 @@ export async function setNotificationPrefs(token, prefs) {
       },
       body: JSON.stringify(prefs),
     })
+    return resp.ok
   } catch {
-    // non-fatal
+    return false
   }
 }

@@ -17,6 +17,7 @@ export default function TeacherDashboard() {
   const [classrooms, setClassrooms] = useState([])
   const [anonClassrooms, setAnonClassrooms] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [codeCopied, setCodeCopied] = useState(null)
   const [googleStatus, setGoogleStatus] = useState(null)
@@ -35,14 +36,19 @@ export default function TeacherDashboard() {
     setAnonClassrooms(localJoined)
 
     // Load server-side classrooms for logged-in users
+    // Strict: a failed load shows an error with a retry, not the "Welcome to
+    // Classrooms" empty state, which led teachers to recreate their classes.
+    setLoadError('')
     if (user) {
       try {
         const token = await getToken()
         if (token) {
-          const data = await getMyClassrooms(token)
+          const data = await getMyClassrooms(token, { strict: true })
           setClassrooms(data)
         }
-      } catch {}
+      } catch (err) {
+        setLoadError(err?.message || 'Could not load your classrooms.')
+      }
     }
     setLoading(false)
   }
@@ -223,7 +229,14 @@ export default function TeacherDashboard() {
           </div>
         )}
 
-        {!hasAnything && (
+        {loadError && (
+          <div className={`${styles.notice} ${styles.noticeError}`} role="alert">
+            {loadError}{' '}
+            <button className={styles.btnSecondary} onClick={loadClassrooms}>Try again</button>
+          </div>
+        )}
+
+        {!hasAnything && !loadError && (
           <div className={styles.empty}>
             <h2>Welcome to Classrooms</h2>
             <p>Join a class with a code from your teacher to see assigned bills. Teachers can sign in to create classes and track engagement.</p>

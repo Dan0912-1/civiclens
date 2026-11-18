@@ -377,8 +377,8 @@ export default function BillDetail() {
     setAssignLoading(true)
     setAssignOpen(true)
     try {
-      const session = await supabase?.auth.getSession()
-      const token = session?.data?.session?.access_token
+      const session = await getSessionSafe()
+      const token = session?.access_token
       if (!token) { setAssignLoading(false); return }
       const rooms = await getMyClassrooms(token)
       // Only show classrooms where user is a teacher
@@ -390,8 +390,8 @@ export default function BillDetail() {
   }
 
   async function handleAssignToClassroom(classroom) {
-    const session = await supabase?.auth.getSession()
-    const token = session?.data?.session?.access_token
+    const session = await getSessionSafe()
+    const token = session?.access_token
     if (!token) return
     const billId = bill?.legiscan_bill_id
       ? makeBillId(bill)

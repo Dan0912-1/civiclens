@@ -35,13 +35,25 @@ async function readError(resp, fallback) {
   throw new Error(err.error || fallback)
 }
 
-export async function getMyClassrooms(token) {
+// Most callers (the feed's assignment banner, the bill page's assign menu)
+// only want a best-effort list, so a failure reads as "no classrooms". The
+// classroom dashboard passes { strict: true }: there an empty list means "you
+// have no classes, create one", and showing that on a failed load sent
+// teachers off to create duplicates.
+export async function getMyClassrooms(token, { strict = false } = {}) {
   try {
     const resp = await apiFetch(`${API}/api/classroom`, { headers: await authHeaders(token) })
-    if (!resp.ok) return []
+    if (!resp.ok) {
+      if (strict) await readError(resp, 'Could not load your classrooms')
+      return []
+    }
     const data = await resp.json()
     return data.classrooms || []
-  } catch { return [] }
+  } catch (err) {
+    if (!strict) return []
+    if (err.isAuthError) throw err
+    throw new Error('Could not load your classrooms. Check your connection and try again.')
+  }
 }
 
 export async function createClassroom(token, name, requireName = false) {
@@ -75,7 +87,7 @@ export async function joinClassroom(token, code) {
     if (err.isAuthError) throw err
     // AbortError / TypeError = network failure. Queue for replay so the join
     // isn't silently lost when classroom wifi drops mid-request.
-    if (err.name === 'AbortError' || err.name === 'TypeError') {
+    if (err.name === 'AbortError' || err.name === 'TimeoutError' || err.name === 'TypeError') {
       enqueue(url, 'POST', body)
       throw new Error('You appear offline. Your join request will retry when you reconnect.')
     }
@@ -182,7 +194,7 @@ export async function markComplete(token, classroomId, assignmentId, timeSpentSe
     if (!resp.ok) await readError(resp, 'Could not mark as read')
   } catch (err) {
     if (err.isAuthError) throw err
-    if (err.name === 'AbortError' || err.name === 'TypeError') {
+    if (err.name === 'AbortError' || err.name === 'TimeoutError' || err.name === 'TypeError') {
       // Queue so the student's completion isn't silently dropped on a flaky
       // school network.
       enqueue(url, 'POST', body)
@@ -282,6 +294,25 @@ export function removeJoinedClassroom(code) {
   writeStoredJoined(joined)
 }
 
+// Replace the stored list wholesale (used after sign-in migration to keep only
+// the entries that still need migrating).
+export function setJoinedClassrooms(list) {
+  if (list.length) writeStoredJoined(list)
+  else {
+    try { localStorage.removeItem(JOINED_KEY) } catch {}
+    try { sessionStorage.removeItem(JOINED_KEY) } catch {}
+  }
+}
+
+// Forget this browser's no-account classroom identity: the joined list and the
+// anonymous student id. Called on sign-out so the next student on a shared
+// Chromebook or iPad doesn't inherit the previous student's classes, and their
+// completions aren't credited to the previous student.
+export function clearAnonymousClassroomState() {
+  setJoinedClassrooms([])
+  try { localStorage.removeItem(ANON_ID_KEY) } catch {}
+}
+
 // Stable per-browser id for no-account students. Persisted in localStorage
 // (not sessionStorage) so a student's second visit to the classroom reuses
 // the same id and doesn't double-count in the teacher's analytics.
@@ -325,14 +356,26 @@ export async function joinClassroomAnon(code, displayName) {
     anonymousId: getOrCreateAnonymousId(),
     displayName: displayName || undefined,
   })
-  const resp = await apiFetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  })
+  let resp
+  try {
+    resp = await apiFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+  } catch (err) {
+    // Network failure / timeout on classroom wifi. Queue the join for replay
+    // so the teacher still sees this student once the connection is back,
+    // and let the student into the class in the meantime.
+    if (err.name === 'AbortError' || err.name === 'TimeoutError' || err.name === 'TypeError') {
+      enqueue(url, 'POST', body)
+      return { queued: true }
+    }
+    throw err
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}))
-    throw new Error(err.error || 'Failed to join classroom')
+    throw new Error(err.error || 'Could not join the classroom. Please try again.')
   }
   const data = await resp.json()
   return data.classroom
@@ -355,7 +398,7 @@ export async function leaveClassroomAnon(classroomId) {
       throw new Error(err.error || 'Failed to leave classroom')
     }
   } catch (err) {
-    if (err.name === 'AbortError' || err.name === 'TypeError') {
+    if (err.name === 'AbortError' || err.name === 'TimeoutError' || err.name === 'TypeError') {
       enqueue(url, 'DELETE', body)
       return
     }
@@ -380,7 +423,7 @@ export async function markCompleteAnon(classroomId, assignmentId, timeSpentSec) 
       throw new Error(err.error || 'Could not mark as read')
     }
   } catch (err) {
-    if (err.name === 'AbortError' || err.name === 'TypeError') {
+    if (err.name === 'AbortError' || err.name === 'TimeoutError' || err.name === 'TypeError') {
       enqueue(url, 'POST', body)
       throw new Error('You appear offline. Your completion will retry when you reconnect.')
     }

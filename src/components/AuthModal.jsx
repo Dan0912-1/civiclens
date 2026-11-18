@@ -3,6 +3,14 @@ import { Capacitor } from '@capacitor/core'
 import { useAuth } from '../context/AuthContext'
 import styles from './AuthModal.module.css'
 
+// Instagram, Facebook, Messenger, TikTok, Snapchat, LinkedIn, LINE webviews.
+const IN_APP_UA = /Instagram|FBAN|FBAV|FB_IAB|MessengerForiOS|TikTok|BytedanceWebview|musical_ly|Snapchat|LinkedInApp|\bLine\//i
+
+function isInAppBrowser() {
+  if (Capacitor.isNativePlatform()) return false
+  try { return IN_APP_UA.test(navigator.userAgent || '') } catch { return false }
+}
+
 const isIOS = Capacitor.getPlatform() === 'ios'
 
 export default function AuthModal({ isOpen, onClose }) {
@@ -80,6 +88,13 @@ export default function AuthModal({ isOpen, onClose }) {
 
   async function handleGoogle() {
     setError('')
+    // Google refuses OAuth inside social apps' built-in browsers ("Error 403:
+    // disallowed_useragent"), so the student landed on a Google error page
+    // with no way back. Explain the way out instead of sending them there.
+    if (isInAppBrowser()) {
+      setError("Google sign-in doesn't work inside this app's built-in browser. Open the menu (\u22EF or \u2197) and choose \"Open in browser\", or sign in with email below.")
+      return
+    }
     setLoading(true)
     try {
       const result = await signInWithGoogle()

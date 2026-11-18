@@ -56,7 +56,7 @@ function shareBill(bill, analysis) {
   if (navigator.share) {
     navigator.share({ title: bill.title, text, url }).catch(() => {})
   } else {
-    navigator.clipboard.writeText(`${text}\n${url}`).catch(() => {})
+    try { navigator.clipboard?.writeText(`${text}\n${url}`)?.catch(() => {}) } catch {}
   }
 }
 

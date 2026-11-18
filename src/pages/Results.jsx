@@ -167,8 +167,8 @@ export default function Results() {
 
       // Logged-in: fetch from server
       if (user) {
-        const session = await supabase?.auth.getSession()
-        const token = session?.data?.session?.access_token
+        const session = await getSessionSafe()
+        const token = session?.access_token
         if (token) {
           const classrooms = await getMyClassrooms(token)
           const studentClasses = classrooms.filter(c => c.role === 'student')
