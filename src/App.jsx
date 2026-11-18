@@ -10,30 +10,34 @@ import Onboarding from './components/Onboarding.jsx'
 import Nav from './components/Nav.jsx'
 import OfflineScreen from './components/OfflineScreen.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { settleRouteModule } from './lib/chunkRecovery'
 
 // Home is imported statically: it's the most-visited route, and lazy-loading
 // it put an extra network round trip (chunk fetch after React mounts) between
 // the user and first meaningful paint. Costs ~10 KB gzip on the entry chunk.
 import Home from './pages/Home.jsx'
 
-// Lazy-loaded pages — reduces initial bundle size
-const Profile = lazy(() => import('./pages/Profile.jsx'))
-const Results = lazy(() => import('./pages/Results.jsx'))
-const BillDetail = lazy(() => import('./pages/BillDetail.jsx'))
-const About = lazy(() => import('./pages/About.jsx'))
-const Bookmarks = lazy(() => import('./pages/Bookmarks.jsx'))
-const Privacy = lazy(() => import('./pages/Privacy.jsx'))
-const Terms = lazy(() => import('./pages/Terms.jsx'))
-const Search = lazy(() => import('./pages/Search.jsx'))
-const TopicPage = lazy(() => import('./pages/TopicPage.jsx'))
-const TopicsIndex = lazy(() => import('./pages/TopicsIndex.jsx'))
-const Contact = lazy(() => import('./pages/Contact.jsx'))
-const Settings = lazy(() => import('./pages/Settings.jsx'))
-const Admin = lazy(() => import('./pages/Admin.jsx'))
-const TeacherDashboard = lazy(() => import('./pages/TeacherDashboard.jsx'))
-const JoinClassroom = lazy(() => import('./pages/JoinClassroom.jsx'))
-const ClassroomDetail = lazy(() => import('./pages/ClassroomDetail.jsx'))
-const ClassroomView = lazy(() => import('./pages/ClassroomView.jsx'))
+// Lazy-loaded pages — reduces initial bundle size. lazyRoute holds the
+// Suspense loader if a stale-chunk reload is already on its way (see
+// settleRouteModule in src/lib/chunkRecovery.js).
+const lazyRoute = (load) => lazy(() => load().then(settleRouteModule))
+const Profile = lazyRoute(() => import('./pages/Profile.jsx'))
+const Results = lazyRoute(() => import('./pages/Results.jsx'))
+const BillDetail = lazyRoute(() => import('./pages/BillDetail.jsx'))
+const About = lazyRoute(() => import('./pages/About.jsx'))
+const Bookmarks = lazyRoute(() => import('./pages/Bookmarks.jsx'))
+const Privacy = lazyRoute(() => import('./pages/Privacy.jsx'))
+const Terms = lazyRoute(() => import('./pages/Terms.jsx'))
+const Search = lazyRoute(() => import('./pages/Search.jsx'))
+const TopicPage = lazyRoute(() => import('./pages/TopicPage.jsx'))
+const TopicsIndex = lazyRoute(() => import('./pages/TopicsIndex.jsx'))
+const Contact = lazyRoute(() => import('./pages/Contact.jsx'))
+const Settings = lazyRoute(() => import('./pages/Settings.jsx'))
+const Admin = lazyRoute(() => import('./pages/Admin.jsx'))
+const TeacherDashboard = lazyRoute(() => import('./pages/TeacherDashboard.jsx'))
+const JoinClassroom = lazyRoute(() => import('./pages/JoinClassroom.jsx'))
+const ClassroomDetail = lazyRoute(() => import('./pages/ClassroomDetail.jsx'))
+const ClassroomView = lazyRoute(() => import('./pages/ClassroomView.jsx'))
 
 function PageLoader() {
   return (

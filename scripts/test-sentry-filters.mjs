@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict'
 import { beforeSend, isInjectedCspEvalError } from '../src/lib/sentryFilters.js'
-import { preloadErrorAction, RELOAD_WINDOW_MS } from '../src/lib/chunkRecovery.js'
+import { preloadErrorAction, RELOAD_WINDOW_MS, settleRouteModule, markReloadPending } from '../src/lib/chunkRecovery.js'
 import { installDomResilience } from '../src/lib/domResilience.js'
 
 const CHROME_MSG =
@@ -95,6 +95,22 @@ action('repeat JS failure throws to ErrorBoundary', jsErr, NOW - 2000, 'throw')
 action('failure after the window reloads again', cssErr, NOW - RELOAD_WINDOW_MS, 'reload')
 action('garbage sessionStorage value reloads', jsErr, 'NaN', 'reload')
 action('repeat with no payload throws', undefined, NOW - 1, 'throw')
+
+// --- JAVASCRIPT-REACT-20: lazy route resolved to undefined during a recovery reload
+console.log('\nlazy route settling')
+{
+  const mod = { default: () => null }
+  assert.equal(settleRouteModule(mod), mod); console.log('  ok  real module passes through'); passed++
+  assert.throws(() => settleRouteModule(undefined), /no recovery reload pending/)
+  console.log('  ok  undefined module with no reload pending still throws'); passed++
+  markReloadPending()
+  const held = settleRouteModule(undefined)
+  assert.ok(held instanceof Promise)
+  const raced = await Promise.race([held.then(() => 'resolved'), new Promise((r) => setTimeout(() => r('pending'), 50))])
+  assert.equal(raced, 'pending')
+  console.log('  ok  JAVASCRIPT-REACT-20: undefined module during reload holds Suspense instead of crashing'); passed++
+  assert.equal(settleRouteModule(mod), mod); console.log('  ok  real module still passes through after a reload is marked'); passed++
+}
 
 // --- JAVASCRIPT-REACT-1Z: translator-mutated DOM (src/lib/domResilience.js)
 console.log('\nDOM resilience patch')

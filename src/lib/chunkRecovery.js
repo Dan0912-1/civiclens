@@ -21,3 +21,23 @@ export function preloadErrorAction(err, lastReloadAt, now = Date.now()) {
   if (now - (Number(lastReloadAt) || 0) >= RELOAD_WINDOW_MS) return 'reload'
   return CSS_PRELOAD_RE.test(err?.message || '') ? 'continue' : 'throw'
 }
+
+// When the handler above prevents a JS chunk failure so it can reload, Vite's
+// preload helper resolves the dynamic import with `undefined` instead of
+// rejecting. React.lazy then reads `undefined.default` and the ErrorBoundary
+// catches a TypeError in the moment before the reload navigates away. That is
+// JAVASCRIPT-REACT-20 (2026-11-17, iOS Safari, /profile). Route chunks go
+// through settleRouteModule(), which keeps Suspense's loader up until the
+// reload lands. If no reload is in flight, an undefined module is a real bug,
+// so it still throws, with a message that says what happened.
+let reloadPending = false
+
+export function markReloadPending() {
+  reloadPending = true
+}
+
+export function settleRouteModule(mod) {
+  if (mod !== undefined) return mod
+  if (reloadPending) return new Promise(() => {})
+  throw new Error('Route chunk resolved to undefined with no recovery reload pending')
+}
